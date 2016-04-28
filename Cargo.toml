@@ -4,4 +4,5 @@ version = "0.1.0"
 authors = ["pfried <philipsfried@gmail.com>"]
 
 [dependencies]
-hyper = "0.7"
+rotor-http = "*"
+rotor = "*"
