@@ -1,32 +1,16 @@
 extern crate rotor;
 extern crate rotor_http;
+extern crate netbuf;
+
+mod producer;
+mod context;
 
 use rotor::{Scope, Time, Notifier};
 use rotor_http::server::{RecvMode, Server, Head, Response, Fsm};
 use rotor::mio::tcp::TcpListener;
+use context::FloContext;
 
 use std::time::Duration;
-
-struct FloContext {
-    events: Vec<String>,
-    consumers: Vec<Notifier>,
-}
-
-impl FloContext {
-
-    pub fn new() -> FloContext {
-        FloContext {
-            events: Vec::new(),
-            consumers: Vec::new(),
-        }
-    }
-
-    pub fn notify_all_consumers(&self) {
-        for consumer in self.consumers.iter() {
-            consumer.wakeup().unwrap();
-        }
-    }
-}
 
 #[derive(Debug)]
 enum FloServer {
@@ -52,11 +36,11 @@ impl <'a> Server for FloServer {
                 res.done_headers().unwrap();
 
                 let notifier = scope.notifier();
-                scope.consumers.push(notifier);
+                scope.add_consumer(notifier);
                 Some((FloServer::Consumer, RecvMode::Buffered(1024), scope.now() + Duration::new(30, 0)))
             },
             "POST" => {
-                Some((FloServer::Producer, RecvMode::Buffered(1024), scope.now() + Duration::new(15, 0)))
+                Some((FloServer::Producer, RecvMode::Buffered(1024), producer::timeout(scope.now())))
             },
             _ => None
         }
@@ -82,7 +66,7 @@ impl <'a> Server for FloServer {
     fn wakeup(self, response: &mut Response, scope: &mut Scope<FloContext>) -> Option<Self> {
         if let FloServer::Consumer = self {
             println!("Waking up consumer");
-            if let Some(evt) = scope.events.last() {
+            if let Some(evt) = scope.last_event() {
                 println!("writing to consumer: {:?}", evt);
                 response.write_body(evt.as_bytes());
             }
@@ -96,26 +80,10 @@ impl <'a> Server for FloServer {
             -> Option<Self>
     {
         if let FloServer::Producer = self {
-            let event = std::str::from_utf8(data).ok()
-                    .map(|as_str| {
-                        let mut as_string = as_str.to_string();
-                        as_string.push_str("\r\n");
-                        as_string
-                    }).unwrap();
-            println!("Adding event: {:?}", event);
-
-            let body = format!("Added event: {}", event);
-            res.status(200u16, "Success");
-            res.add_chunked().unwrap();
-            res.done_headers().unwrap();
-            res.write_body(body.as_bytes());
-            res.done();
-            scope.events.push(event);
-
-            scope.notify_all_consumers();
-
+            producer::handle_request(data, res, scope);
             None
         } else {
+            // Consumer won't have anything to do here
             Some(self)
         }
     }

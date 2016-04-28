@@ -6,3 +6,4 @@ authors = ["pfried <philipsfried@gmail.com>"]
 [dependencies]
 rotor-http = "*"
 rotor = "*"
+netbuf = "*"
