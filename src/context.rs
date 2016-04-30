@@ -1,14 +1,15 @@
 
+use consumer::FloConsumer;
 use rotor::Notifier;
 
-pub struct FloContext {
-    events: Vec<String>,
-    consumers: Vec<Notifier>,
+pub struct FloContext<C: FloConsumer> {
+    pub events: Vec<String>,
+    pub consumers: Vec<C>,
 }
 
-impl FloContext {
+impl <C: FloConsumer> FloContext<C> {
 
-    pub fn new() -> FloContext {
+    pub fn new() -> FloContext<C> {
         FloContext {
             events: Vec::new(),
             consumers: Vec::new(),
@@ -19,13 +20,13 @@ impl FloContext {
         self.events.push(event);
     }
 
-    pub fn add_consumer(&mut self, consumer_notifier: Notifier) {
-        self.consumers.push(consumer_notifier);
+    pub fn add_consumer(&mut self, consumer: C) {
+        self.consumers.push(consumer);
     }
 
-    pub fn notify_all_consumers(&self) {
-        for consumer in self.consumers.iter() {
-            consumer.wakeup().unwrap();
+    pub fn notify_all_consumers(&mut self) {
+        for consumer in self.consumers.iter_mut() {
+            consumer.notify();
         }
     }
 

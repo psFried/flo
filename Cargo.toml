@@ -7,3 +7,8 @@ authors = ["pfried <philipsfried@gmail.com>"]
 rotor-http = "*"
 rotor = "*"
 netbuf = "*"
+serde_json = "*"
+
+[dev-dependencies]
+
+httparse = "*"
