@@ -1,9 +1,10 @@
 
 use consumer::FloConsumer;
 use rotor::Notifier;
+use serde_json::Value;
 
 pub struct FloContext<C: FloConsumer> {
-    pub events: Vec<String>,
+    pub events: Vec<Value>,
     pub consumers: Vec<C>,
 }
 
@@ -16,7 +17,7 @@ impl <C: FloConsumer> FloContext<C> {
         }
     }
 
-    pub fn add_event(&mut self, event: String) {
+    pub fn add_event(&mut self, event: Value) {
         self.events.push(event);
     }
 
@@ -30,7 +31,7 @@ impl <C: FloConsumer> FloContext<C> {
         }
     }
 
-    pub fn last_event(&self) -> Option<&String> {
+    pub fn last_event(&self) -> Option<&Value> {
         self.events.last()
     }
 }

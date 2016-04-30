@@ -75,11 +75,13 @@ impl <'a> Server for FloServer {
     }
 
     fn wakeup(self, response: &mut Response, scope: &mut Scope<Self::Context>) -> Option<Self> {
+        use serde_json::ser::to_string;
         if let FloServer::Consumer = self {
             println!("Waking up consumer");
             if let Some(evt) = scope.last_event() {
                 println!("writing to consumer: {:?}", evt);
-                response.write_body(evt.as_bytes());
+                let evt_string = to_string(evt).unwrap();
+                response.write_body(evt_string.as_bytes());
             }
         } else {
             println!("waking up producer");
