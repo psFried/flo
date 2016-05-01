@@ -8,6 +8,7 @@ rotor-http = "*"
 rotor = "*"
 netbuf = "*"
 serde_json = "*"
+queryst = "1.0"
 
 [dev-dependencies]
 

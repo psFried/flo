@@ -1,52 +1,62 @@
 
-use consumer::FloConsumer;
+use server::consumer::ConsumerNotifier;
 use context::FloContext;
-use rotor_http::server::{Response, Version};
-use event_store::{EventStore, FileSystemEventStore, PersistenceResult};
-use ::Event;
-use netbuf::Buf;
+use event_store::{EventStore, PersistenceResult, FileSystemEventStore};
+use event::{EventId, Event};
 use httparse;
+use tempdir::TempDir;
+use std::collections::HashMap;
 
-pub struct MockConsumer {
+pub struct MockConsumerNotifier {
     pub notify_invokations: u32
 }
 
-impl MockConsumer {
+impl MockConsumerNotifier {
 
-    pub fn new() -> MockConsumer {
-        MockConsumer {
+    pub fn new() -> MockConsumerNotifier {
+        MockConsumerNotifier {
             notify_invokations: 0
         }
     }
 }
 
-impl FloConsumer for MockConsumer {
+impl ConsumerNotifier for MockConsumerNotifier {
     fn notify(&mut self) {
         self.notify_invokations += 1;
     }
 }
 
-pub struct MemoryEventStore {
+pub struct MockEventStore {
     events: Vec<Event>,
+    get_event_greater_than_stub: HashMap<EventId, Event>,
 }
 
-impl MemoryEventStore {
-    pub fn new() -> MemoryEventStore {
-        MemoryEventStore {
+impl MockEventStore {
+    pub fn new() -> MockEventStore {
+        MockEventStore {
             events: Vec::new(),
+            get_event_greater_than_stub: HashMap::new(),
         }
+    }
+
+    pub fn stub_get_event_greater_than(&mut self, event_id: EventId, return_val: Event) {
+        self.get_event_greater_than_stub.insert(event_id, return_val);
     }
 }
 
-impl EventStore for MemoryEventStore {
+impl EventStore for MockEventStore {
     fn store(&mut self, event: &Event) -> PersistenceResult {
         self.events.push(event.clone());
         Ok(())
     }
+
+    fn get_event_greater_than(&mut self, event_id: EventId) -> Option<&Event> {
+        self.get_event_greater_than_stub.get(&event_id)
+    }
 }
 
-pub fn mock_flo_context() -> FloContext<MockConsumer, MemoryEventStore> {
-    FloContext::new(MemoryEventStore::new())
+pub fn create_test_flo_context() -> FloContext<MockConsumerNotifier, MockEventStore> {
+    FloContext::new(MockEventStore::new())
 }
 
 pub fn assert_response_body(expected: &str, buffer: &[u8]) {
