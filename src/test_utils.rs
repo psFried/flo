@@ -1,7 +1,9 @@
 
 use consumer::FloConsumer;
+use context::FloContext;
 use rotor_http::server::{Response, Version};
-
+use event_store::{EventStore, FileSystemEventStore, PersistenceResult};
+use ::Event;
 use netbuf::Buf;
 use httparse;
 
@@ -22,6 +24,29 @@ impl FloConsumer for MockConsumer {
     fn notify(&mut self) {
         self.notify_invokations += 1;
     }
+}
+
+pub struct MemoryEventStore {
+    events: Vec<Event>,
+}
+
+impl MemoryEventStore {
+    pub fn new() -> MemoryEventStore {
+        MemoryEventStore {
+            events: Vec::new(),
+        }
+    }
+}
+
+impl EventStore for MemoryEventStore {
+    fn store(&mut self, event: &Event) -> PersistenceResult {
+        self.events.push(event.clone());
+        Ok(())
+    }
+}
+
+pub fn mock_flo_context() -> FloContext<MockConsumer, MemoryEventStore> {
+    FloContext::new(MemoryEventStore::new())
 }
 
 pub fn assert_response_body(expected: &str, buffer: &[u8]) {

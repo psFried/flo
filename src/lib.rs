@@ -6,9 +6,13 @@ extern crate serde_json;
 #[cfg(test)]
 extern crate httparse;
 
+#[cfg(test)]
+extern crate tempdir;
+
 mod consumer;
 mod producer;
 mod context;
+mod event_store;
 
 #[cfg(test)]
 mod test_utils;
@@ -20,8 +24,16 @@ use rotor::mio::{EventLoop, Handler};
 
 use context::FloContext;
 use consumer::{FloConsumer, FloRotorConsumer};
+use event_store::{EventStore, FileSystemEventStore};
 
 use std::time::Duration;
+
+pub type Event = serde_json::Value;
+pub type ParseResult = Result<serde_json::Value, serde_json::Error>;
+
+pub fn to_event(json: &str) -> ParseResult {
+    serde_json::from_str(json)
+}
 
 #[derive(Debug)]
 enum FloServer {
@@ -31,7 +43,7 @@ enum FloServer {
 
 impl <'a> Server for FloServer {
     type Seed = ();
-    type Context = FloContext<FloRotorConsumer>;
+    type Context = FloContext<FloRotorConsumer, FileSystemEventStore>;
 
     fn headers_received(_seed: (),
                         head: Head,
@@ -103,9 +115,14 @@ impl <'a> Server for FloServer {
 }
 
 pub fn start_server() {
+    use std::path::PathBuf;
+    
     println!("Starting server");
+    let mut event_store = FileSystemEventStore::new(PathBuf::from("."));
+    let mut flo_context = FloContext::new(event_store);
+
     let event_loop = rotor::Loop::new(&rotor::Config::new()).unwrap();
-    let mut loop_inst = event_loop.instantiate(FloContext::new());
+    let mut loop_inst = event_loop.instantiate(flo_context);
     let listener = TcpListener::bind(&"0.0.0.0:3000".parse().unwrap()).unwrap();
     loop_inst.add_machine_with(|scope| {
         Fsm::<FloServer, _>::new(listener, (), scope)

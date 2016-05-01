@@ -2,23 +2,28 @@
 use consumer::FloConsumer;
 use rotor::Notifier;
 use serde_json::Value;
+use event_store::{EventStore, PersistenceResult};
 
-pub struct FloContext<C: FloConsumer> {
+
+pub struct FloContext<C: FloConsumer, S: EventStore> {
     pub events: Vec<Value>,
     pub consumers: Vec<C>,
+    pub event_store: S,
 }
 
-impl <C: FloConsumer> FloContext<C> {
+impl <C: FloConsumer, S: EventStore> FloContext<C, S> {
 
-    pub fn new() -> FloContext<C> {
+    pub fn new(event_store: S) -> FloContext<C, S> {
         FloContext {
             events: Vec::new(),
             consumers: Vec::new(),
+            event_store: event_store,
         }
     }
 
-    pub fn add_event(&mut self, event: Value) {
+    pub fn add_event(&mut self, event: Value) -> PersistenceResult {
         self.events.push(event);
+        Ok(())
     }
 
     pub fn add_consumer(&mut self, consumer: C) {

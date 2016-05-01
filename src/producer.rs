@@ -7,6 +7,7 @@ use netbuf::Buf;
 
 use context::FloContext;
 use consumer::FloConsumer;
+use event_store::EventStore;
 
 use std::time::Duration;
 use std::io::Write;
@@ -16,16 +17,14 @@ pub fn timeout(now: Time) -> Time {
     now + Duration::new(15, 0)
 }
 
-pub fn handle_request<C: FloConsumer>(data: &[u8], res: &mut Response, context: &mut FloContext<C>) {
-    let json_result: Result<Value, Error> = from_slice(data);
+pub fn handle_request<C, S>(data: &[u8], res: &mut Response, context: &mut FloContext<C, S>)
+        where C: FloConsumer, S: EventStore {
 
-    match json_result {
-        Ok(value) => {
-            let body = format!("Added event: {:?}", value);
+    match from_slice(data) {
+        Ok(event) => {
+            let body = format!("Added event: {:?}", event);
             write_response(200u16, &body, res);
-
-            // context.add_event(event);
-            context.notify_all_consumers();
+            context.add_event(event);
         },
         _ => {
             write_response(400u16, "invalid json", res);
@@ -49,9 +48,8 @@ mod test {
     use rotor_http::server::{Response, Version};
     use std::time::Duration;
     use netbuf::Buf;
-
     use context::FloContext;
-    use test_utils::{assert_http_status, assert_response_body, MockConsumer};
+    use test_utils::{self, assert_http_status, assert_response_body, MockConsumer};
     use std::io::Write;
 
 
@@ -61,7 +59,7 @@ mod test {
                 let mut buf = Buf::new();
                 {
                     let mut response = Response::new(&mut buf, Version::Http11, false, false);
-                    let mut ctx: FloContext<MockConsumer> = FloContext::new();
+                    let mut ctx = test_utils::mock_flo_context();
                     handle_request($request_body, &mut response, &mut ctx);
                 }
                 let mut response_data = Vec::new();
@@ -88,25 +86,5 @@ mod test {
         let mut response_data = test_request!(b"{\"anyKey\": \"anyValue\"}");
         assert_http_status(200u16, response_data.as_slice());
     }
-
-    #[test]
-    fn handle_request_notifies_all_consumers() {
-        let mut buf = Buf::new();
-        let mut response = Response::new(&mut buf, Version::Http11, false, false);
-        let mut ctx: FloContext<MockConsumer> = FloContext::new();
-
-        for _ in 0..3 {
-            ctx.add_consumer(MockConsumer::new());
-        }
-
-        let data = b"{\"anyKey\": \"anyValue\"}";
-
-        handle_request(data, &mut response, &mut ctx);
-
-        for consumer in ctx.consumers.iter() {
-            assert_eq!(1, consumer.notify_invokations);
-        }
-    }
-
 
 }
