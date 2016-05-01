@@ -10,4 +10,6 @@ A naive and amateurish attempt at an event stream server in rust.
 [ ] consumers start reading events at a specified point
 [ ] logging
 [ ] remove consumers after connections are closed
+[ ] Persist event index
+[ ] rebuild indexes
 [ ] event filtering
