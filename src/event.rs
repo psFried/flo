@@ -47,7 +47,7 @@ impl Event {
     }
 
     pub fn get_id(&self) -> EventId {
-        self.data.find(DATA_KEY).unwrap().as_u64().unwrap()
+        self.data.find(ID_KEY).unwrap().as_u64().unwrap()
     }
 
 }
@@ -62,4 +62,25 @@ pub fn to_event(id: EventId, json: &str) -> ParseResult<Event> {
 
 pub fn to_json(json: &str) -> ParseResult<Json> {
     serde_json::from_str(json)
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn client_event_data_is_stored_under_the_data_key() {
+        let data = to_json(r#"{"boo": "ya"}"#).unwrap();
+
+        let event = Event::new(0, data.clone());
+        assert_eq!(Some(&data), event.data.find("data"));
+    }
+
+    #[test]
+    fn creating_an_event_adds_the_id() {
+        let id: EventId = 6;
+        let event = to_event(id, r#"{"boo": "ya"}"#).unwrap();
+
+        assert_eq!(id, event.get_id());
+    }
 }

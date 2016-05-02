@@ -3,6 +3,7 @@ extern crate rotor_http;
 extern crate netbuf;
 extern crate serde_json;
 extern crate queryst;
+extern crate lru_time_cache;
 
 #[cfg(test)]
 extern crate httparse;

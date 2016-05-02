@@ -45,8 +45,8 @@ impl MockEventStore {
 }
 
 impl EventStore for MockEventStore {
-    fn store(&mut self, event: &Event) -> PersistenceResult {
-        self.events.push(event.clone());
+    fn store(&mut self, event: Event) -> PersistenceResult {
+        self.events.push(event);
         Ok(())
     }
 
