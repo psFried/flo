@@ -9,6 +9,8 @@ use self::event_index::EventIndex;
 const EVENTS_FILE_NAME: &'static str = "events.json";
 const MAX_CACHED_EVENTS: usize = 150;
 
+pub const MAX_NUM_EVENTS: usize = 1_000_000;
+
 pub struct PersistenceError;
 pub type PersistenceResult = Result<(), PersistenceError>;
 
@@ -37,7 +39,7 @@ impl FileSystemEventStore {
         FileSystemEventStore {
             persistence_dir: persistence_dir,
             events_file: file,
-            index: EventIndex::new(1000, 0.75),
+            index: EventIndex::new(1000, MAX_NUM_EVENTS),
             event_cache: LruCache::<EventId, Event>::with_capacity(MAX_CACHED_EVENTS),
         }
     }

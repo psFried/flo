@@ -1,5 +1,6 @@
 use event::EventId;
 
+const LOAD_FACTOR: f64 = 0.75;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Entry {
@@ -21,98 +22,88 @@ pub struct EventIndex {
     entries: Vec<Option<Entry>>,
     min_event: EventId,
     max_event: EventId,
-    load_factor: f64,
-    length: usize,
-    drop_to: EventId,
+    num_entries: usize,
+    drop_to_event: EventId,
+    drop_to_index: usize,
+    max_num_events: usize,
+    head_index: usize,
 }
 
 impl EventIndex {
 
-    pub fn new(initial_size: usize, load_factor: f64) -> EventIndex {
+    pub fn new(initial_size: usize, max_size: usize) -> EventIndex {
         let mut index = EventIndex {
             entries: Vec::with_capacity(initial_size),
             min_event: 0,
             max_event: 0,
-            length: 0,
-            drop_to: 0,
-            load_factor: load_factor,
+            num_entries: 0,
+            drop_to_event: 0,
+            drop_to_index: 0,
+            max_num_events: max_size,
+            head_index: 0,
         };
         index.fill_entries();
         index
     }
 
-    pub fn len(&self) -> usize {
-        self.length
+    pub fn num_entries(&self) -> usize {
+        self.num_entries
     }
 
     pub fn add(&mut self, event_id: EventId, offset: usize) {
-        self.length += 1;
+        self.num_entries += 1;
         self.max_event = event_id;
-        let idx = self.get_index(event_id);
-        self.ensure_capacity_for(idx);
+        let idx = self.ensure_capacity_for(event_id);
         self.entries[idx] = Some(Entry::new(event_id, offset));
     }
 
     pub fn get(&self, event_id: EventId) -> Option<Entry> {
-        self.entries[self.get_index(event_id)]
+        None
     }
 
     pub fn get_next_entry(&mut self, event_id: EventId) -> Option<Entry> {
-        let mut idx = self.get_index(event_id) + 1;
-        if idx < self.max_event as usize {
-            let mut entry = self.entries[idx];
-            while entry.is_none() && idx < self.max_event as usize {
-                idx += 1;
-                entry = self.entries[idx];
-            }
-            entry
-        } else {
-            None
-        }
+        None
     }
 
     pub fn drop(&mut self, min_event_id: EventId) {
-        self.drop_to = min_event_id;
+        self.drop_to_event = min_event_id;
     }
 
-    fn ensure_capacity_for(&mut self, index: usize) {
-        if index >= self.entries.len() {
-            let additional_capacity = index + (index as f64 * self.load_factor) as usize;
-            self.reallocate_entries(additional_capacity);
-        }
+
+    fn can_grow(&self) -> bool {
+        self.entries.len() < self.max_num_events
     }
 
-    fn reallocate_entries(&mut self, additional_capacity: usize) {
-        if self.should_drop() {
-            let new_capacity = self.entries.capacity() + additional_capacity;
-            let mut new_entries: Vec<Option<Entry>> = Vec::with_capacity(new_capacity);
-            let drop_to = self.drop_to;
-            let new_min_entry = self.get_next_entry(drop_to);
-            println!("Dropping old entries. New min entry: {:?}", new_min_entry);
+    fn grow_storage(&mut self, ensure_index: usize) {
+        let current_len = self.entries.len();
 
-            self.min_event = new_min_entry.map(|entry| entry.event_id)
-                    .unwrap_or(self.drop_to);
+    }
 
-            let num_to_drop = new_min_entry.map(|entry| {
-                entry.event_id.saturating_sub(1) as usize
-            }).unwrap_or(0);
-            for opt_entry in self.entries.iter().skip(num_to_drop) {
-                new_entries.push(*opt_entry);
-            }
-            println!("Reallocated entries - capacities: old: {}, new: {}",
-                    self.entries.capacity(),
-                    new_capacity);
-            self.entries = new_entries;
-        } else {
-            println!("Growing index by: {}, from: {}", additional_capacity, self.entries.capacity());
-            self.entries.reserve(additional_capacity);
+    fn get_new_capacity(&self, ensure_index: usize) -> usize {
+        unimplemented!()
+    }
+
+    fn drop_entries(&mut self) {
+
+    }
+
+
+    fn ensure_capacity_for(&mut self, event_id: EventId) -> usize {
+        match self.entries[self.head_index] {
+            Some(entry) => {
+                let head_event_id = entry.event_id;
+                if head_event_id > event_id {
+                    0
+                } else {
+                    0
+                }
+            },
+            None => self.head_index
         }
-        self.fill_entries();
-        println!("Reallocated index to: cap: {}, len: {}", self.entries.capacity(), self.entries.len());
     }
 
     fn should_drop(&self) -> bool {
-        self.drop_to > self.min_event
+        self.drop_to_event > self.min_event
     }
 
     fn fill_entries(&mut self) {
@@ -125,6 +116,15 @@ impl EventIndex {
     fn get_index(&self, event_id: EventId) -> usize {
         (event_id - self.min_event - 1) as usize
     }
+
+    fn get_relative_index(head_index: usize,
+        head_event_id: EventId,
+        new_event_id: EventId,
+        max_exclusive: usize) -> usize {
+
+            0
+
+        }
 }
 
 
@@ -134,30 +134,27 @@ mod test {
     use event::EventId;
 
     fn new_index() -> EventIndex {
-        EventIndex::new(5, 0.7)
+        EventIndex::new(5, 100)
     }
 
     #[test]
-    fn old_events_should_be_dropped_when_the_storage_is_reallocated() {
-        let mut index = new_index();
+    fn get_relative_index_add_difference_between_head_and_new_event_ids_if_under_max() {
+        let head_index = 0;
+        let head_event_id: EventId = 1;
+        let new_event_id: EventId = 2;
+        let max = 9999;
 
-        for i in 1..5 {
-            index.add(i, 50 * i as usize);
-        }
-        index.drop(3);
-
-        assert_eq!(Some(Entry::new(1, 50)), index.entries[0]);
-        for i in 5..12 {
-            index.add(i, 50 * i as usize);
-        }
-
-        assert_eq!(Some(Entry::new(4, 200)), index.entries[0]);
+        let result = EventIndex::get_relative_index(head_index,
+                head_event_id,
+                new_event_id,
+                max);
+        assert_eq!(1, result);
     }
 
     #[test]
     fn adding_an_entry_should_reallocate_if_new_capacity_is_needed() {
         let initial_size = 5;
-        let mut index = EventIndex::new(initial_size, 0.1);
+        let mut index = EventIndex::new(initial_size, 100);
 
         index.add(75, 8888);
         assert_eq!(Some(Entry::new(75, 8888)), index.get(75));
@@ -205,10 +202,10 @@ mod test {
     #[test]
     fn adding_an_entry_increases_length_by_one() {
         let mut idx = new_index();
-        assert_eq!(0, idx.len());
+        assert_eq!(0, idx.num_entries());
         idx.add(1, 886734);
-        assert_eq!(1, idx.len());
+        assert_eq!(1, idx.num_entries());
         idx.add(2, 8738458);
-        assert_eq!(2, idx.len());
+        assert_eq!(2, idx.num_entries());
     }
 }
