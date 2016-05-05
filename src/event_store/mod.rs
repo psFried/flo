@@ -1,10 +1,10 @@
-mod event_index;
+mod index;
 
 use event::{EventId, Event};
 use std::fs::File;
 use std::path::PathBuf;
 use lru_time_cache::LruCache;
-use self::event_index::EventIndex;
+use self::index::RingIndex;
 
 const EVENTS_FILE_NAME: &'static str = "events.json";
 const MAX_CACHED_EVENTS: usize = 150;
@@ -26,7 +26,7 @@ pub trait EventStore {
 pub struct FileSystemEventStore {
     persistence_dir: PathBuf,
     events_file: File,
-    index: EventIndex,
+    index: RingIndex,
     event_cache: LruCache<EventId, Event>,
 }
 
@@ -39,7 +39,7 @@ impl FileSystemEventStore {
         FileSystemEventStore {
             persistence_dir: persistence_dir,
             events_file: file,
-            index: EventIndex::new(1000, MAX_NUM_EVENTS),
+            index: RingIndex::new(1000, MAX_NUM_EVENTS),
             event_cache: LruCache::<EventId, Event>::with_capacity(MAX_CACHED_EVENTS),
         }
     }

@@ -1,3 +1,6 @@
+mod entry_range_iterator;
+
+pub use self::entry_range_iterator::EntryRangeIterator;
 use event::EventId;
 
 const LOAD_FACTOR: f64 = 0.75;
@@ -18,7 +21,8 @@ impl Entry {
 }
 
 
-pub struct EventIndex {
+#[derive(Debug)]
+pub struct RingIndex {
     entries: Vec<Option<Entry>>,
     min_event: EventId,
     max_event: EventId,
@@ -30,10 +34,10 @@ pub struct EventIndex {
     head_event_id: EventId,
 }
 
-impl EventIndex {
+impl RingIndex {
 
-    pub fn new(initial_size: usize, max_size: usize) -> EventIndex {
-        let mut index = EventIndex {
+    pub fn new(initial_size: usize, max_size: usize) -> RingIndex {
+        let mut index = RingIndex {
             entries: Vec::with_capacity(initial_size),
             min_event: 0,
             max_event: 0,
@@ -42,7 +46,7 @@ impl EventIndex {
             drop_to_index: 0,
             max_num_events: max_size,
             head_index: 0,
-            head_event_id: 0,
+            head_event_id: 1,
         };
         index.fill_entries();
         index
@@ -54,7 +58,7 @@ impl EventIndex {
 
     pub fn add(&mut self, event_id: EventId, offset: usize) {
         self.num_entries += 1;
-        let idx = EventIndex::get_relative_index(self.head_index, self.head_event_id, event_id, self.max_num_events);
+        let idx = RingIndex::get_relative_index(self.head_index, self.head_event_id, event_id, self.max_num_events);
         self.ensure_capacity(idx);
         self.entries[idx] = Some(Entry::new(event_id, offset));
         self.set_new_head(event_id, idx);
@@ -69,7 +73,28 @@ impl EventIndex {
         }
     }
 
+    pub fn entry_range<'a>(&'a mut self, starting_after: EventId) -> EntryRangeIterator<'a> {
+        let starting_index = self.get_index(starting_after + 1);
+        let mut max_events = self.head_event_id.saturating_sub(starting_after) as usize;
+        max_events = ::std::cmp::min(max_events, self.max_num_events);
+        EntryRangeIterator::new(self.entries.as_slice(), max_events, starting_index)
+    }
+
     pub fn get_next_entry(&mut self, event_id: EventId) -> Option<Entry> {
+        let mut index = self.get_index(event_id) + 1;
+        if index == self.max_num_events {
+            index = 0;
+        }
+        while index < self.entries.len() {
+            if self.entries[index].is_some() {
+                return self.entries[index];
+            } else {
+                index += 1;
+                if index == self.max_num_events {
+                    index = 0;
+                }
+            }
+        }
         None
     }
 
@@ -103,7 +128,7 @@ impl EventIndex {
     }
 
     fn get_index(&self, event_id: EventId) -> usize {
-        EventIndex::get_relative_index(self.head_index, self.head_event_id, event_id, self.max_num_events)
+        RingIndex::get_relative_index(self.head_index, self.head_event_id, event_id, self.max_num_events)
     }
 
     fn get_relative_index(head_index: usize,
@@ -133,27 +158,40 @@ mod test {
     use super::*;
     use event::EventId;
 
-    fn new_index() -> EventIndex {
-        EventIndex::new(5, 100)
+    fn new_index() -> RingIndex {
+        RingIndex::new(5, 100)
+    }
+
+    #[test]
+    fn entry_range_returns_iterator_over_range_of_entries() {
+        let mut index = RingIndex::new(20, 20);
+        for i in 1..30 {
+            index.add(i, i as usize);
+        }
+        let iterator = index.entry_range(14);
+        let iterator_results = iterator.collect::<Vec<Entry>>();
+        assert_eq!(15, iterator_results.len());
+        assert_eq!(Entry{event_id: 15, offset: 15}, iterator_results[0]);
+        assert_eq!(Entry{event_id: 29, offset: 29}, iterator_results[14]);
     }
 
     #[test]
     fn old_entries_are_overwritten_once_max_num_entries_is_reached() {
         let max_capacity = 50usize;
-        let mut index = EventIndex::new(10, 50);
+        let mut index = RingIndex::new(10, 50);
 
         for i in 1..(max_capacity as u64 + 75) {
             index.add(i, 30 * i as usize);
         }
         assert_eq!(max_capacity, index.entries.capacity());
         assert_eq!(124, index.head_event_id);
-        assert_eq!(24, index.head_index);
+        assert_eq!(23, index.head_index);
     }
 
     #[test]
     fn adding_an_entry_increases_the_capacity_of_the_storage_if_needed() {
         let initial_capacity = 5;
-        let mut index = EventIndex::new(initial_capacity, 100);
+        let mut index = RingIndex::new(initial_capacity, 100);
         assert_eq!(initial_capacity, index.entries.capacity());
 
         index.add(10, 777);
@@ -168,7 +206,7 @@ mod test {
         let new_event_id: EventId = 550;
         let max = 1000;
 
-        let result = EventIndex::get_relative_index(head_index,
+        let result = RingIndex::get_relative_index(head_index,
                 head_event_id,
                 new_event_id,
                 max);
@@ -182,7 +220,7 @@ mod test {
         let new_event_id: EventId = 557;
         let max = 10;
 
-        let result = EventIndex::get_relative_index(head_index,
+        let result = RingIndex::get_relative_index(head_index,
                 head_event_id,
                 new_event_id,
                 max);
@@ -196,7 +234,7 @@ mod test {
         let new_event_id: EventId = 60;
         let max = 9999;
 
-        let result = EventIndex::get_relative_index(head_index,
+        let result = RingIndex::get_relative_index(head_index,
                 head_event_id,
                 new_event_id,
                 max);
@@ -210,11 +248,42 @@ mod test {
         let new_event_id: EventId = 2;
         let max = 9999;
 
-        let result = EventIndex::get_relative_index(head_index,
+        let result = RingIndex::get_relative_index(head_index,
                 head_event_id,
                 new_event_id,
                 max);
         assert_eq!(1, result);
+    }
+
+    #[test]
+    fn the_first_entry_gets_added_to_the_first_index_when_event_id_is_one() {
+        let mut index = RingIndex::new(10, 10);
+
+        index.add(1, 55);
+        println!("234 index: {:?}", index);
+        assert_eq!(Some(Entry{event_id: 1, offset: 55}), index.entries[0]);
+    }
+
+    #[test]
+    fn get_next_entry_wraps_around_the_ring_when_the_end_of_the_buffer_is_filled_with_None() {
+        let mut index = RingIndex::new(10, 10);
+        index.add(7, 77);
+        index.add(11, 111);
+        let result = index.get_next_entry(7);
+        assert_eq!(Some(Entry{event_id: 11, offset: 111}), result);
+    }
+
+    #[test]
+    fn get_next_entry_returns_next_largest_entry_when_last_event_is_at_the_end_of_the_buffer() {
+        let mut index = RingIndex::new(10, 10);
+
+        index.add(10, 100);
+        index.add(11, 110);
+
+        assert_eq!(Some(Entry{event_id: 10, offset: 100}), index.entries[9]);
+        let result = index.get_next_entry(10);
+        assert_eq!(Some(Entry{event_id: 11, offset: 110}), result);
+        assert_eq!(result, index.entries[0]);
     }
 
     #[test]
