@@ -74,6 +74,7 @@ mod test {
     use std::fs::File;
     use std::io::Read;
     use serde_json::StreamDeserializer;
+    use event_store::index::Entry;
 
     #[test]
     fn get_next_event_returns_a_cached_event() {
@@ -83,7 +84,7 @@ mod test {
         let event = to_event(event_id, r#"{"myKey": "one"}"#).unwrap();
 
         store.event_cache.insert(event_id, event.clone());
-        store.index.add(event_id, 9876);
+        store.index.add(Entry::new(event_id, 9876));
 
         let result = store.get_event_greater_than(event_id - 1);
         assert_eq!(Some(&event), result);

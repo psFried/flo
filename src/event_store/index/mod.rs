@@ -12,7 +12,7 @@ pub struct Entry {
 }
 
 impl Entry {
-    fn new(event_id: EventId, offset: usize) -> Entry {
+    pub fn new(event_id: EventId, offset: usize) -> Entry {
         Entry {
             event_id: event_id,
             offset: offset,
@@ -56,12 +56,12 @@ impl RingIndex {
         self.num_entries
     }
 
-    pub fn add(&mut self, event_id: EventId, offset: usize) {
+    pub fn add(&mut self, entry: Entry) {
         self.num_entries += 1;
-        let idx = RingIndex::get_relative_index(self.head_index, self.head_event_id, event_id, self.max_num_events);
+        let idx = RingIndex::get_relative_index(self.head_index, self.head_event_id, entry.event_id, self.max_num_events);
         self.ensure_capacity(idx);
-        self.entries[idx] = Some(Entry::new(event_id, offset));
-        self.set_new_head(event_id, idx);
+        self.entries[idx] = Some(entry);
+        self.set_new_head(entry.event_id, idx);
     }
 
     pub fn get(&self, event_id: EventId) -> Option<Entry> {
@@ -166,7 +166,7 @@ mod test {
     fn entry_range_returns_iterator_over_range_of_entries() {
         let mut index = RingIndex::new(20, 20);
         for i in 1..30 {
-            index.add(i, i as usize);
+            index.add(Entry::new(i, i as usize));
         }
         let iterator = index.entry_range(14);
         let iterator_results = iterator.collect::<Vec<Entry>>();
@@ -181,7 +181,7 @@ mod test {
         let mut index = RingIndex::new(10, 50);
 
         for i in 1..(max_capacity as u64 + 75) {
-            index.add(i, 30 * i as usize);
+            index.add(Entry::new(i, 30 * i as usize));
         }
         assert_eq!(max_capacity, index.entries.capacity());
         assert_eq!(124, index.head_event_id);
@@ -194,7 +194,7 @@ mod test {
         let mut index = RingIndex::new(initial_capacity, 100);
         assert_eq!(initial_capacity, index.entries.capacity());
 
-        index.add(10, 777);
+        index.add(Entry::new(10, 777));
 
         assert!(index.entries.capacity() > 10);
     }
@@ -259,7 +259,7 @@ mod test {
     fn the_first_entry_gets_added_to_the_first_index_when_event_id_is_one() {
         let mut index = RingIndex::new(10, 10);
 
-        index.add(1, 55);
+        index.add(Entry::new(1, 55));
         println!("234 index: {:?}", index);
         assert_eq!(Some(Entry{event_id: 1, offset: 55}), index.entries[0]);
     }
@@ -267,8 +267,8 @@ mod test {
     #[test]
     fn get_next_entry_wraps_around_the_ring_when_the_end_of_the_buffer_is_filled_with_None() {
         let mut index = RingIndex::new(10, 10);
-        index.add(7, 77);
-        index.add(11, 111);
+        index.add(Entry::new(7, 77));
+        index.add(Entry::new(11, 111));
         let result = index.get_next_entry(7);
         assert_eq!(Some(Entry{event_id: 11, offset: 111}), result);
     }
@@ -277,8 +277,8 @@ mod test {
     fn get_next_entry_returns_next_largest_entry_when_last_event_is_at_the_end_of_the_buffer() {
         let mut index = RingIndex::new(10, 10);
 
-        index.add(10, 100);
-        index.add(11, 110);
+        index.add(Entry::new(10, 100));
+        index.add(Entry::new(11, 110));
 
         assert_eq!(Some(Entry{event_id: 10, offset: 100}), index.entries[9]);
         let result = index.get_next_entry(10);
@@ -290,7 +290,7 @@ mod test {
     fn get_next_entry_returns_next_largest_entry() {
         let mut idx = new_index();
 
-        idx.add(5, 50);
+        idx.add(Entry::new(5, 50));
 
         let expected = Some(Entry::new(5, 50));
         assert_eq!(expected, idx.get_next_entry(1));
@@ -314,7 +314,7 @@ mod test {
         let val = 87838457usize;
         let key: EventId = 2;
 
-        idx.add(key, val);
+        idx.add(Entry::new(key, val));
 
         let result = idx.get(key);
         assert_eq!(Some(Entry::new(key, val)), result);
@@ -324,9 +324,9 @@ mod test {
     fn adding_an_entry_increases_num_entries_by_one() {
         let mut idx = new_index();
         assert_eq!(0, idx.num_entries());
-        idx.add(1, 886734);
+        idx.add(Entry::new(1, 886734));
         assert_eq!(1, idx.num_entries());
-        idx.add(2, 8738458);
+        idx.add(Entry::new(2, 8738458));
         assert_eq!(2, idx.num_entries());
     }
 }
