@@ -2,9 +2,10 @@ mod index;
 
 use event::{EventId, Event};
 use std::fs::File;
+use std::io::Write;
 use std::path::PathBuf;
 use lru_time_cache::LruCache;
-use self::index::RingIndex;
+use self::index::{RingIndex, Entry};
 
 const EVENTS_FILE_NAME: &'static str = "events.json";
 const MAX_CACHED_EVENTS: usize = 150;
@@ -28,6 +29,7 @@ pub struct FileSystemEventStore {
     events_file: File,
     index: RingIndex,
     event_cache: LruCache<EventId, Event>,
+    current_file_position: usize,
 }
 
 
@@ -38,6 +40,7 @@ impl FileSystemEventStore {
 
         FileSystemEventStore {
             persistence_dir: persistence_dir,
+            current_file_position: file.metadata().map(|md| md.len() as usize).unwrap_or(0),
             events_file: file,
             index: RingIndex::new(1000, MAX_NUM_EVENTS),
             event_cache: LruCache::<EventId, Event>::with_capacity(MAX_CACHED_EVENTS),
@@ -49,11 +52,13 @@ impl EventStore for FileSystemEventStore {
 
     fn store(&mut self, event: Event) -> PersistenceResult {
         println!("Storing event: {:?}", &event);
-        let result = ::serde_json::to_writer(&mut self.events_file, &event.data)
-            .map_err(|_e| PersistenceError);
-
-        self.event_cache.insert(event.get_id(), event);
-        result
+        let mut evt = event;
+        let event_id: EventId = evt.get_id();
+        self.index.add(Entry::new(event_id, self.current_file_position));
+        self.events_file.write(evt.get_raw_bytes());
+        self.current_file_position += evt.get_raw_bytes().len() + 1;
+        self.event_cache.insert(event_id, evt);
+        Ok(())
     }
 
     fn get_event_greater_than(&mut self, event_id: EventId) -> Option<&Event> {
@@ -75,6 +80,38 @@ mod test {
     use std::io::Read;
     use serde_json::StreamDeserializer;
     use event_store::index::Entry;
+
+    #[test]
+    fn storing_an_event_adds_its_starting_offset_to_the_index() {
+        let temp_dir = TempDir::new("flo-persist-test").unwrap();
+        let mut store = FileSystemEventStore::new(temp_dir.path().to_path_buf());
+
+        let first_event_data = r#"{"id":1,"data":{"firstEventKey":"firstEventValue"}}"#;
+
+        let event = Event::from_str(first_event_data).unwrap();
+        store.store(event);
+        let event = to_event(2, r#"{"secondEventKey": "secondEventValue"}"#).unwrap();
+        store.store(event);
+
+        let index_entry = store.index.get(2).unwrap();
+        let expected_offset = first_event_data.as_bytes().len() + 1;
+        assert_eq!(expected_offset, index_entry.offset);
+    }
+
+    #[test]
+    fn storing_an_event_adds_its_event_id_to_the_index() {
+        let temp_dir = TempDir::new("flo-persist-test").unwrap();
+        let mut store = FileSystemEventStore::new(temp_dir.path().to_path_buf());
+
+        let event_id: EventId = 3;
+        let event = to_event(event_id, r#"{"myKey": "myValue"}"#).unwrap();
+
+        store.store(event);
+
+        let index_entry = store.index.get(event_id);
+        assert!(index_entry.is_some());
+        assert_eq!(index_entry.unwrap().offset, 0); // first entry written to file
+    }
 
     #[test]
     fn get_next_event_returns_a_cached_event() {
