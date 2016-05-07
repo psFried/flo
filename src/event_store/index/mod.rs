@@ -58,7 +58,7 @@ impl RingIndex {
 
     pub fn add(&mut self, entry: Entry) {
         self.num_entries += 1;
-        let idx = RingIndex::get_relative_index(self.head_index, self.head_event_id, entry.event_id, self.max_num_events);
+        let idx = self.get_index(entry.event_id);
         self.ensure_capacity(idx);
         self.entries[idx] = Some(entry);
         self.set_new_head(entry.event_id, idx);
@@ -81,21 +81,7 @@ impl RingIndex {
     }
 
     pub fn get_next_entry(&mut self, event_id: EventId) -> Option<Entry> {
-        let mut index = self.get_index(event_id) + 1;
-        if index == self.max_num_events {
-            index = 0;
-        }
-        while index < self.entries.len() {
-            if self.entries[index].is_some() {
-                return self.entries[index];
-            } else {
-                index += 1;
-                if index == self.max_num_events {
-                    index = 0;
-                }
-            }
-        }
-        None
+        self.entry_range(event_id).next()
     }
 
     pub fn drop(&mut self, min_event_id: EventId) {
@@ -128,28 +114,10 @@ impl RingIndex {
     }
 
     fn get_index(&self, event_id: EventId) -> usize {
-        RingIndex::get_relative_index(self.head_index, self.head_event_id, event_id, self.max_num_events)
+        let idx = event_id as usize - 1;
+        idx % self.max_num_events
     }
 
-    fn get_relative_index(head_index: usize,
-        head_event_id: EventId,
-        new_event_id: EventId,
-        max_exclusive: usize) -> usize {
-
-        if new_event_id > head_event_id {
-            let event_id_diff = (new_event_id - head_event_id) as usize;
-            let index = head_index + event_id_diff;
-            index % max_exclusive
-        } else {
-            let event_id_diff = (head_event_id - new_event_id) as usize;
-            if event_id_diff > head_index {
-                let wrapping_amount = event_id_diff - head_index;
-                max_exclusive - wrapping_amount
-            } else {
-                head_index - event_id_diff
-            }
-        }
-    }
 }
 
 
@@ -197,62 +165,6 @@ mod test {
         index.add(Entry::new(10, 777));
 
         assert!(index.entries.capacity() > 10);
-    }
-
-    #[test]
-    fn get_relative_index_wraps_around_0_when_new_event_id_is_less_than_head_id() {
-        let head_index = 1;
-        let head_event_id: EventId = 555;
-        let new_event_id: EventId = 550;
-        let max = 1000;
-
-        let result = RingIndex::get_relative_index(head_index,
-                head_event_id,
-                new_event_id,
-                max);
-        assert_eq!(996, result);
-    }
-
-    #[test]
-    fn get_relative_index_wraps_around_max_value_when_new_event_id_is_greater_than_head_id() {
-        let head_index = 8;
-        let head_event_id: EventId = 555;
-        let new_event_id: EventId = 557;
-        let max = 10;
-
-        let result = RingIndex::get_relative_index(head_index,
-                head_event_id,
-                new_event_id,
-                max);
-        assert_eq!(0, result);
-    }
-
-    #[test]
-    fn get_relative_index_subtracts_difference_when_new_event_id_is_less_than_head_event_id() {
-        let head_index = 10;
-        let head_event_id: EventId = 66;
-        let new_event_id: EventId = 60;
-        let max = 9999;
-
-        let result = RingIndex::get_relative_index(head_index,
-                head_event_id,
-                new_event_id,
-                max);
-        assert_eq!(4, result);
-    }
-
-    #[test]
-    fn get_relative_index_adds_difference_between_head_and_new_event_ids_if_under_max() {
-        let head_index = 0;
-        let head_event_id: EventId = 1;
-        let new_event_id: EventId = 2;
-        let max = 9999;
-
-        let result = RingIndex::get_relative_index(head_index,
-                head_event_id,
-                new_event_id,
-                max);
-        assert_eq!(1, result);
     }
 
     #[test]
