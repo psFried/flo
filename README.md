@@ -7,9 +7,12 @@ A naive and amateurish attempt at an event stream server in rust.
 
 - [X] parse events as JSON
 - [X] persist events
-- [ ] consumers start reading events at a specified point
-- [ ] logging
+- [X] consumers start reading events at a specified point
+- [X] logging
 - [ ] remove consumers after connections are closed
+- [ ] rebuild indexes from storage
+- [ ] add endpoint to clear event cache
+- [ ] multithreaded server
+- [ ] batch writes to consumers
 - [ ] Persist event index
-- [ ] rebuild indexes
 - [ ] event filtering

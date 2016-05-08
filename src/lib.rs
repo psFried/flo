@@ -5,6 +5,9 @@ extern crate serde_json;
 extern crate queryst;
 extern crate lru_time_cache;
 
+#[macro_use]
+extern crate log;
+
 #[cfg(test)]
 extern crate httparse;
 

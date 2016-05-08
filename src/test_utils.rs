@@ -76,7 +76,6 @@ pub fn assert_response_body(expected: &str, buffer: &[u8]) {
     let buffer_position: usize = parse_result.unwrap();
     let (_, body) = buffer.split_at(buffer_position);
     let str_body = String::from_utf8_lossy(body);
-    println!("str_body={}", str_body);
     assert_eq!(expected, str_body.trim());
 }
 

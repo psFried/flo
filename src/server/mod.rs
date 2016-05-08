@@ -28,7 +28,6 @@ impl <'a> Server for FloServer {
                         res: &mut Response,
                         scope: &mut Scope<Self::Context>) -> Option<(Self, RecvMode, Time)>
     {
-        println!("headers received: {:?} {:?}", head.method, head.path);
         match head.method {
             "GET" => {
                 self::consumer::init_consumer(head, res, scope)
@@ -50,7 +49,7 @@ impl <'a> Server for FloServer {
     }
 
     fn timeout(self, response: &mut Response, scope: &mut Scope<Self::Context>) -> Option<(Self, Time)> {
-        println!("** Timeout occured for {:?} ** reponse complete: {:?}", self, response.is_complete());
+        debug!("** Timeout occured for {:?} ** reponse complete: {:?}", self, response.is_complete());
         match self {
             FloServer::Consumer(_idx) => {
                 Some((self, scope.now() + Duration::new(30, 0)))
@@ -63,7 +62,7 @@ impl <'a> Server for FloServer {
         if let FloServer::Consumer(id) = self {
             self::consumer::on_wakeup(id, response, scope);
         } else {
-            println!("waking up producer");
+            warn!("waking up producer");
         }
         Some(self)
     }
@@ -85,7 +84,7 @@ pub fn start_server() {
     use std::path::PathBuf;
     use rotor::{Loop, Config};
 
-    println!("Starting server");
+    info!("Starting server");
     let event_store = FileSystemEventStore::new(PathBuf::from("."));
     let flo_context = FloContext::new(event_store);
 

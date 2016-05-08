@@ -69,7 +69,7 @@ impl FileSystemEventStore {
 impl EventStore for FileSystemEventStore {
 
     fn store(&mut self, event: Event) -> PersistenceResult {
-        println!("Storing event: {:?}", &event);
+        debug!("Storing event: {:?}", &event.data);
         let mut evt = event;
         let event_id: EventId = evt.get_id();
         self.index.add(Entry::new(event_id, self.current_file_position));
@@ -84,10 +84,12 @@ impl EventStore for FileSystemEventStore {
 
         index.get_next_entry(event_id).and_then(move |entry| {
             if event_cache.contains_key(&entry.event_id) {
+                trace!("returning cached event: {}", event_id);
                 event_cache.get_mut(&entry.event_id)
             } else {
                 match file_reader.read_from_offset(entry.offset).next() {
                     Some(Ok(event)) => {
+                        trace!("event cache miss for event: {}, read from file", entry.event_id);
                         event_cache.insert(entry.event_id, event);
                         event_cache.get_mut(&entry.event_id)
                     },

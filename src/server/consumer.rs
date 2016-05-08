@@ -81,9 +81,9 @@ pub fn init_consumer<S: EventStore>(request: Head,
 
 pub fn on_wakeup<C, S>(consumer_id: usize, response: &mut Response, context: &mut FloContext<C, S>) where C: ConsumerNotifier, S: EventStore {
 
-    println!("Waking up consumer: {}", consumer_id);
+    trace!("Waking up consumer: {}", consumer_id);
     context.get_next_event(consumer_id).map(|event| {
-        println!("writing to consumer: {:?}", event);
+        trace!("writing to consumer: {:?}", event.data);
         response.write_body(event.get_raw_bytes());
         response.write_body(b"\r\n");
         event.get_id()

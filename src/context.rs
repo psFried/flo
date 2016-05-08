@@ -47,6 +47,7 @@ impl <N: ConsumerNotifier, S: EventStore> FloContext<N, S> {
 
     pub fn add_consumer(&mut self, notifier: N, last_event: EventId) -> usize {
         let consumer_id = self.get_next_consumer_id();
+        debug!("Adding consumer: {}, lastEvent: {}", consumer_id, last_event);
         let mut consumer = Consumer {
             notifier: notifier,
             last_event: last_event,
@@ -70,6 +71,7 @@ impl <N: ConsumerNotifier, S: EventStore> FloContext<N, S> {
     pub fn confirm_event_written(&mut self, consumer_id: usize, event_id: EventId) {
         self.get_consumer(consumer_id).map(|consumer| {
             if event_id > consumer.last_event {
+                trace!("consumer: {}, confirmed event: {}", consumer_id, event_id);
                 consumer.last_event = event_id;
                 consumer.notify();
             }

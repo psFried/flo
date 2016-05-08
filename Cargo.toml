@@ -10,6 +10,8 @@ netbuf = "*"
 serde_json = "*"
 queryst = "1.0"
 lru_time_cache = "0.3"
+log = "0.3"
+log4rs = "0.4"
 
 [dev-dependencies]
 

@@ -57,6 +57,7 @@ impl RingIndex {
     }
 
     pub fn add(&mut self, entry: Entry) {
+        trace!("Adding to index: {:?}, total entries: {}", entry, self.entries.len() + 1);
         self.num_entries += 1;
         let idx = self.get_index(entry.event_id);
         self.ensure_capacity(idx);
@@ -69,6 +70,7 @@ impl RingIndex {
         if index < self.entries.len() {
             self.entries[index]
         } else {
+            warn!("index was asked for unknown event: {}", event_id);
             None
         }
     }
@@ -77,6 +79,10 @@ impl RingIndex {
         let starting_index = self.get_index(starting_after + 1);
         let mut max_events = self.head_event_id.saturating_sub(starting_after) as usize;
         max_events = ::std::cmp::min(max_events, self.max_num_events);
+        trace!("index entry range: starting_after_event: {}, starting_index: {}, max: {}",
+                starting_after,
+                starting_index,
+                max_events);
         EntryRangeIterator::new(self.entries.as_slice(), max_events, starting_index)
     }
 
@@ -108,6 +114,7 @@ impl RingIndex {
             let new_capacity = index + (index as f64 * LOAD_FACTOR) as usize;
             let max_additional = self.max_num_events - current_len;
             let additional_capacity = ::std::cmp::min(new_capacity - current_len, max_additional);
+            debug!("Growing index by: {}, from: {}", additional_capacity, current_len);
             self.entries.reserve_exact(additional_capacity);
             self.fill_entries();
         }
