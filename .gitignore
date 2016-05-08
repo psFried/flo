@@ -1,4 +1,10 @@
+
+# Cargo stuff
 target
 Cargo.lock
 
+# eclipse stuff
 .project
+
+# flo stuff
+events.json

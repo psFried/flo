@@ -1,8 +1,13 @@
 
-use rotor::Notifier;
+use rotor::{Scope, Time, Notifier};
+use rotor_http::server::{RecvMode, Head, Response};
 use event::EventId;
 use queryst;
 use serde_json::Value;
+use context::FloContext;
+use event_store::EventStore;
+use super::FloServer;
+use std::time::Duration;
 
 
 pub trait ConsumerNotifier: Sized {
@@ -31,6 +36,8 @@ impl ConsumerNotifier for RotorConsumerNotifier {
     }
 }
 
+pub const PARAM_LAST_EVENT_ID: &'static str = "lastEvent";
+
 pub fn get_last_event_id(url_path: &str) -> Result<EventId, String> {
     let query = url_path.find('?').map(|idx| {
         url_path.split_at(idx + 1).1
@@ -39,24 +46,51 @@ pub fn get_last_event_id(url_path: &str) -> Result<EventId, String> {
     queryst::parse(query).map_err(|_e| {
         "wtf, mate?".to_string()
     }).and_then(|params| {
-        // params.find(param_name).map(|val| {
-        //     val.as_u64().ok_or(&format!("{} must be a positive integer", param_name))
-        // })
-        map_to_result(&params)
+        get_last_event_id_from_params(&params)
     })
 }
 
-fn map_to_result(params: &Value) -> Result<EventId, String> {
-    let param_name = "lastEvent";
-
-    params.find(param_name).map(|param_value| {
+fn get_last_event_id_from_params(params: &Value) -> Result<EventId, String> {
+    params.find(PARAM_LAST_EVENT_ID).map(|param_value| {
         param_value.as_string().unwrap().parse::<u64>()
                 .map_err(|_parse_int_err| {
-                    format!("parameter '{}' must be a positive integer, got: {:?}", param_name, param_value)
+                    format!("parameter '{}' must be a positive integer, got: {:?}",
+                            PARAM_LAST_EVENT_ID,
+                            param_value)
                 })
     }).unwrap_or(Ok(0))
 }
 
+pub fn init_consumer<S: EventStore>(request: Head,
+        response: &mut Response,
+        scope: &mut Scope<FloContext<RotorConsumerNotifier, S>>)
+        -> Option<(FloServer, RecvMode, Time)> {
+
+    let last_event_id = get_last_event_id(request.path).unwrap();
+    let notifier = scope.notifier();
+    let consumer_id = scope.add_consumer(RotorConsumerNotifier::new(notifier), last_event_id);
+
+    response.status(200u16, "Success");
+    response.add_chunked().unwrap();
+    response.done_headers().unwrap();
+
+    Some((FloServer::Consumer(consumer_id),
+            RecvMode::Buffered(1024),
+            scope.now() + Duration::new(30, 0)))
+}
+
+pub fn on_wakeup<C, S>(consumer_id: usize, response: &mut Response, context: &mut FloContext<C, S>) where C: ConsumerNotifier, S: EventStore {
+
+    println!("Waking up consumer: {}", consumer_id);
+    context.get_next_event(consumer_id).map(|event| {
+        println!("writing to consumer: {:?}", event);
+        response.write_body(event.get_raw_bytes());
+        response.write_body(b"\r\n");
+        event.get_id()
+    }).map(|event_id| {
+        context.confirm_event_written(consumer_id, event_id);
+    });
+}
 
 #[cfg(test)]
 mod test {

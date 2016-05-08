@@ -21,7 +21,7 @@ pub trait EventStore {
 
     fn store(&mut self, event: Event) -> PersistenceResult;
 
-    fn get_event_greater_than(&mut self, event_id: EventId) -> Option<&Event>;
+    fn get_event_greater_than(&mut self, event_id: EventId) -> Option<&mut Event>;
 
 }
 
@@ -79,17 +79,17 @@ impl EventStore for FileSystemEventStore {
         Ok(())
     }
 
-    fn get_event_greater_than(&mut self, event_id: EventId) -> Option<&Event> {
+    fn get_event_greater_than(&mut self, event_id: EventId) -> Option<&mut Event> {
         let FileSystemEventStore{ref mut index, ref mut event_cache, ref file_reader, ..} = *self;
 
         index.get_next_entry(event_id).and_then(move |entry| {
             if event_cache.contains_key(&entry.event_id) {
-                event_cache.get(&entry.event_id)
+                event_cache.get_mut(&entry.event_id)
             } else {
                 match file_reader.read_from_offset(entry.offset).next() {
                     Some(Ok(event)) => {
                         event_cache.insert(entry.event_id, event);
-                        event_cache.get(&entry.event_id)
+                        event_cache.get_mut(&entry.event_id)
                     },
                     _ => None
                 }
@@ -165,13 +165,13 @@ mod test {
         let temp_dir = TempDir::new("flo-persist-test").unwrap();
         let mut store = FileSystemEventStore::new(temp_dir.path().to_path_buf());
         let event_id: EventId = 3;
-        let event = to_event(event_id, r#"{"myKey": "one"}"#).unwrap();
+        let mut event = to_event(event_id, r#"{"myKey": "one"}"#).unwrap();
 
         store.event_cache.insert(event_id, event.clone());
         store.index.add(Entry::new(event_id, 9876));
 
         let result = store.get_event_greater_than(event_id - 1);
-        assert_eq!(Some(&event), result);
+        assert_eq!(Some(&mut event), result);
     }
 
     #[test]

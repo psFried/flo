@@ -18,6 +18,10 @@ impl MockConsumerNotifier {
             notify_invokations: 0
         }
     }
+
+    pub fn assert_notify_was_called(&self) {
+        assert!(self.notify_invokations == 1, "Expected one invocation of notify(), got: {}", self.notify_invokations);
+    }
 }
 
 impl ConsumerNotifier for MockConsumerNotifier {
@@ -42,6 +46,10 @@ impl MockEventStore {
     pub fn stub_get_event_greater_than(&mut self, event_id: EventId, return_val: Event) {
         self.get_event_greater_than_stub.insert(event_id, return_val);
     }
+
+    pub fn assert_event_was_stored(&self, expected_event: &Event) {
+        assert!(self.events.contains(expected_event));
+    }
 }
 
 impl EventStore for MockEventStore {
@@ -50,8 +58,8 @@ impl EventStore for MockEventStore {
         Ok(())
     }
 
-    fn get_event_greater_than(&mut self, event_id: EventId) -> Option<&Event> {
-        self.get_event_greater_than_stub.get(&event_id)
+    fn get_event_greater_than(&mut self, event_id: EventId) -> Option<&mut Event> {
+        self.get_event_greater_than_stub.get_mut(&event_id)
     }
 }
 

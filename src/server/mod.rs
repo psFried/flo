@@ -7,14 +7,14 @@ use rotor_http::server::{RecvMode, Server, Head, Response, Fsm};
 use rotor::mio::tcp::TcpListener;
 
 use context::FloContext;
-use self::consumer::RotorConsumerNotifier;
+use self::consumer::{get_last_event_id, RotorConsumerNotifier};
 use event_store::FileSystemEventStore;
 
 use std::time::Duration;
 
 
 #[derive(Debug)]
-enum FloServer {
+pub enum FloServer {
     Producer,
     Consumer(usize)
 }
@@ -28,22 +28,12 @@ impl <'a> Server for FloServer {
                         res: &mut Response,
                         scope: &mut Scope<Self::Context>) -> Option<(Self, RecvMode, Time)>
     {
-        // println!("Headers received:\n {:?}", head);
         println!("headers received: {:?} {:?}", head.method, head.path);
         match head.method {
             "GET" => {
-                res.status(200u16, "Success");
-                res.add_chunked().unwrap();
-                res.done_headers().unwrap();
-
-                let notifier = scope.notifier();
-                let consumer_id = scope.add_consumer(RotorConsumerNotifier::new(notifier), 0);
-
-                Some((FloServer::Consumer(consumer_id),
-                        RecvMode::Buffered(1024),
-                        scope.now() + Duration::new(30, 0)))
+                self::consumer::init_consumer(head, res, scope)
             },
-            "POST" => {
+            "PUT" => {
                 Some((FloServer::Producer, RecvMode::Buffered(1024), producer::timeout(scope.now())))
             },
             _ => None
@@ -70,14 +60,8 @@ impl <'a> Server for FloServer {
     }
 
     fn wakeup(self, response: &mut Response, scope: &mut Scope<Self::Context>) -> Option<Self> {
-        use serde_json::ser::to_string;
         if let FloServer::Consumer(id) = self {
-            println!("Waking up consumer: {}", id);
-            if let Some(evt) = scope.last_event() {
-                println!("writing to consumer: {:?}", evt);
-                let evt_string = to_string(evt).unwrap();
-                response.write_body(evt_string.as_bytes());
-            }
+            self::consumer::on_wakeup(id, response, scope);
         } else {
             println!("waking up producer");
         }
