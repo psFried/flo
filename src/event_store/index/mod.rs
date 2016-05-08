@@ -8,11 +8,11 @@ const LOAD_FACTOR: f64 = 0.75;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Entry {
     pub event_id: EventId,
-    pub offset: usize,
+    pub offset: u64,
 }
 
 impl Entry {
-    pub fn new(event_id: EventId, offset: usize) -> Entry {
+    pub fn new(event_id: EventId, offset: u64) -> Entry {
         Entry {
             event_id: event_id,
             offset: offset,
@@ -134,7 +134,7 @@ mod test {
     fn entry_range_returns_iterator_over_range_of_entries() {
         let mut index = RingIndex::new(20, 20);
         for i in 1..30 {
-            index.add(Entry::new(i, i as usize));
+            index.add(Entry::new(i, i));
         }
         let iterator = index.entry_range(14);
         let iterator_results = iterator.collect::<Vec<Entry>>();
@@ -149,7 +149,7 @@ mod test {
         let mut index = RingIndex::new(10, 50);
 
         for i in 1..(max_capacity as u64 + 75) {
-            index.add(Entry::new(i, 30 * i as usize));
+            index.add(Entry::new(i, 30 * i));
         }
         assert_eq!(max_capacity, index.entries.capacity());
         assert_eq!(124, index.head_event_id);
@@ -172,7 +172,6 @@ mod test {
         let mut index = RingIndex::new(10, 10);
 
         index.add(Entry::new(1, 55));
-        println!("234 index: {:?}", index);
         assert_eq!(Some(Entry{event_id: 1, offset: 55}), index.entries[0]);
     }
 
@@ -223,7 +222,7 @@ mod test {
     #[test]
     fn get_returns_entry_associated_with_the_given_key() {
         let mut idx = new_index();
-        let val = 87838457usize;
+        let val = 87838457u64;
         let key: EventId = 2;
 
         idx.add(Entry::new(key, val));

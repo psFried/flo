@@ -1,11 +1,13 @@
 mod index;
+mod file_reader;
 
 use event::{EventId, Event};
 use std::fs::File;
-use std::io::Write;
-use std::path::PathBuf;
+use std::io::{Seek, SeekFrom, Read, Write};
+use std::path::{Path, PathBuf};
 use lru_time_cache::LruCache;
 use self::index::{RingIndex, Entry};
+use self::file_reader::{FileReader, EventsFromDisk};
 
 const EVENTS_FILE_NAME: &'static str = "events.json";
 const MAX_CACHED_EVENTS: usize = 150;
@@ -29,7 +31,8 @@ pub struct FileSystemEventStore {
     events_file: File,
     index: RingIndex,
     event_cache: LruCache<EventId, Event>,
-    current_file_position: usize,
+    current_file_position: u64,
+    file_reader: FileReader,
 }
 
 
@@ -39,13 +42,28 @@ impl FileSystemEventStore {
         let file = File::create(persistence_dir.join(EVENTS_FILE_NAME)).unwrap();
 
         FileSystemEventStore {
-            persistence_dir: persistence_dir,
-            current_file_position: file.metadata().map(|md| md.len() as usize).unwrap_or(0),
+            file_reader: FileReader::new(persistence_dir.join(EVENTS_FILE_NAME)),
+            current_file_position: file.metadata().map(|md| md.len()).unwrap_or(0),
             events_file: file,
             index: RingIndex::new(1000, MAX_NUM_EVENTS),
             event_cache: LruCache::<EventId, Event>::with_capacity(MAX_CACHED_EVENTS),
+            persistence_dir: persistence_dir,
         }
     }
+
+    fn get_storage_file_path(&self) -> PathBuf {
+        self.persistence_dir.join(EVENTS_FILE_NAME)
+    }
+
+    fn open_file_for_reading(&self) -> File {
+        use std::fs::OpenOptions;
+
+        OpenOptions::new().read(true).write(false)
+                .open(self.get_storage_file_path())
+                .unwrap()
+    }
+
+
 }
 
 impl EventStore for FileSystemEventStore {
@@ -56,16 +74,27 @@ impl EventStore for FileSystemEventStore {
         let event_id: EventId = evt.get_id();
         self.index.add(Entry::new(event_id, self.current_file_position));
         self.events_file.write(evt.get_raw_bytes());
-        self.current_file_position += evt.get_raw_bytes().len() + 1;
+        self.current_file_position += evt.get_raw_bytes().len() as u64;
         self.event_cache.insert(event_id, evt);
         Ok(())
     }
 
     fn get_event_greater_than(&mut self, event_id: EventId) -> Option<&Event> {
-        let FileSystemEventStore{ref mut index, ref mut event_cache, ..} = *self;
+        let FileSystemEventStore{ref mut index, ref mut event_cache, ref file_reader, ..} = *self;
 
         index.get_next_entry(event_id).and_then(move |entry| {
-            event_cache.get(&entry.event_id)
+            if event_cache.contains_key(&entry.event_id) {
+                event_cache.get(&entry.event_id)
+            } else {
+                match file_reader.read_from_offset(entry.offset).next() {
+                    Some(Ok(event)) => {
+                        event_cache.insert(entry.event_id, event);
+                        event_cache.get(&entry.event_id)
+                    },
+                    _ => None
+                }
+            }
+
         })
     }
 }
@@ -79,6 +108,7 @@ mod test {
     use std::fs::File;
     use std::io::Read;
     use serde_json::StreamDeserializer;
+	use serde_json::builder::ObjectBuilder;
     use event_store::index::Entry;
 
     #[test]
@@ -94,7 +124,7 @@ mod test {
         store.store(event);
 
         let index_entry = store.index.get(2).unwrap();
-        let expected_offset = first_event_data.as_bytes().len() + 1;
+        let expected_offset = first_event_data.as_bytes().len() as u64;
         assert_eq!(expected_offset, index_entry.offset);
     }
 
@@ -111,6 +141,23 @@ mod test {
         let index_entry = store.index.get(event_id);
         assert!(index_entry.is_some());
         assert_eq!(index_entry.unwrap().offset, 0); // first entry written to file
+    }
+
+    #[test]
+    fn get_next_event_returns_a_non_cached_event_stored_on_disk() {
+        let temp_dir = TempDir::new("flo-persist-test").unwrap();
+        let mut store = FileSystemEventStore::new(temp_dir.path().to_path_buf());
+
+        for i in 1..11 {
+            let event_json = ObjectBuilder::new().insert("myKey", i).unwrap();
+            let event = Event::new(i, event_json);
+            store.store(event);
+            store.event_cache.remove(&i);
+        }
+        assert!(store.event_cache.is_empty());
+        let result = store.get_event_greater_than(5);
+        assert!(result.is_some());
+        assert_eq!(6, result.unwrap().get_id());
     }
 
     #[test]

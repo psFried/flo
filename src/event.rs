@@ -47,13 +47,13 @@ impl Event {
         self.data.find(ID_KEY).unwrap().as_u64().unwrap()
     }
 
-    #[cfg(test)]
     pub fn from_complete_json(json: Json) -> Event {
         Event {
             data: json,
             raw_bytes: None,
         }
     }
+
 
     #[cfg(test)]
     pub fn from_reader<R: Read>(raw_data: R) -> ParseResult<Event> {

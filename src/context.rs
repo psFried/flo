@@ -3,13 +3,13 @@ use server::consumer::ConsumerNotifier;
 use serde_json::Value;
 use event_store::{EventStore, PersistenceResult};
 use event::{EventId, Event, Json};
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 
 pub struct FloContext<N: ConsumerNotifier, S: EventStore> {
     pub event_store: S,
     pub events: Vec<Json>,
-    consumers: BTreeMap<usize, Consumer<N>>,
+    consumers: HashMap<usize, Consumer<N>>,
     next_consumer_id: usize,
 }
 
@@ -30,7 +30,7 @@ impl <N: ConsumerNotifier, S: EventStore> FloContext<N, S> {
     pub fn new(event_store: S) -> FloContext<N, S> {
         FloContext {
             events: Vec::new(),
-            consumers: BTreeMap::new(),
+            consumers: HashMap::new(),
             event_store: event_store,
             next_consumer_id: 0usize,
         }
