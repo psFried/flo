@@ -8,3 +8,6 @@ Cargo.lock
 
 # flo stuff
 events.json
+
+# mac junk
+.DS_Store

@@ -1,5 +1,5 @@
 [package]
-name = "flo"
+name = "flo_server"
 version = "0.1.0"
 authors = ["pfried <philipsfried@gmail.com>"]
 
