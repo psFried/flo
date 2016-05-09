@@ -1,4 +1,4 @@
-extern crate flo_server;
+extern crate flo;
 extern crate log4rs;
 extern crate log;
 
@@ -8,5 +8,5 @@ use logging::init_logging;
 
 fn main() {
     init_logging();
-    flo_server::server::start_server();
+    flo::server::start_server();
 }
