@@ -23,75 +23,79 @@ use std::time::Duration;
 use std::net::ToSocketAddrs;
 use std::sync::mpsc::{Sender, Receiver, channel};
 use std::sync::Arc;
+use std::thread::JoinHandle;
+use event::Json;
+use std::marker::PhantomData;
 
 #[derive(Clone, Debug)]
 enum ClientCommand {
     Shutdown,
-    Consume(Url)
+    Consume(Url),
+    Produce(Json),
 }
-
 unsafe impl Send for ClientCommand {}
 
-struct FloRequesterContext;
+
 
 struct FloRotorClient {
-    urls: Vec<Url>,
+    server_url: Url,
 }
 
-#[derive(Debug)]
-struct FloRotorRequester {
-    url: Url,
-}
 
-impl FloRotorRequester {
-    pub fn new(url: Url) -> FloRotorRequester {
-        FloRotorRequester {
-            url: url,
-        }
-    }
-}
 
 impl Client for FloRotorClient {
     type Requester = FloRotorRequester;
-    type Seed = ();
+    type Seed = Url;
 
-    fn create(seed: Self::Seed, _scope: &mut Scope<FloRequesterContext>) -> Self {
+    fn create(seed: Self::Seed, _scope: &mut Scope<ProducerContext>) -> Self {
         FloRotorClient {
-            urls: vec![]
+            server_url: seed,
         }
     }
 
-    fn connection_idle(mut self, _conn: &Connection, scope: &mut Scope<FloRequesterContext>) -> Task<FloRotorClient> {
-        match self.urls.pop() {
-            Some(url) => Task::Request(self, FloRotorRequester::new(url)),
-            None => {
+    fn connection_idle(mut self, _conn: &Connection, scope: &mut Scope<ProducerContext>) -> Task<FloRotorClient> {
+        match scope.receiver.recv() {
+            Ok(command) => {
+                println!("got command: {:?}", command);
                 scope.shutdown_loop();
-                Task::Close
+            },
+            Err(e) => {
+                println!("client received error: {:?}", e);
+                scope.shutdown_loop();
             }
         }
-    }
-
-    fn connection_error(self, err: &ProtocolError, _scope: &mut Scope<FloRequesterContext>) {
-        println!("----- Bad response: {} -----", err);
-        panic!("oh shit man");
-    }
-
-    fn wakeup(self, _connection: &Connection, _scope: &mut Scope<FloRequesterContext>) -> Task<FloRotorClient> {
-        println!("Wakeup on Client");
         Task::Close
     }
 
-    fn timeout(self, _connection: &Connection, _scope: &mut Scope<FloRequesterContext>) -> Task<FloRotorClient> {
+    fn connection_error(self, err: &ProtocolError, scope: &mut Scope<ProducerContext>) {
+        println!("----- Bad response: {} -----", err);
+        scope.shutdown_loop();
+    }
+
+    fn wakeup(self, _connection: &Connection, scope: &mut Scope<ProducerContext>) -> Task<FloRotorClient> {
+        println!("Wakeup on Client");
+        scope.shutdown_loop();
+        Task::Close
+    }
+
+    fn timeout(self, _connection: &Connection, scope: &mut Scope<ProducerContext>) -> Task<FloRotorClient> {
         println!("Timeout on Client");
+        scope.shutdown_loop();
         Task::Close
     }
 }
 
-impl Requester for FloRotorRequester {
-    type Context = FloRequesterContext;
 
-    fn prepare_request(self, req: &mut Request, _scope: &mut Scope<FloRequesterContext>) -> Option<Self> {
-        req.start("GET", self.url.path(), Version::Http11);
+#[derive(Debug)]
+enum FloRotorRequester {
+    Producer,
+}
+
+impl Requester for FloRotorRequester {
+    type Context = ProducerContext;
+
+    fn prepare_request(self, req: &mut Request, scope: &mut Scope<ProducerContext>) -> Option<Self> {
+        req.start("GET", scope.url.path(), Version::Http11);
         req.add_header("User-Agent", b"Flo Client Library");
         req.done_headers().unwrap();
         req.done();
@@ -100,92 +104,138 @@ impl Requester for FloRotorRequester {
 
     fn headers_received(self, head: Head,
             _req: &mut Request,
-            scope: &mut Scope<FloRequesterContext>) -> Option<(Self, RecvMode, Time)> {
+            scope: &mut Scope<ProducerContext>) -> Option<(Self, RecvMode, Time)> {
         None
     }
 
-    fn response_received(self, data: &[u8], req: &mut Request, scope: &mut Scope<FloRequesterContext>) {
+    fn response_received(self, data: &[u8], req: &mut Request, scope: &mut Scope<ProducerContext>) {
         let response_data = String::from_utf8_lossy(data);
         println!("Response received for: {:?}, \ndata: {:?}", self, response_data);
     }
 
-    fn response_chunk(self, chunk: &[u8], req: &mut Request, scope: &mut Scope<FloRequesterContext>) -> Option<Self> {
+    fn response_chunk(self, chunk: &[u8], req: &mut Request, scope: &mut Scope<ProducerContext>) -> Option<Self> {
         let as_str = String::from_utf8_lossy(chunk);
         println!("Chunk: {:?}", as_str);
         Some(self)
     }
 
-    fn response_end(self, req: &mut Request, scope: &mut Scope<FloRequesterContext>) {
+    fn response_end(self, req: &mut Request, scope: &mut Scope<ProducerContext>) {
         println!("Response ended for: {:?}", self);
     }
 
-    fn timeout(self, req: &mut Request, scope: &mut Scope<FloRequesterContext>) -> Option<(Self, Time)> {
+    fn timeout(self, req: &mut Request, scope: &mut Scope<ProducerContext>) -> Option<(Self, Time)> {
         println!("Timeout for: {:?}", self);
         Some((self, scope.now() + Duration::new(10, 0)))
     }
 
-    fn wakeup(self, req: &mut Request, scope: &mut Scope<FloRequesterContext>) -> Option<Self> {
+    fn wakeup(self, req: &mut Request, scope: &mut Scope<ProducerContext>) -> Option<Self> {
         println!("Wakeup for: {:?}", self);
         Some(self)
     }
 
-    fn bad_response(self, err: &ResponseError, scope: &mut Scope<FloRequesterContext>) {
+    fn bad_response(self, err: &ResponseError, scope: &mut Scope<ProducerContext>) {
         println!("Bad Response for: {:?}", self);
     }
 }
 
-pub trait EventListener {
-    fn on_event(&mut self, event: Event);
+enum ProducerResult {
+    Success(EventId),
+    Error(String),
+    Closed,
 }
 
-struct ClientNotifier {
+struct ProducerContext {
+    receiver: Receiver<ClientCommand>,
+    sender: Sender<ProducerResult>,
+    url: Url,
+}
+
+#[derive(Debug, Clone)]
+pub enum ProducerError {
+    InvalidJson,
+    ProducerShutdown,
+    Wtf(String),
+}
+
+pub struct FloProducer {
     sender: Sender<ClientCommand>,
-    notifier: Notifier,
+    receiver: Receiver<ProducerResult>,
+    thread_handle: Option<JoinHandle<()>>,
 }
 
-pub struct FloConsumer {
-    event_listener: Box<EventListener>,
-    client_notifier: ClientNotifier,
-}
+impl FloProducer {
 
-/*
-fn create_rotor_client(server_url: Url, listener: Box<EventListener>) -> FloConsumer {
-    use std::thread;
-    use rotor::EarlyScope;
+    pub fn new(server_url: Url) -> FloProducer {
+        use std::thread;
+        use std::net::SocketAddr;
 
+        let (producer_tx, loop_rx) = channel::<ClientCommand>();
+        let (loop_tx, producer_rx) = channel::<ProducerResult>();
 
-    let (tx, rx) = channel::<ClientCommand>();
-    let mut notifier: Option<Notifier> = None;
-
-
-    let thread_handle = {
-        let not = &mut notifier;
-        let creator = rotor::Loop::new(&rotor::Config::new()).unwrap();
-        creator.add_machine_with(|scope| {
-            println!("start of add_machine_with");
-            *not = Some(scope.notifier());
-            let socket_addr = server_url.to_socket_addrs().unwrap().next().unwrap();
-            connect_tcp::<FloRotorClient>(scope, &socket_addr, ())
-        }).unwrap();
-        let mut loop_inst: LoopInstance<_>  = creator.instantiate(FloRequesterContext);
-
-
-        thread::spawn(move || {
-            println!("About to start client event loop");
-
-
-            let run_result = loop_inst.run();
-            match run_result {
-                Ok(_) => println!("Finished running client event loop - OK"),
-                Err(e) => println!("Error running client event loop: {:?}", e)
+        let address = server_url.to_socket_addrs().unwrap().filter(|addr| {
+            match addr {
+                &SocketAddr::V4(_) => true,
+                _ => false
             }
-        })
-    };
+        }).next().expect("Could not fine an IpV4 address");
+        println!("using address: {:?}", address);
 
-    FloConsumer {
-        event_listener: listener,
-        client_notifier: notifier.unwrap(),
+        let thread_handle = thread::spawn(move || {
+            println!("starting producer loop");
+            let context = ProducerContext {
+                receiver: loop_rx,
+                sender: loop_tx,
+                url: server_url.clone(),
+            };
+            let loop_creater = rotor::Loop::new(&rotor::Config::new()).unwrap();
+            let mut loop_instance = loop_creater.instantiate(context);
+            loop_instance.add_machine_with(move |scope| {
+                connect_tcp::<FloRotorClient>(scope, &address, server_url)
+            });
+            loop_instance.run();
+        });
+
+        FloProducer {
+            sender: producer_tx,
+            receiver: producer_rx,
+            thread_handle: Some(thread_handle),
+        }
     }
 
+    pub fn emit_raw(&self, json_str: &str) -> Result<EventId, ProducerError> {
+        use serde_json::from_slice;
+
+        if let Ok(parsed_json) = from_slice(json_str.as_bytes()) {
+            self.sender.send(ClientCommand::Produce(parsed_json));
+
+            self.receiver.recv().map_err(|recv_err| {
+                ProducerError::ProducerShutdown
+            }).and_then(|producer_result| {
+                match producer_result {
+                    ProducerResult::Success(event_id) => Ok(event_id),
+                    ProducerResult::Error(message) => Err(ProducerError::Wtf(message)),
+                    ProducerResult::Closed => Err(ProducerError::ProducerShutdown),
+                }
+            })
+        } else {
+            Err(ProducerError::InvalidJson)
+        }
+    }
+
+    pub fn shutdown(&mut self) {
+        self.sender.send(ClientCommand::Shutdown);
+        self.thread_handle.take().map(|join_handle| {
+            println!("Shutting down producer");
+            match join_handle.join() {
+                Ok(_) => {},
+                Err(err) => println!("Error shutting down producer - {:?}", err)
+            }
+        });
+    }
 }
-*/
+
+impl Drop for FloProducer {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
+}
