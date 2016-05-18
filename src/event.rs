@@ -54,16 +54,15 @@ impl Event {
         }
     }
 
+    pub fn from_slice(complete_data: &[u8]) -> ParseResult<Event> {
+        serde_json::de::from_slice(complete_data)
+                .map(Event::from_complete_json)
+    }
+
 
     #[cfg(test)]
     pub fn from_reader<R: Read>(raw_data: R) -> ParseResult<Event> {
         serde_json::de::from_reader(raw_data)
-                .map(Event::from_complete_json)
-    }
-
-    #[cfg(test)]
-    pub fn from_slice(complete_data: &[u8]) -> ParseResult<Event> {
-        serde_json::de::from_slice(complete_data)
                 .map(Event::from_complete_json)
     }
 
@@ -85,6 +84,12 @@ pub fn to_event(id: EventId, json: &str) -> ParseResult<Event> {
 
 pub fn to_json(json: &str) -> ParseResult<Json> {
     serde_json::from_str(json)
+}
+
+pub fn to_bytes(json: &Json) -> ParseResult<Vec<u8>> {
+    use serde_json::ser::to_vec;
+
+    to_vec(json)
 }
 
 #[cfg(test)]

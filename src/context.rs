@@ -40,9 +40,11 @@ impl <N: ConsumerNotifier, S: EventStore> FloContext<N, S> {
     pub fn add_event(&mut self, event_json: Value) -> PersistenceResult {
         let event_id = self.next_event_id();
         let event = Event::new(event_id, event_json);
-        self.event_store.store(event);
-        self.notify_all_consumers();
-        Ok(())
+        let result = self.event_store.store(event);
+        if result.is_ok() {
+            self.notify_all_consumers();
+        }
+        result
     }
 
     pub fn add_consumer(&mut self, notifier: N, last_event: EventId) -> usize {

@@ -24,7 +24,7 @@ use std::net::ToSocketAddrs;
 use std::sync::mpsc::{Sender, Receiver, channel};
 use std::sync::Arc;
 use std::thread::JoinHandle;
-use event::Json;
+use event::{self, Json};
 use std::marker::PhantomData;
 
 #[derive(Clone, Debug)]
@@ -54,21 +54,28 @@ impl Client for FloRotorClient {
     }
 
     fn connection_idle(mut self, _conn: &Connection, scope: &mut Scope<ProducerContext>) -> Task<FloRotorClient> {
+        println!("Connection-Idle");
         match scope.receiver.recv() {
             Ok(command) => {
                 println!("got command: {:?}", command);
-                scope.shutdown_loop();
+                match command {
+                    ClientCommand::Produce(json) => Task::Request(self, FloRotorRequester::Producer(json)),
+                    _ => {
+                        scope.shutdown_loop();
+                        Task::Close
+                    }
+                }
             },
             Err(e) => {
                 println!("client received error: {:?}", e);
                 scope.shutdown_loop();
+                Task::Close
             }
         }
-        Task::Close
     }
 
     fn connection_error(self, err: &ProtocolError, scope: &mut Scope<ProducerContext>) {
-        println!("----- Bad response: {} -----", err);
+        println!("----- Client Connection Error: {} -----", err);
         scope.shutdown_loop();
     }
 
@@ -88,29 +95,54 @@ impl Client for FloRotorClient {
 
 #[derive(Debug)]
 enum FloRotorRequester {
-    Producer,
+    Producer(Json),
 }
 
 impl Requester for FloRotorRequester {
     type Context = ProducerContext;
 
     fn prepare_request(self, req: &mut Request, scope: &mut Scope<ProducerContext>) -> Option<Self> {
-        req.start("GET", scope.url.path(), Version::Http11);
-        req.add_header("User-Agent", b"Flo Client Library");
-        req.done_headers().unwrap();
-        req.done();
+        match self {
+            FloRotorRequester::Producer(ref json) => {
+                let body = event::to_bytes(json).unwrap();
+
+                req.start("PUT", scope.url.path(), Version::Http11);
+                req.add_header("User-Agent", b"Flo Client Library");
+                req.add_length(body.len() as u64);
+                req.done_headers().unwrap();
+                req.write_body(&body);
+                req.done();
+            }
+        }
         Some(self)
     }
 
     fn headers_received(self, head: Head,
             _req: &mut Request,
             scope: &mut Scope<ProducerContext>) -> Option<(Self, RecvMode, Time)> {
-        None
+        debug!("Received headers");
+        Some((self, RecvMode::Buffered(1024), scope.now() + Duration::new(10, 0)))
     }
 
     fn response_received(self, data: &[u8], req: &mut Request, scope: &mut Scope<ProducerContext>) {
-        let response_data = String::from_utf8_lossy(data);
-        println!("Response received for: {:?}, \ndata: {:?}", self, response_data);
+        use serde_json::from_slice;
+
+        let body = String::from_utf8_lossy(data);
+        debug!("got response: {:?}", body);
+
+        from_slice(data).map_err(|serde_err| {
+            format!("unable to parse response - {:?}", serde_err)
+        }).and_then(|json: Json| {
+            json.find("id").and_then(|value: &Json| {
+                value.as_u64()
+            }).ok_or("Response did not include event id".to_string())
+        }).map(|event_id| {
+            debug!("sending success response with id: {}", event_id);
+            scope.sender.send(ProducerResult::Success(event_id));
+        }).map_err(|err| {
+            warn!("sending error response with value: {:?}", &err);
+            scope.sender.send(ProducerResult::Error(err));
+        });
     }
 
     fn response_chunk(self, chunk: &[u8], req: &mut Request, scope: &mut Scope<ProducerContext>) -> Option<Self> {
@@ -134,7 +166,7 @@ impl Requester for FloRotorRequester {
     }
 
     fn bad_response(self, err: &ResponseError, scope: &mut Scope<ProducerContext>) {
-        println!("Bad Response for: {:?}", self);
+        println!("Bad Response: {:?}", err);
     }
 }
 
@@ -178,10 +210,10 @@ impl FloProducer {
                 _ => false
             }
         }).next().expect("Could not fine an IpV4 address");
-        println!("using address: {:?}", address);
+        debug!("using address: {:?}", address);
 
         let thread_handle = thread::spawn(move || {
-            println!("starting producer loop");
+            debug!("starting producer loop");
             let context = ProducerContext {
                 receiver: loop_rx,
                 sender: loop_tx,
@@ -193,6 +225,7 @@ impl FloProducer {
                 connect_tcp::<FloRotorClient>(scope, &address, server_url)
             });
             loop_instance.run();
+            debug!("End of event loop thread");
         });
 
         FloProducer {
@@ -223,12 +256,13 @@ impl FloProducer {
     }
 
     pub fn shutdown(&mut self) {
+        trace!("shutdown called");
         self.sender.send(ClientCommand::Shutdown);
         self.thread_handle.take().map(|join_handle| {
             println!("Shutting down producer");
             match join_handle.join() {
-                Ok(_) => {},
-                Err(err) => println!("Error shutting down producer - {:?}", err)
+                Ok(_) => debug!("Successfully shutdown producer"),
+                Err(err) => error!("Error shutting down producer - {:?}", err)
             }
         });
     }
@@ -236,6 +270,8 @@ impl FloProducer {
 
 impl Drop for FloProducer {
     fn drop(&mut self) {
+        trace!("Dropping producer");
         self.shutdown();
+        trace!("Finished Dropping producer");
     }
 }

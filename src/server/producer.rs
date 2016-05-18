@@ -1,6 +1,8 @@
 use rotor::Time;
 use rotor_http::server::Response;
 use serde_json::de::from_slice;
+use serde_json::to_vec;
+use serde_json::builder::ObjectBuilder;
 
 use context::FloContext;
 use server::consumer::ConsumerNotifier;
@@ -18,24 +20,27 @@ pub fn handle_request<C, S>(data: &[u8], res: &mut Response, context: &mut FloCo
 
     match from_slice(data) {
         Ok(event) => {
-            let body = format!("Added event: {:?}", event);
             match context.add_event(event) {
-                Ok(_) => write_response(200u16, &body, res),
-                Err(_) => write_response(500, "oh shit man", res)
+                Ok(event_id) => {
+                    let json = ObjectBuilder::new().insert("id", event_id).unwrap();
+                    let body = to_vec(&json).unwrap();
+                    write_response(200u16, &body, res);
+                },
+                Err(_) => write_response(500, b"oh shit man", res)
             }
         },
         _ => {
-            write_response(400u16, "invalid json", res);
+            write_response(400u16, b"invalid json", res);
         }
     }
 
 }
 
-fn write_response(status: u16, body: &str, res: &mut Response) {
+fn write_response(status: u16, body: &[u8], res: &mut Response) {
     res.status(status, "Success");
     res.add_length(body.len() as u64).unwrap();
     res.done_headers().unwrap();
-    res.write_body(body.as_bytes());
+    res.write_body(body);
     res.done();
 }
 
@@ -71,7 +76,7 @@ mod test {
     #[test]
     fn handle_request_sends_body_with_success_message() {
         let response_data = test_request!(b"{\"anyKey\": \"anyValue\"}");
-        assert_response_body("Added event: {\"anyKey\":\"anyValue\"}", response_data.as_slice());
+        assert_response_body(r#"{"id":1}"#, response_data.as_slice());
     }
 
     #[test]

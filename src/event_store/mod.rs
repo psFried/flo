@@ -15,7 +15,7 @@ const MAX_CACHED_EVENTS: usize = 150;
 pub const MAX_NUM_EVENTS: usize = 1_000_000;
 
 pub struct PersistenceError;
-pub type PersistenceResult = Result<(), PersistenceError>;
+pub type PersistenceResult = Result<EventId, PersistenceError>;
 
 pub trait EventStore {
 
@@ -76,7 +76,7 @@ impl EventStore for FileSystemEventStore {
         self.events_file.write(evt.get_raw_bytes());
         self.current_file_position += evt.get_raw_bytes().len() as u64;
         self.event_cache.insert(event_id, evt);
-        Ok(())
+        Ok(event_id)
     }
 
     fn get_event_greater_than(&mut self, event_id: EventId) -> Option<&mut Event> {
@@ -182,7 +182,7 @@ mod test {
         let mut store = FileSystemEventStore::new(temp_dir.path().to_path_buf());
 
         let event = to_event(1, r#"{"myKey": "one"}"#).unwrap();
-        store.store(event.clone()).unwrap_or_else(|_| {});
+        store.store(event.clone());
         assert_eq!(Some(&event), store.event_cache.get(&1));
     }
 
@@ -192,10 +192,10 @@ mod test {
         let mut store = FileSystemEventStore::new(temp_dir.path().to_path_buf());
 
         let event1 = to_event(1, r#"{"myKey": "one"}"#).unwrap();
-        store.store(event1.clone()).unwrap_or_else(|_| {});
+        store.store(event1.clone());
 
         let event2 = to_event(2, r#"{"myKey": "one"}"#).unwrap();
-        store.store(event2.clone()).unwrap_or_else(|_| {});
+        store.store(event2.clone());
 
         let file_path = temp_dir.path().join("events.json");
         let file = File::open(file_path).unwrap();
@@ -217,7 +217,7 @@ mod test {
         let mut store = FileSystemEventStore::new(temp_dir.path().to_path_buf());
 
         let event = to_event(1, r#"{"myKey": "myVal"}"#).unwrap();
-        store.store(event.clone()).unwrap_or_else(|_| {});
+        store.store(event.clone());
 
         let file_path = temp_dir.path().join("events.json");
         let mut file = File::open(file_path).unwrap();

@@ -54,8 +54,9 @@ impl MockEventStore {
 
 impl EventStore for MockEventStore {
     fn store(&mut self, event: Event) -> PersistenceResult {
+        let event_id = event.get_id();
         self.events.push(event);
-        Ok(())
+        Ok(event_id)
     }
 
     fn get_event_greater_than(&mut self, event_id: EventId) -> Option<&mut Event> {
