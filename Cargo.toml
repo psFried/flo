@@ -20,3 +20,4 @@ hyper = "*"
 
 httparse = "*"
 tempdir = "*"
+env_logger = "*"

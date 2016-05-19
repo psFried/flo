@@ -1,5 +1,6 @@
 extern crate flo;
 extern crate url;
+extern crate env_logger;
 
 
 use url::Url;
@@ -7,6 +8,15 @@ use flo::client::*;
 use std::process::{Child, Command};
 use std::thread;
 use std::time::Duration;
+use std::sync::{Once, ONCE_INIT};
+
+static ON_START: Once = ONCE_INIT;
+
+fn init_logger() {
+    ON_START.call_once(|| {
+        env_logger::init().unwrap();
+    });
+}
 
 pub struct FloServerProcess {
     child_proc: Option<Child>,
@@ -44,6 +54,7 @@ impl Drop for FloServerProcess {
 
 #[test]
 fn producer_produces_event_and_gets_event_id_in_response() {
+    init_logger();
     let server = FloServerProcess::new();
     let url = Url::parse("http://localhost:3000").unwrap();
     let mut producer = FloProducer::new(url);
