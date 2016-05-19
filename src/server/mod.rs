@@ -11,6 +11,8 @@ use self::consumer::{get_last_event_id, RotorConsumerNotifier};
 use event_store::FileSystemEventStore;
 
 use std::time::Duration;
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::path::PathBuf;
 
 
 #[derive(Debug)]
@@ -80,17 +82,24 @@ impl <'a> Server for FloServer {
     }
 }
 
-pub fn start_server() {
+pub struct ServerOptions {
+    pub port: u16,
+    pub storage_dir: PathBuf,
+}
+
+pub fn start_server(opts: ServerOptions) {
     use std::path::PathBuf;
     use rotor::{Loop, Config};
 
     info!("Starting server");
-    let event_store = FileSystemEventStore::new(PathBuf::from("."));
+    let event_store = FileSystemEventStore::new(opts.storage_dir);
     let flo_context = FloContext::new(event_store);
 
     let event_loop = Loop::new(&Config::new()).unwrap();
     let mut loop_inst = event_loop.instantiate(flo_context);
-    let listener = TcpListener::bind(&"0.0.0.0:3000".parse().unwrap()).unwrap();
+    let mut address = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), opts.port));
+
+    let listener = TcpListener::bind(&address).unwrap();
     loop_inst.add_machine_with(|scope| {
         Fsm::<FloServer, _>::new(listener, (), scope)
     }).unwrap();

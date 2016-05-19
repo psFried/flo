@@ -13,8 +13,7 @@ lru_time_cache = "0.3"
 log = "0.3"
 log4rs = "0.4"
 url = "1.1"
-
-hyper = "*"
+clap = "2.5"
 
 [dev-dependencies]
 
