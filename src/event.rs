@@ -1,6 +1,8 @@
 use serde_json::{self, Value, builder};
 use std::io::Read;
 
+pub use serde_json::builder::ObjectBuilder;
+
 pub type Json = Value;
 pub type EventId = u64;
 pub type ParseResult<T> = Result<T, serde_json::Error>;

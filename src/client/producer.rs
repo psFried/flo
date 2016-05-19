@@ -1,7 +1,7 @@
 use log;
 use std::io::Read;
 use serde_json::Value;
-use event::{Event, EventId};
+use event::{self, Event, EventId, Json};
 use rotor_http::client::{
     self,
     connect_tcp,
@@ -24,7 +24,6 @@ use std::net::ToSocketAddrs;
 use std::sync::mpsc::{Sender, Receiver, channel};
 use std::sync::Arc;
 use std::thread::JoinHandle;
-use event::{self, Json};
 use std::marker::PhantomData;
 
 #[derive(Clone, Debug)]
@@ -175,7 +174,8 @@ impl ProducerRequester {
     }
 }
 
-enum ProducerResult {
+#[derive(Debug, PartialEq)]
+pub enum ProducerResult {
     Success(EventId),
     Error(String),
     Closed,
@@ -198,6 +198,18 @@ pub struct FloProducer {
     sender: Sender<ClientCommand>,
     receiver: Receiver<ProducerResult>,
     thread_handle: Option<JoinHandle<()>>,
+}
+
+pub struct ProducerResults<'a> {
+    receiver: &'a Receiver<ProducerResult>,
+}
+
+impl <'a> Iterator for ProducerResults<'a> {
+    type Item=ProducerResult;
+
+    fn next(&mut self) -> Option<ProducerResult> {
+        self.receiver.recv().ok()
+    }
 }
 
 impl FloProducer {
@@ -238,6 +250,20 @@ impl FloProducer {
             receiver: producer_rx,
             thread_handle: Some(thread_handle),
         }
+    }
+
+    pub fn emit<'a, 'b, T>(&'a self, events: T) -> ProducerResults<'a>
+            where T: Iterator<Item=&'b Json> + Sized {
+
+        for event in events {
+            let event_bytes = event::to_bytes(event).unwrap();
+            self.sender.send(ClientCommand::Produce(event_bytes));
+        }
+
+        ProducerResults {
+            receiver: &self.receiver
+        }
+
     }
 
     pub fn emit_raw<T: Into<Vec<u8>>>(&self, json_str: T) -> Result<EventId, ProducerError> {

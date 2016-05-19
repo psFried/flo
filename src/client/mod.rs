@@ -1,4 +1,4 @@
 mod producer;
 
 
-pub use self::producer::FloProducer;
+pub use self::producer::{FloProducer, ProducerResult};
