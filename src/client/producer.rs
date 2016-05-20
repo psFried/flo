@@ -129,17 +129,14 @@ impl Requester for ProducerRequester {
         debug!("got response: {:?}", body);
 
         from_slice(data).map_err(|serde_err| {
-            format!("unable to parse response - {:?}", serde_err)
+            format!("unable to parse response from server - {:?}", serde_err)
         }).and_then(|json: Json| {
             json.find("id").and_then(|value: &Json| {
                 value.as_u64()
             }).ok_or("Response did not include event id".to_string())
         }).map(|event_id| {
             debug!("sending success response with id: {}", event_id);
-            scope.sender.send(ProducerResult::Success(event_id));
-        }).map_err(|err| {
-            warn!("sending error response with value: {:?}", &err);
-            scope.sender.send(ProducerResult::Error(err));
+            scope.sender.send(Ok(event_id)).unwrap();
         });
     }
 
@@ -174,12 +171,8 @@ impl ProducerRequester {
     }
 }
 
-#[derive(Debug, PartialEq)]
-pub enum ProducerResult {
-    Success(EventId),
-    Error(String),
-    Closed,
-}
+pub type ProducerResult = Result<EventId, String>;
+
 
 pub struct ProducerContext {
     receiver: Receiver<ClientCommand>,
@@ -266,20 +259,14 @@ impl FloProducer {
 
     }
 
-    pub fn emit_raw<T: Into<Vec<u8>>>(&self, json_str: T) -> Result<EventId, ProducerError> {
+    pub fn emit_raw<T: Into<Vec<u8>>>(&self, json_str: T) -> ProducerResult {
         use serde_json::from_slice;
 
         self.sender.send(ClientCommand::Produce(json_str.into()));
 
         self.receiver.recv().map_err(|recv_err| {
-            ProducerError::ProducerShutdown
-        }).and_then(|producer_result| {
-            match producer_result {
-                ProducerResult::Success(event_id) => Ok(event_id),
-                ProducerResult::Error(message) => Err(ProducerError::Wtf(message)),
-                ProducerResult::Closed => Err(ProducerError::ProducerShutdown),
-            }
-        })
+            "Producer thread must have panicked".to_string()
+        }).and_then(|producer_result| producer_result)
     }
 
     pub fn shutdown(&mut self) {

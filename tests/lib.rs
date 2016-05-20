@@ -100,9 +100,23 @@ integration_test!(producer_emits_multiple_events_and_returns_iterator_of_results
 
     let mut results = producer.emit(events.iter());
     let result_a = results.next();
-    assert_eq!(Some(ProducerResult::Success(1)), result_a);
+    assert_eq!(Some(Ok(1)), result_a);
     let result_b = results.next();
-    assert_eq!(Some(ProducerResult::Success(2)), result_b);
+    assert_eq!(Some(Ok(2)), result_b);
     let result_c = results.next();
-    assert_eq!(Some(ProducerResult::Success(3)), result_c);
+    assert_eq!(Some(Ok(3)), result_c);
 });
+
+// integration_test!(consumer_consumes_events_starting_at_beginning_of_stream, server_url, {
+//     let mut producer = FloProducer::new(server_url);
+//     let events = vec![
+//         ObjectBuilder::new().insert("keyA", "valueA").unwrap(),
+//         ObjectBuilder::new().insert("keyB", 123).unwrap(),
+//         ObjectBuilder::new().insert("keyC", 43.21).unwrap(),
+//     ];
+//     for result in producer.emit(events.iter()) {
+//         result.unwrap();
+//     }
+//
+//
+// });
