@@ -134,9 +134,20 @@ impl Requester for ProducerRequester {
             json.find("id").and_then(|value: &Json| {
                 value.as_u64()
             }).ok_or("Response did not include event id".to_string())
-        }).map(|event_id| {
+        }).and_then(|event_id| {
             debug!("sending success response with id: {}", event_id);
-            scope.sender.send(Ok(event_id)).unwrap();
+            match scope.sender.send(Ok(event_id)) {
+                Ok(_) => {},
+                Err(e) => {
+                    warn!("Error sending successful response back to producer for event: {}", event_id);
+                }
+            };
+            Ok(())
+        }).map_err(|err| {
+            match scope.sender.send(Err(err)) {
+                Err(e) => error!("Error sending an error response back to producer: {}", e),
+                _ => {}
+            }
         });
     }
 
@@ -195,13 +206,23 @@ pub struct FloProducer {
 
 pub struct ProducerResults<'a> {
     receiver: &'a Receiver<ProducerResult>,
+    message_count: usize,
+    expected_message_count: usize,
 }
 
 impl <'a> Iterator for ProducerResults<'a> {
     type Item=ProducerResult;
 
     fn next(&mut self) -> Option<ProducerResult> {
-        self.receiver.recv().ok()
+        if self.message_count < self.expected_message_count {
+            self.message_count += 1;
+            trace!("waiting for result: {}", self.message_count);
+            let result = self.receiver.recv().ok();
+            result
+        } else {
+            trace!("finished getting responses for {} events", self.message_count);
+            None
+        }
     }
 }
 
@@ -248,13 +269,17 @@ impl FloProducer {
     pub fn emit<'a, 'b, T>(&'a self, events: T) -> ProducerResults<'a>
             where T: Iterator<Item=&'b Json> + Sized {
 
+        let mut event_count = 0;
         for event in events {
             let event_bytes = event::to_bytes(event).unwrap();
             self.sender.send(ClientCommand::Produce(event_bytes));
+            event_count += 1;
         }
 
         ProducerResults {
-            receiver: &self.receiver
+            receiver: &self.receiver,
+            message_count: 0,
+            expected_message_count: event_count,
         }
 
     }

@@ -5,7 +5,11 @@ extern crate tempdir;
 
 
 use url::Url;
-use flo::client::*;
+use flo::client::{FloConsumer,
+    ConsumerCommand,
+    StopResult,
+    run_consumer,
+    FloProducer};
 use flo::event::{EventId, Event, Json, ObjectBuilder};
 use std::process::{Child, Command};
 use std::thread;
@@ -107,16 +111,51 @@ integration_test!(producer_emits_multiple_events_and_returns_iterator_of_results
     assert_eq!(Some(Ok(3)), result_c);
 });
 
-// integration_test!(consumer_consumes_events_starting_at_beginning_of_stream, server_url, {
-//     let mut producer = FloProducer::new(server_url);
-//     let events = vec![
-//         ObjectBuilder::new().insert("keyA", "valueA").unwrap(),
-//         ObjectBuilder::new().insert("keyB", 123).unwrap(),
-//         ObjectBuilder::new().insert("keyC", 43.21).unwrap(),
-//     ];
-//     for result in producer.emit(events.iter()) {
-//         result.unwrap();
-//     }
-//
-//
-// });
+struct TestConsumer {
+    received_events: Vec<Event>,
+    expected_event_count: usize,
+}
+
+impl TestConsumer {
+    fn new(expected_event_count: usize) -> TestConsumer {
+        TestConsumer {
+            received_events: Vec::new(),
+            expected_event_count: expected_event_count,
+        }
+    }
+
+    fn assert_is_satisfied(&self) {
+        assert_eq!(self.expected_event_count, self.received_events.len());
+    }
+}
+
+impl FloConsumer for TestConsumer {
+    fn on_event(&mut self, event: Event) -> ConsumerCommand {
+        self.received_events.push(event);
+        if self.received_events.len() == self.expected_event_count {
+            ConsumerCommand::Stop(Ok(()))
+        } else {
+            ConsumerCommand::Continue
+        }
+    }
+}
+
+integration_test!(consumer_consumes_events_starting_at_beginning_of_stream, server_url, {
+    let mut producer = FloProducer::new(server_url.clone());
+    let events = vec![
+        ObjectBuilder::new().insert("keyA", "valueA").unwrap(),
+        ObjectBuilder::new().insert("keyB", 123).unwrap(),
+        ObjectBuilder::new().insert("keyC", 43.21).unwrap(),
+    ];
+    for result in producer.emit(events.iter()) {
+        result.expect("Failed to emit event");
+    }
+
+    let mut consumer = TestConsumer::new(3);
+    let consumer_result = run_consumer(&mut consumer, server_url, Duration::from_secs(5));
+
+    assert!(consumer_result.is_ok());
+    consumer.assert_is_satisfied();
+
+    assert_eq!(events[0], consumer.received_events[0].data);
+});
