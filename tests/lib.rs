@@ -5,11 +5,7 @@ extern crate tempdir;
 
 
 use url::Url;
-use flo::client::{FloConsumer,
-    ConsumerCommand,
-    StopResult,
-    run_consumer,
-    FloProducer};
+use flo::client::*;
 use flo::event::{EventId, Event, Json, ObjectBuilder};
 use std::process::{Child, Command};
 use std::thread;
@@ -112,30 +108,38 @@ integration_test!(producer_emits_multiple_events_and_returns_iterator_of_results
 });
 
 struct TestConsumer {
-    received_events: Vec<Event>,
-    expected_event_count: usize,
+    events: Vec<Event>,
+    expected_events: usize,
 }
 
 impl TestConsumer {
-    fn new(expected_event_count: usize) -> TestConsumer {
+    fn new(expected_events: usize) -> TestConsumer {
         TestConsumer {
-            received_events: Vec::new(),
-            expected_event_count: expected_event_count,
+            events: Vec::new(),
+            expected_events: expected_events,
         }
     }
 
-    fn assert_is_satisfied(&self) {
-        assert_eq!(self.expected_event_count, self.received_events.len());
+    fn assert_event_data_received(&self, expected: &Vec<Json>) {
+        let num_expected = expected.len();
+        let num_received = self.events.len();
+        assert!(num_expected == num_received, "Expected {} events, got {}", num_expected, num_received);
+        for (actual, expected) in self.events.iter().zip(expected.iter()) {
+            let actual_data = actual.data.find("data").expect("Event should have data");
+            assert_eq!(actual_data, expected);
+        }
     }
 }
 
 impl FloConsumer for TestConsumer {
     fn on_event(&mut self, event: Event) -> ConsumerCommand {
-        self.received_events.push(event);
-        if self.received_events.len() == self.expected_event_count {
-            ConsumerCommand::Stop(Ok(()))
-        } else {
+        println!("Test Consumer received event: {:?}", event);
+        self.events.push(event);
+
+        if self.events.len() < self.expected_events {
             ConsumerCommand::Continue
+        } else {
+            ConsumerCommand::Stop(Ok(()))
         }
     }
 }
@@ -148,14 +152,16 @@ integration_test!(consumer_consumes_events_starting_at_beginning_of_stream, serv
         ObjectBuilder::new().insert("keyC", 43.21).unwrap(),
     ];
     for result in producer.emit(events.iter()) {
-        result.expect("Failed to emit event");
+        println!("About to unwrap result: {:?}", result);
+        result.unwrap();
     }
 
+    println!("Finished producing 3 events");
+
     let mut consumer = TestConsumer::new(3);
-    let consumer_result = run_consumer(&mut consumer, server_url, Duration::from_secs(5));
-
-    assert!(consumer_result.is_ok());
-    consumer.assert_is_satisfied();
-
-    assert_eq!(events[0], consumer.received_events[0].data);
+    println!("finished creating consumer");
+    let result = run_consumer(&mut consumer, server_url, Duration::from_secs(5));
+    println!("finished running consumer");
+    assert_eq!(Ok(()), result);
+    consumer.assert_event_data_received(&events);
 });

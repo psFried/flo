@@ -1,6 +1,8 @@
-use serde_json::{self, Value, builder};
-use std::io::Read;
+use std::io::{self, Read};
+use std::string::FromUtf8Error;
+use serde_json::{self, Value, builder, Deserializer};
 
+pub use serde_json::{Error, ErrorCode};
 pub use serde_json::builder::ObjectBuilder;
 
 pub type Json = Value;
