@@ -12,7 +12,6 @@ use std::thread;
 use std::time::Duration;
 use std::sync::{Once, ONCE_INIT};
 use std::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
-use std::borrow::Borrow;
 use std::path::Path;
 
 static mut PORT: AtomicUsize = ATOMIC_USIZE_INIT;
@@ -31,7 +30,6 @@ pub struct FloServerProcess {
 
 impl FloServerProcess {
     pub fn new(port: u16, data_dir: &Path) -> FloServerProcess {
-        use std::path::PathBuf;
         use std::env::current_dir;
 
         let mut flo_path = current_dir().unwrap();
@@ -58,8 +56,8 @@ impl Drop for FloServerProcess {
     fn drop(&mut self) {
         self.child_proc.take().map(|mut child| {
             println!("killing flo server proc");
-            child.kill();
-            child.wait();
+            child.kill().unwrap();
+            child.wait().unwrap();
             println!("flo server proc completed");
         });
     }
@@ -68,13 +66,14 @@ impl Drop for FloServerProcess {
 macro_rules! integration_test {
     ($d:ident, $p:ident, $t:block) => (
         #[test]
+        #[allow(unused_variables)]
         fn $d() {
             init_logger();
             let port =  unsafe {
                 3000u16 + PORT.fetch_add(1, Ordering::Relaxed) as u16
             };
             let data_dir = tempdir::TempDir::new("flo-integration-test").unwrap();
-            let mut flo_server_proc = FloServerProcess::new(port, data_dir.path());
+            let flo_server_proc = FloServerProcess::new(port, data_dir.path());
             let $p: Url = Url::parse(&format!("http://localhost:{}", port)).unwrap();
             $t
         }
@@ -83,14 +82,38 @@ macro_rules! integration_test {
 
 
 integration_test!(producer_produces_event_and_gets_event_id_in_response, server_url, {
-    let mut producer = FloProducer::new(server_url);
-    let result = producer.emit_raw(r#"{"myKey": "what a great value!"}"#);
-    assert!(result.is_ok());
-    assert_eq!(1, result.unwrap());
+    let producer = FloProducer::default(server_url);
+    let result = producer.emit_raw(r#"{"myKey": "what a great value!"}"#.as_bytes());
+    assert_eq!(Ok(1), result);
 });
 
+struct TestProducerHandler {
+    expected_results: Vec<ProducerResult>,
+	current_result: usize,
+}
+
+impl TestProducerHandler {
+    fn expect_success(event_ids: Vec<EventId>) -> TestProducerHandler {
+        let expected_results = event_ids.iter().map(|id| Ok(*id)).collect::<Vec<ProducerResult>>();
+        TestProducerHandler {
+            expected_results: expected_results,
+            current_result: 0usize,
+        }
+    }
+}
+
+impl <'a> StreamProducerHandler<&'a Json> for TestProducerHandler {
+    fn handle_result(&mut self, result: ProducerResult, _json: &Json) -> ConsumerCommand {
+
+		assert_eq!(self.expected_results.get(self.current_result), Some(&result));
+		self.current_result += 1;
+		ConsumerCommand::Continue
+    }
+}
+
 integration_test!(producer_emits_multiple_events_and_returns_iterator_of_results, server_url, {
-    let mut producer = FloProducer::new(server_url);
+	    
+    let producer = FloProducer::default(server_url);
 
     let events = vec![
         ObjectBuilder::new().insert("keyA", "valueA").unwrap(),
@@ -98,13 +121,8 @@ integration_test!(producer_emits_multiple_events_and_returns_iterator_of_results
         ObjectBuilder::new().insert("keyC", 43.21).unwrap(),
     ];
 
-    let mut results = producer.emit(events.iter());
-    let result_a = results.next();
-    assert_eq!(Some(Ok(1)), result_a);
-    let result_b = results.next();
-    assert_eq!(Some(Ok(2)), result_b);
-    let result_c = results.next();
-    assert_eq!(Some(Ok(3)), result_c);
+	let mut producer_handler = TestProducerHandler::expect_success(vec![1, 2, 3]);
+	producer.produce_stream(events.iter(), &mut producer_handler);
 });
 
 struct TestConsumer {
@@ -145,16 +163,14 @@ impl FloConsumer for TestConsumer {
 }
 
 integration_test!(consumer_consumes_events_starting_at_beginning_of_stream, server_url, {
-    let mut producer = FloProducer::new(server_url.clone());
+    let producer = FloProducer::default(server_url.clone());
     let events = vec![
         ObjectBuilder::new().insert("keyA", "valueA").unwrap(),
         ObjectBuilder::new().insert("keyB", 123).unwrap(),
         ObjectBuilder::new().insert("keyC", 43.21).unwrap(),
     ];
-    for result in producer.emit(events.iter()) {
-        println!("About to unwrap result: {:?}", result);
-        result.unwrap();
-    }
+	let mut producer_handler = TestProducerHandler::expect_success(vec![1, 2, 3]);
+	producer.produce_stream(events.iter(), &mut producer_handler);
 
     println!("Finished producing 3 events");
 

@@ -1,28 +1,16 @@
-use log;
-use serde_json::{self, Value};
-use event::{self, Event, EventId, Json};
-use url::Url;
+use event::Event;
 
-use hyper::client::{Client, Request, Response};
+use hyper::client::{Client, Response};
+use hyper::Url;
 
-use std::io::{ErrorKind, Read};
+use std::io::Read;
 use std::time::Duration;
-use std::net::ToSocketAddrs;
-use std::sync::mpsc::{Sender, Receiver, channel};
-use std::sync::Arc;
-use std::thread::JoinHandle;
-use std::marker::PhantomData;
 
-pub type StopResult = Result<(), String>;
+use super::{ConsumerCommand, StopResult};
 
-#[derive(Debug, PartialEq)]
-pub enum ConsumerCommand {
-    Continue,
-    Stop(StopResult)
-}
 
 pub trait FloConsumer {
-    fn on_event(&mut self, event: Event) -> ConsumerCommand {
+    fn on_event(&mut self, _event: Event) -> ConsumerCommand {
         ConsumerCommand::Stop(Err("oh shit man!".to_string()))
     }
 }
@@ -37,7 +25,7 @@ pub fn run_consumer<T: FloConsumer>(consumer: &mut T, url: Url, timeout: Duratio
         format!("Request Error: {}", req_err)
     }).and_then(|mut response| {
         debug!("Got response for Consumer");
-        let mut stop_result = process_streaming_response(consumer, &mut response);
+        let stop_result = process_streaming_response(consumer, &mut response);
         debug!("finished running consumer with result: {:?}", stop_result);
         stop_result
     })
@@ -46,7 +34,7 @@ pub fn run_consumer<T: FloConsumer>(consumer: &mut T, url: Url, timeout: Duratio
 fn process_streaming_response<T: FloConsumer>(consumer: &mut T, response: &mut Response) -> StopResult {
     use serde_json::de::StreamDeserializer;
 
-    let mut event_iter = StreamDeserializer::new(response.bytes()).map(|json_result| {
+    let event_iter = StreamDeserializer::new(response.bytes()).map(|json_result| {
         json_result.map(Event::from_complete_json)
     });
 

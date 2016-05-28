@@ -1,6 +1,5 @@
-use std::io::{self, Read};
-use std::string::FromUtf8Error;
-use serde_json::{self, Value, builder, Deserializer};
+use std::io::Read;
+use serde_json::{self, Value, builder};
 
 pub use serde_json::{Error, ErrorCode};
 pub use serde_json::builder::ObjectBuilder;
@@ -79,7 +78,6 @@ impl Event {
 }
 
 
-
 pub fn to_event(id: EventId, json: &str) -> ParseResult<Event> {
     to_json(json).map(|data| {
         Event::new(id, data)
@@ -96,6 +94,34 @@ pub fn to_bytes(json: &Json) -> ParseResult<Vec<u8>> {
     to_vec(json)
 }
 
+pub trait EventJson {
+    fn json(&self) -> &Json;
+    
+    fn to_bytes(&self) -> ParseResult<Vec<u8>> {
+        let json = self.json();
+        to_bytes(json)
+    }
+}
+
+impl EventJson for Value {
+    fn json(&self) -> &Json {
+        self
+    }
+}
+
+impl <'a> EventJson for &'a Value {
+    fn json(&self) -> &Json {
+        self
+    }
+}
+
+impl EventJson for Event {
+    fn json(&self) -> &Json {
+        self.data.find(DATA_KEY).unwrap()
+    }
+}
+
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -103,7 +129,7 @@ mod test {
     #[test]
     fn event_is_equal_to_another_event_if_json_is_equal() {
         let mut evt1 = Event::from_str(r#"{"data":{"someKey":"someValue"},"id":234}"#).unwrap();
-        let mut evt2 = Event::from_str(r#"{"data":{"someKey":"someValue"},"id":234}"#).unwrap();
+        let evt2 = Event::from_str(r#"{"data":{"someKey":"someValue"},"id":234}"#).unwrap();
         assert_eq!(evt1, evt2);
 
         evt1.raw_bytes = Some(Vec::new());

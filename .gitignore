@@ -5,6 +5,7 @@ Cargo.lock
 
 # eclipse stuff
 .project
+.settings
 
 # flo stuff
 events.json

@@ -1,316 +1,109 @@
-use log;
-use std::io::Read;
-use serde_json::Value;
-use event::{self, Event, EventId, Json};
-use rotor_http::client::{
-    self,
-    connect_tcp,
-    Request,
-    Head,
-    Client,
-    RecvMode,
-    Connection,
-    Requester,
-    Task,
-    Version,
-    ResponseError,
-    ProtocolError
-};
-use rotor::{self, Config, Loop, Scope, Time, Notifier, LoopInstance};
-use rotor::mio::tcp::TcpStream;
-use url::Url;
-use std::time::Duration;
-use std::net::ToSocketAddrs;
-use std::sync::mpsc::{Sender, Receiver, channel};
+use serde_json;
+use event::{self, EventId, Json, EventJson};
+use hyper::client::{Client, Response};
+use hyper::{Url};
 use std::sync::Arc;
-use std::thread::JoinHandle;
-use std::marker::PhantomData;
-
-#[derive(Clone, Debug)]
-enum ClientCommand {
-    Shutdown,
-    Produce(Vec<u8>),
-}
-unsafe impl Send for ClientCommand {}
+use super::ConsumerCommand;
 
 
+pub type ProducerResult = Result<EventId, ProducerError>;
 
-#[derive(Debug, PartialEq)]
-struct FloRotorClient {
-    server_url: Url,
-}
-
-
-
-impl Client for FloRotorClient {
-    type Requester = ProducerRequester;
-    type Seed = Url;
-
-    fn create(seed: Self::Seed, _scope: &mut Scope<ProducerContext>) -> Self {
-        FloRotorClient {
-            server_url: seed,
-        }
-    }
-
-    fn connection_idle(mut self, _conn: &Connection, scope: &mut Scope<ProducerContext>) -> Task<FloRotorClient> {
-        trace!("Connection-Idle - {:?}", self);
-        match scope.receiver.recv() {
-            Ok(command) => {
-                match command {
-                    ClientCommand::Produce(json) => {
-                        trace!("{:?} received Produce command", self);
-                        Task::Request(self, ProducerRequester::new(json))
-                    },
-                    _ => {
-                        scope.shutdown_loop();
-                        Task::Close
-                    }
-                }
-            },
-            Err(e) => {
-                error!("client receiver error: {:?}", e);
-                scope.shutdown_loop();
-                Task::Close
-            }
-        }
-    }
-
-    fn connection_error(self, err: &ProtocolError, scope: &mut Scope<ProducerContext>) {
-        error!("----- Client Connection Error: {} -----", err);
-        scope.shutdown_loop();
-    }
-
-    fn wakeup(self, _connection: &Connection, scope: &mut Scope<ProducerContext>) -> Task<FloRotorClient> {
-        error!("Wakeup on Client");
-        scope.shutdown_loop();
-        Task::Close
-    }
-
-    fn timeout(self, _connection: &Connection, scope: &mut Scope<ProducerContext>) -> Task<FloRotorClient> {
-        debug!("Timeout on Client");
-        scope.shutdown_loop();
-        Task::Close
-    }
-}
-
-
-#[derive(Debug)]
-pub struct ProducerRequester {
-    data: Vec<u8>,
-}
-
-impl Requester for ProducerRequester {
-    type Context = ProducerContext;
-
-    fn prepare_request(self, req: &mut Request, scope: &mut Scope<ProducerContext>) -> Option<Self> {
-        {
-            let json = &self.data;
-            req.start("PUT", scope.url.path(), Version::Http11);
-            req.add_header("User-Agent", b"Flo Client Library");
-            req.add_length(json.len() as u64);
-            req.done_headers().unwrap();
-            req.write_body(json);
-            req.done();
-        }
-        Some(self)
-    }
-
-    fn headers_received(self, head: Head,
-            _req: &mut Request,
-            scope: &mut Scope<ProducerContext>) -> Option<(Self, RecvMode, Time)> {
-        debug!("Received headers");
-        Some((self, RecvMode::Buffered(1024), scope.now() + Duration::new(10, 0)))
-    }
-
-    fn response_received(self, data: &[u8], req: &mut Request, scope: &mut Scope<ProducerContext>) {
-        use serde_json::from_slice;
-
-        let body = String::from_utf8_lossy(data);
-        debug!("got response: {:?}", body);
-
-        from_slice(data).map_err(|serde_err| {
-            format!("unable to parse response from server - {:?}", serde_err)
-        }).and_then(|json: Json| {
-            json.find("id").and_then(|value: &Json| {
-                value.as_u64()
-            }).ok_or("Response did not include event id".to_string())
-        }).and_then(|event_id| {
-            debug!("sending success response with id: {}", event_id);
-            match scope.sender.send(Ok(event_id)) {
-                Ok(_) => {},
-                Err(e) => {
-                    warn!("Error sending successful response back to producer for event: {}", event_id);
-                }
-            };
-            Ok(())
-        }).map_err(|err| {
-            match scope.sender.send(Err(err)) {
-                Err(e) => error!("Error sending an error response back to producer: {}", e),
-                _ => {}
-            }
-        });
-    }
-
-    fn response_chunk(self, chunk: &[u8], req: &mut Request, scope: &mut Scope<ProducerContext>) -> Option<Self> {
-		unreachable!();
-    }
-
-    fn response_end(self, req: &mut Request, scope: &mut Scope<ProducerContext>) {
-        debug!("Response ended for: {:?}", self);
-    }
-
-    fn timeout(self, req: &mut Request, scope: &mut Scope<ProducerContext>) -> Option<(Self, Time)> {
-        debug!("Timeout for: {:?}", self);
-        Some((self, scope.now() + Duration::new(10, 0)))
-    }
-
-    fn wakeup(self, req: &mut Request, scope: &mut Scope<ProducerContext>) -> Option<Self> {
-		unreachable!();
-    }
-
-    fn bad_response(self, err: &ResponseError, scope: &mut Scope<ProducerContext>) {
-        error!("Bad Response: {:?}", err);
-    }
-}
-
-impl ProducerRequester {
-
-    pub fn new(data: Vec<u8>) -> ProducerRequester {
-        ProducerRequester {
-            data: data
-        }
-    }
-}
-
-pub type ProducerResult = Result<EventId, String>;
-
-
-pub struct ProducerContext {
-    receiver: Receiver<ClientCommand>,
-    sender: Sender<ProducerResult>,
-    url: Url,
-}
-
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ProducerError {
     InvalidJson,
     ProducerShutdown,
+	ServerError(String),
     Wtf(String),
 }
 
+
 pub struct FloProducer {
-    sender: Sender<ClientCommand>,
-    receiver: Receiver<ProducerResult>,
-    thread_handle: Option<JoinHandle<()>>,
-}
-
-pub struct ProducerResults<'a> {
-    receiver: &'a Receiver<ProducerResult>,
-    message_count: usize,
-    expected_message_count: usize,
-}
-
-impl <'a> Iterator for ProducerResults<'a> {
-    type Item=ProducerResult;
-
-    fn next(&mut self) -> Option<ProducerResult> {
-        if self.message_count < self.expected_message_count {
-            self.message_count += 1;
-            trace!("waiting for result: {}", self.message_count);
-            let result = self.receiver.recv().ok();
-            result
-        } else {
-            trace!("finished getting responses for {} events", self.message_count);
-            None
-        }
-    }
+	client_ref: Arc<Client>,
+	server_url: Url,
 }
 
 impl FloProducer {
 
-    pub fn new(server_url: Url) -> FloProducer {
-        use std::thread;
-        use std::net::SocketAddr;
-
-        let (producer_tx, loop_rx) = channel::<ClientCommand>();
-        let (loop_tx, producer_rx) = channel::<ProducerResult>();
-
-        let address = server_url.to_socket_addrs().unwrap().filter(|addr| {
-            match addr {
-                &SocketAddr::V4(_) => true,
-                _ => false
-            }
-        }).next().expect("Could not fine an IpV4 address");
-        debug!("using address: {:?}", address);
-
-        let thread_handle = thread::spawn(move || {
-            debug!("starting producer loop");
-            let context = ProducerContext {
-                receiver: loop_rx,
-                sender: loop_tx,
-                url: server_url.clone(),
-            };
-            let loop_creater = rotor::Loop::new(&rotor::Config::new()).unwrap();
-            let mut loop_instance = loop_creater.instantiate(context);
-            loop_instance.add_machine_with(move |scope| {
-                connect_tcp::<FloRotorClient>(scope, &address, server_url)
-            });
-            loop_instance.run();
-            debug!("End of event loop thread");
-        });
-
-        FloProducer {
-            sender: producer_tx,
-            receiver: producer_rx,
-            thread_handle: Some(thread_handle),
-        }
+    pub fn new(server_url: Url, hyper_client: Arc<Client>) -> FloProducer {
+		FloProducer {
+		    server_url: server_url,
+		    client_ref: hyper_client,
+		}
     }
 
-    pub fn emit<'a, 'b, T>(&'a self, events: T) -> ProducerResults<'a>
-            where T: Iterator<Item=&'b Json> + Sized {
+	pub fn default(server_url: Url) -> FloProducer {
+	    FloProducer::new(server_url, Arc::new(Client::new()))
+	}
 
-        let mut event_count = 0;
-        for event in events {
-            let event_bytes = event::to_bytes(event).unwrap();
-            self.sender.send(ClientCommand::Produce(event_bytes));
-            event_count += 1;
-        }
+	pub fn emit(&self, event_json: Json) -> ProducerResult {
+		emit(&*self.client_ref, self.server_url.clone(), event_json)
+	}
 
-        ProducerResults {
-            receiver: &self.receiver,
-            message_count: 0,
-            expected_message_count: event_count,
-        }
-
+	pub fn emit_raw(&self, bytes: &[u8]) -> ProducerResult {
+		emit_raw(&*self.client_ref, self.server_url.clone(), bytes)
+	}
+	
+	pub fn produce_stream<'a, S, I, F>(&self, stream: S, handler: &mut F) 
+		where S: Iterator<Item=I>, 
+		I: EventJson,
+		F: StreamProducerHandler<I> {
+		    
+        produce_stream(&*self.client_ref, self.server_url.clone(), stream, handler)
     }
 
-    pub fn emit_raw<T: Into<Vec<u8>>>(&self, json_str: T) -> ProducerResult {
-        use serde_json::from_slice;
+}
 
-        self.sender.send(ClientCommand::Produce(json_str.into()));
+pub trait StreamProducerHandler<T: EventJson> {
+    fn handle_result(&mut self, result: ProducerResult, json: T) -> ConsumerCommand;
+}
 
-        self.receiver.recv().map_err(|recv_err| {
-            "Producer thread must have panicked".to_string()
-        }).and_then(|producer_result| producer_result)
-    }
-
-    pub fn shutdown(&mut self) {
-        trace!("shutdown called");
-        self.sender.send(ClientCommand::Shutdown);
-        self.thread_handle.take().map(|join_handle| {
-            info!("Shutting down producer");
-            match join_handle.join() {
-                Ok(_) => debug!("Successfully shutdown producer"),
-                Err(err) => error!("Error shutting down producer - {:?}", err)
-            }
-        });
+impl <F, T> StreamProducerHandler<T> for F where F: Fn(ProducerResult, T) -> ConsumerCommand, T: EventJson {
+    fn handle_result(&mut self, result: ProducerResult, json: T) -> ConsumerCommand {
+        self(result, json)
     }
 }
 
-impl Drop for FloProducer {
-    fn drop(&mut self) {
-        trace!("Dropping producer");
-        self.shutdown();
-        trace!("Finished Dropping producer");
-    }
+pub fn produce_stream<'a, S, I, F>(client: &Client, url: Url, json_iter: S, handler: &mut F) 
+		where S: Iterator<Item=I>, 
+		I: EventJson,
+		F: StreamProducerHandler<I> {
+	
+	for json in json_iter {
+		let result = if let Ok(bytes) = json.to_bytes() {
+            emit_raw(client, url.clone(), &bytes)
+        } else {
+            Err(ProducerError::InvalidJson)
+        };
+        if let ConsumerCommand::Stop(_) = handler.handle_result(result, json) {
+            break;
+        }
+	}
+    
+}
+
+
+pub fn emit(client: &Client, url: Url, json: Json) -> ProducerResult {
+    event::to_bytes(&json).map_err(|_err| {
+            ProducerError::InvalidJson
+    }).and_then(|bytes| {
+            emit_raw(client, url, &bytes)
+    })
+}
+
+pub fn emit_raw(client: &Client, url: Url, bytes: &[u8]) -> ProducerResult {
+	client.put(url).body(bytes).send().map_err(|hyper_err| {
+	        ProducerError::Wtf(format!("http error: {:?}", hyper_err))
+	}).and_then(|mut response| {
+		parse_response(&mut response)
+	})
+}
+
+fn parse_response(response: &mut Response) -> ProducerResult {
+	serde_json::from_reader(response).map_err(|err| {
+        ProducerError::ServerError(format!("Received bogus response from server: {:?}", err))
+    }).and_then(|response_json: Json| {
+		response_json.find("id").and_then(Json::as_u64).ok_or_else(|| {
+		    ProducerError::Wtf("event was not saved".to_string())
+        })
+    })
 }
