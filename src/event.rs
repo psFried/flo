@@ -1,5 +1,7 @@
-use std::io::Read;
 use serde_json::{self, Value, builder};
+
+#[cfg(test)]
+use std::io::Read;
 
 pub use serde_json::{Error, ErrorCode};
 pub use serde_json::builder::ObjectBuilder;

@@ -3,19 +3,18 @@ mod file_reader;
 
 use event::{EventId, Event};
 use std::fs::File;
-use std::io::{Seek, SeekFrom, Read, Write};
-use std::path::{Path, PathBuf};
+use std::io::{self, Read, Write};
+use std::path::PathBuf;
 use lru_time_cache::LruCache;
 use self::index::{RingIndex, Entry};
-use self::file_reader::{FileReader, EventsFromDisk};
+use self::file_reader::FileReader;
 
 const EVENTS_FILE_NAME: &'static str = "events.json";
 const MAX_CACHED_EVENTS: usize = 150;
 
 pub const MAX_NUM_EVENTS: usize = 1_000_000;
 
-pub struct PersistenceError;
-pub type PersistenceResult = Result<EventId, PersistenceError>;
+pub type PersistenceResult = Result<EventId, io::Error>;
 
 pub trait EventStore {
 
@@ -26,6 +25,7 @@ pub trait EventStore {
 }
 
 
+#[allow(dead_code)]
 pub struct FileSystemEventStore {
     persistence_dir: PathBuf,
     events_file: File,
@@ -51,10 +51,12 @@ impl FileSystemEventStore {
         }
     }
 
+    #[allow(dead_code)]
     fn get_storage_file_path(&self) -> PathBuf {
         self.persistence_dir.join(EVENTS_FILE_NAME)
     }
 
+    #[allow(dead_code)]
     fn open_file_for_reading(&self) -> File {
         use std::fs::OpenOptions;
 
@@ -73,10 +75,11 @@ impl EventStore for FileSystemEventStore {
         let mut evt = event;
         let event_id: EventId = evt.get_id();
         self.index.add(Entry::new(event_id, self.current_file_position));
-        self.events_file.write(evt.get_raw_bytes());
-        self.current_file_position += evt.get_raw_bytes().len() as u64;
-        self.event_cache.insert(event_id, evt);
-        Ok(event_id)
+        self.events_file.write(evt.get_raw_bytes()).map(|_| {
+            self.current_file_position += evt.get_raw_bytes().len() as u64;
+            self.event_cache.insert(event_id, evt);
+            event_id
+        })
     }
 
     fn get_event_greater_than(&mut self, event_id: EventId) -> Option<&mut Event> {
@@ -106,7 +109,7 @@ impl EventStore for FileSystemEventStore {
 mod test {
     use super::*;
     use tempdir::TempDir;
-    use event::{Event, EventId, to_event, Json};
+    use event::{Event, EventId, to_event};
     use std::fs::File;
     use std::io::Read;
     use serde_json::StreamDeserializer;
@@ -121,9 +124,9 @@ mod test {
         let first_event_data = r#"{"id":1,"data":{"firstEventKey":"firstEventValue"}}"#;
 
         let event = Event::from_str(first_event_data).unwrap();
-        store.store(event);
+        store.store(event).unwrap();
         let event = to_event(2, r#"{"secondEventKey": "secondEventValue"}"#).unwrap();
-        store.store(event);
+        store.store(event).unwrap();
 
         let index_entry = store.index.get(2).unwrap();
         let expected_offset = first_event_data.as_bytes().len() as u64;
@@ -138,7 +141,7 @@ mod test {
         let event_id: EventId = 3;
         let event = to_event(event_id, r#"{"myKey": "myValue"}"#).unwrap();
 
-        store.store(event);
+        store.store(event).unwrap();
 
         let index_entry = store.index.get(event_id);
         assert!(index_entry.is_some());
@@ -153,7 +156,7 @@ mod test {
         for i in 1..11 {
             let event_json = ObjectBuilder::new().insert("myKey", i).unwrap();
             let event = Event::new(i, event_json);
-            store.store(event);
+            store.store(event).unwrap();
             store.event_cache.remove(&i);
         }
         assert!(store.event_cache.is_empty());
@@ -182,7 +185,7 @@ mod test {
         let mut store = FileSystemEventStore::new(temp_dir.path().to_path_buf());
 
         let event = to_event(1, r#"{"myKey": "one"}"#).unwrap();
-        store.store(event.clone());
+        store.store(event.clone()).unwrap();
         assert_eq!(Some(&event), store.event_cache.get(&1));
     }
 
@@ -192,10 +195,10 @@ mod test {
         let mut store = FileSystemEventStore::new(temp_dir.path().to_path_buf());
 
         let event1 = to_event(1, r#"{"myKey": "one"}"#).unwrap();
-        store.store(event1.clone());
+        store.store(event1.clone()).unwrap();
 
         let event2 = to_event(2, r#"{"myKey": "one"}"#).unwrap();
-        store.store(event2.clone());
+        store.store(event2.clone()).unwrap();
 
         let file_path = temp_dir.path().join("events.json");
         let file = File::open(file_path).unwrap();
@@ -217,7 +220,7 @@ mod test {
         let mut store = FileSystemEventStore::new(temp_dir.path().to_path_buf());
 
         let event = to_event(1, r#"{"myKey": "myVal"}"#).unwrap();
-        store.store(event.clone());
+        store.store(event.clone()).unwrap();
 
         let file_path = temp_dir.path().join("events.json");
         let mut file = File::open(file_path).unwrap();

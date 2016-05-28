@@ -1,10 +1,9 @@
 
 use server::consumer::ConsumerNotifier;
 use context::FloContext;
-use event_store::{EventStore, PersistenceResult, FileSystemEventStore};
+use event_store::{EventStore, PersistenceResult};
 use event::{EventId, Event};
 use httparse;
-use tempdir::TempDir;
 use std::collections::HashMap;
 
 pub struct MockConsumerNotifier {

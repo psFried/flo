@@ -1,8 +1,8 @@
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::path::{PathBuf, Path};
 use std::io::{Seek, SeekFrom, Bytes, Read};
 
-use event::{Event, EventId};
+use event::Event;
 use serde_json::{self, Value, StreamDeserializer};
 
 pub type ReadResult = Result<Event, serde_json::Error>;
@@ -57,13 +57,11 @@ impl FileReader {
 mod test {
     use super::*;
     use tempdir::TempDir;
-    use event::{Event, EventId, to_event, Json};
+    use event::{Event, EventId};
     use std::fs::File;
-    use std::io::Read;
-    use std::path::{PathBuf, Path};
-    use serde_json::{self, StreamDeserializer};
+    use std::path::PathBuf;
+    use serde_json;
     use serde_json::builder::ObjectBuilder;
-    use event_store::index::Entry;
 
     #[test]
     fn file_reader_returns_events_starting_at_a_specified_offset() {
@@ -105,7 +103,7 @@ mod test {
         for i in 1..11 {
             let event_json = ObjectBuilder::new().insert("myKey", i).unwrap();
             let event = Event::new(i, event_json);
-            serde_json::to_writer(&mut event_file, &event.data);
+            serde_json::to_writer(&mut event_file, &event.data).unwrap();
             events.push(event);
         }
 

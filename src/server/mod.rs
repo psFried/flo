@@ -7,7 +7,7 @@ use rotor_http::server::{RecvMode, Server, Head, Response, Fsm};
 use rotor::mio::tcp::TcpListener;
 
 use context::FloContext;
-use self::consumer::{get_last_event_id, RotorConsumerNotifier};
+use self::consumer::RotorConsumerNotifier;
 use event_store::FileSystemEventStore;
 
 use std::time::Duration;
@@ -88,7 +88,6 @@ pub struct ServerOptions {
 }
 
 pub fn start_server(opts: ServerOptions) {
-    use std::path::PathBuf;
     use rotor::{Loop, Config};
 
     info!("Starting server");
@@ -97,7 +96,7 @@ pub fn start_server(opts: ServerOptions) {
 
     let event_loop = Loop::new(&Config::new()).unwrap();
     let mut loop_inst = event_loop.instantiate(flo_context);
-    let mut address = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), opts.port));
+    let address = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), opts.port));
 
     let listener = TcpListener::bind(&address).unwrap();
     loop_inst.add_machine_with(|scope| {

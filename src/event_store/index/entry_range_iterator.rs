@@ -1,5 +1,4 @@
 use super::Entry;
-use event::EventId;
 use std::cmp::min;
 
 
@@ -51,7 +50,6 @@ impl <'a> Iterator for EntryRangeIterator<'a> {
 #[cfg(test)]
 mod test {
     use event_store::index::Entry;
-    use event::EventId;
     use super::*;
 
     #[test]
@@ -63,7 +61,7 @@ mod test {
             Some(Entry{event_id: 9, offset: 1}),
             Some(Entry{event_id: 10, offset: 1}),
         ];
-        let mut iterator = EntryRangeIterator::new(entries.as_slice(), 99, 3);
+        let iterator = EntryRangeIterator::new(entries.as_slice(), 99, 3);
 
         let result = iterator.count();
         assert_eq!(5, result);
@@ -96,7 +94,7 @@ mod test {
             Some(Entry{event_id: 9, offset: 1}),
             Some(Entry{event_id: 10, offset: 1}),
         ];
-        let mut iterator = EntryRangeIterator::new(entries.as_slice(), 3, 0);
+        let iterator = EntryRangeIterator::new(entries.as_slice(), 3, 0);
 
         let result = iterator.last();
         assert_eq!(entries[2], result);

@@ -66,12 +66,10 @@ fn main() {
 }
 
 fn parse_arg_or_exit<T: FromStr + Default>(args: &ArgMatches, arg_name: &str, default: T) -> T {
-    use std::process;
-
     args.value_of(arg_name).map(|value| {
         match value.parse() {
             Ok(parsed) => parsed,
-            Err(e) => {
+            Err(_) => {
                 panic!("Argument: {} is invalid", arg_name);
             }
         }

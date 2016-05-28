@@ -23,5 +23,5 @@ pub fn init_logging() {
             .logger(rotor_logger)
             .logger(flo_logger)
             .build(root).unwrap();
-    init_config(config);
+    init_config(config).unwrap();
 }

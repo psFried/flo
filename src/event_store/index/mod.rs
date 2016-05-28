@@ -52,6 +52,7 @@ impl RingIndex {
         index
     }
 
+	#[allow(dead_code)]
     pub fn num_entries(&self) -> usize {
         self.num_entries
     }
@@ -65,6 +66,7 @@ impl RingIndex {
         self.set_new_head(entry.event_id, idx);
     }
 
+	#[allow(dead_code)]
     pub fn get(&self, event_id: EventId) -> Option<Entry> {
         let index = self.get_index(event_id);
         if index < self.entries.len() {
@@ -90,6 +92,7 @@ impl RingIndex {
         self.entry_range(event_id).next()
     }
 
+	#[allow(dead_code)]
     pub fn drop(&mut self, min_event_id: EventId) {
         self.drop_to_event = min_event_id;
     }
@@ -183,7 +186,7 @@ mod test {
     }
 
     #[test]
-    fn get_next_entry_wraps_around_the_ring_when_the_end_of_the_buffer_is_filled_with_None() {
+    fn get_next_entry_wraps_around_the_ring_when_the_end_of_the_buffer_is_filled_with_none() {
         let mut index = RingIndex::new(10, 10);
         index.add(Entry::new(7, 77));
         index.add(Entry::new(11, 111));
@@ -221,7 +224,7 @@ mod test {
 
     #[test]
     fn get_returns_none_when_event_id_is_out_of_bounds() {
-        let mut idx = new_index();
+        let idx = new_index();
         let result = idx.get(987654);
         assert!(result.is_none());
     }

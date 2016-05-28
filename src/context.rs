@@ -2,9 +2,8 @@
 use server::consumer::ConsumerNotifier;
 use serde_json::Value;
 use event_store::{EventStore, PersistenceResult};
-use event::{EventId, Event, Json};
+use event::{EventId, Event};
 use std::collections::HashMap;
-use std::cmp::max;
 
 
 pub struct FloContext<N: ConsumerNotifier, S: EventStore> {
@@ -105,7 +104,6 @@ impl <N: ConsumerNotifier, S: EventStore> FloContext<N, S> {
 mod test {
     use test_utils::{MockConsumerNotifier, MockEventStore, create_test_flo_context};
     use event::{to_json, EventId, Event, to_event};
-    use tempdir::TempDir;
     use super::*;
 
     #[test]
@@ -154,13 +152,13 @@ mod test {
         let mut context = create_test_flo_context();
 
         let evt1 = to_json(r#"{"someKey": "someValue1"}"#).unwrap();
-        context.add_event(evt1.clone());
+        context.add_event(evt1.clone()).unwrap();
 
         let expected_event1 = Event::new(1, evt1);
         context.event_store.assert_event_was_stored(&expected_event1);
 
         let evt2 = to_json(r#"{"aDifferentKey": "totallyIrrelevantValue"}"#).unwrap();
-        context.add_event(evt2.clone());
+        context.add_event(evt2.clone()).unwrap();
 
         let expected_event2 = Event::new(2, evt2);
         context.event_store.assert_event_was_stored(&expected_event2);
