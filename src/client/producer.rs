@@ -35,7 +35,7 @@ impl FloProducer {
 	    FloProducer::new(server_url, Arc::new(Client::new()))
 	}
 
-	pub fn emit(&self, event_json: Json) -> ProducerResult {
+	pub fn emit<T: EventJson>(&self, event_json: T) -> ProducerResult {
 		emit(&*self.client_ref, self.server_url.clone(), event_json)
 	}
 
@@ -82,8 +82,8 @@ pub fn produce_stream<'a, S, I, F>(client: &Client, url: Url, json_iter: S, hand
 }
 
 
-pub fn emit(client: &Client, url: Url, json: Json) -> ProducerResult {
-    event::to_bytes(&json).map_err(|_err| {
+pub fn emit<T: EventJson>(client: &Client, url: Url, json: T) -> ProducerResult {
+    event::to_bytes(json.json()).map_err(|_err| {
             ProducerError::InvalidJson
     }).and_then(|bytes| {
             emit_raw(client, url, &bytes)

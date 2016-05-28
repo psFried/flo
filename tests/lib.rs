@@ -14,6 +14,109 @@ use std::sync::{Once, ONCE_INIT};
 use std::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
 use std::path::Path;
 
+macro_rules! integration_test {
+    ($d:ident, $p:ident, $t:block) => (
+        #[test]
+        #[allow(unused_variables)]
+        fn $d() {
+            init_logger();
+            let port =  unsafe {
+                3000u16 + PORT.fetch_add(1, Ordering::Relaxed) as u16
+            };
+            let data_dir = tempdir::TempDir::new("flo-integration-test").unwrap();
+            let flo_server_proc = FloServerProcess::new(port, data_dir.path());
+            let $p: Url = Url::parse(&format!("http://localhost:{}", port)).unwrap();
+            $t
+        }
+    )
+}
+
+integration_test!(producer_produces_event_and_gets_event_id_in_response, server_url, {
+    let producer = FloProducer::default(server_url);
+    let result = producer.emit_raw(r#"{"myKey": "what a great value!"}"#.as_bytes());
+    assert_eq!(Ok(1), result);
+});
+
+integration_test!(producer_emits_multiple_events_and_returns_iterator_of_results, server_url, {
+	    
+    let producer = FloProducer::default(server_url);
+
+    let events = vec![
+        ObjectBuilder::new().insert("keyA", "valueA").unwrap(),
+        ObjectBuilder::new().insert("keyB", 123).unwrap(),
+        ObjectBuilder::new().insert("keyC", 43.21).unwrap(),
+    ];
+
+	let mut producer_handler = TestProducerHandler::expect_success(vec![1, 2, 3]);
+	producer.produce_stream(events.iter(), &mut producer_handler);
+});
+
+integration_test!(consumer_consumes_events_starting_at_beginning_of_stream, server_url, {
+    let producer = FloProducer::default(server_url.clone());
+    let events = vec![
+        ObjectBuilder::new().insert("keyA", "valueA").unwrap(),
+        ObjectBuilder::new().insert("keyB", 123).unwrap(),
+        ObjectBuilder::new().insert("keyC", 43.21).unwrap(),
+    ];
+	let mut producer_handler = TestProducerHandler::expect_success(vec![1, 2, 3]);
+	producer.produce_stream(events.iter(), &mut producer_handler);
+
+    let mut consumer = TestConsumer::new(3);
+    let result = run_consumer(&mut consumer, server_url, Duration::from_secs(5));
+    assert_eq!(Ok(()), result);
+    consumer.assert_event_data_received(&events);
+});
+
+integration_test!(consumer_consumes_events_starting_at_the_middle_of_the_stream, server_url, {
+    let producer = FloProducer::default(server_url.clone());
+	let first_events = vec![
+        ObjectBuilder::new().insert("keyA", "valueA").unwrap(),
+        ObjectBuilder::new().insert("keyB", 123).unwrap(),
+        ObjectBuilder::new().insert("keyC", 43.21).unwrap(),
+	];
+    let expected_events = vec![
+        ObjectBuilder::new().insert("expected1", true).unwrap(),
+        ObjectBuilder::new().insert("expected2", "dig it").unwrap(),
+        ObjectBuilder::new().insert("expected3", 9999999).unwrap(),
+    ];
+	let mut producer_handler = TestProducerHandler::expect_success(vec![1, 2, 3, 4, 5, 6]);
+	producer.produce_stream(first_events.iter().chain(expected_events.iter()), &mut producer_handler);
+
+    let mut consumer = TestConsumer::new(3);
+	let mut consumer_url = server_url.clone();
+	consumer_url.query_pairs_mut().append_pair("lastEvent", "3");
+    let result = run_consumer(&mut consumer, consumer_url, Duration::from_secs(5));
+    assert_eq!(Ok(()), result);
+    consumer.assert_event_data_received(&expected_events);
+});
+
+integration_test!(consumer_receives_an_event_produced_after_consumer_connected, server_url, {
+        
+	let event_json = ObjectBuilder::new().insert("brain", "fart").unwrap();
+	let expected_events = vec![event_json.clone()];
+    let consumer_url = server_url.clone();
+    let consumer_thread = thread::spawn(move || {
+        let mut consumer = TestConsumer::new(1);
+		run_consumer(&mut consumer, consumer_url, Duration::from_secs(5)).unwrap();
+		println!("asserting that event json was received");
+		consumer.assert_event_data_received(&expected_events);
+    });
+	
+    thread::sleep(Duration::from_millis(500));
+
+	let producer = FloProducer::default(server_url);
+	producer.emit(event_json).unwrap();
+	println!("Finished emitting event");
+	consumer_thread.join().unwrap();
+	
+});
+
+
+///////////////////////////////////////////////////////////////////////////
+///////  Test Utils            ////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////
+
 static mut PORT: AtomicUsize = ATOMIC_USIZE_INIT;
 
 static ON_START: Once = ONCE_INIT;
@@ -63,29 +166,6 @@ impl Drop for FloServerProcess {
     }
 }
 
-macro_rules! integration_test {
-    ($d:ident, $p:ident, $t:block) => (
-        #[test]
-        #[allow(unused_variables)]
-        fn $d() {
-            init_logger();
-            let port =  unsafe {
-                3000u16 + PORT.fetch_add(1, Ordering::Relaxed) as u16
-            };
-            let data_dir = tempdir::TempDir::new("flo-integration-test").unwrap();
-            let flo_server_proc = FloServerProcess::new(port, data_dir.path());
-            let $p: Url = Url::parse(&format!("http://localhost:{}", port)).unwrap();
-            $t
-        }
-    )
-}
-
-
-integration_test!(producer_produces_event_and_gets_event_id_in_response, server_url, {
-    let producer = FloProducer::default(server_url);
-    let result = producer.emit_raw(r#"{"myKey": "what a great value!"}"#.as_bytes());
-    assert_eq!(Ok(1), result);
-});
 
 struct TestProducerHandler {
     expected_results: Vec<ProducerResult>,
@@ -110,20 +190,6 @@ impl <'a> StreamProducerHandler<&'a Json> for TestProducerHandler {
 		ConsumerCommand::Continue
     }
 }
-
-integration_test!(producer_emits_multiple_events_and_returns_iterator_of_results, server_url, {
-	    
-    let producer = FloProducer::default(server_url);
-
-    let events = vec![
-        ObjectBuilder::new().insert("keyA", "valueA").unwrap(),
-        ObjectBuilder::new().insert("keyB", 123).unwrap(),
-        ObjectBuilder::new().insert("keyC", 43.21).unwrap(),
-    ];
-
-	let mut producer_handler = TestProducerHandler::expect_success(vec![1, 2, 3]);
-	producer.produce_stream(events.iter(), &mut producer_handler);
-});
 
 struct TestConsumer {
     events: Vec<Event>,
@@ -161,23 +227,3 @@ impl FloConsumer for TestConsumer {
         }
     }
 }
-
-integration_test!(consumer_consumes_events_starting_at_beginning_of_stream, server_url, {
-    let producer = FloProducer::default(server_url.clone());
-    let events = vec![
-        ObjectBuilder::new().insert("keyA", "valueA").unwrap(),
-        ObjectBuilder::new().insert("keyB", 123).unwrap(),
-        ObjectBuilder::new().insert("keyC", 43.21).unwrap(),
-    ];
-	let mut producer_handler = TestProducerHandler::expect_success(vec![1, 2, 3]);
-	producer.produce_stream(events.iter(), &mut producer_handler);
-
-    println!("Finished producing 3 events");
-
-    let mut consumer = TestConsumer::new(3);
-    println!("finished creating consumer");
-    let result = run_consumer(&mut consumer, server_url, Duration::from_secs(5));
-    println!("finished running consumer");
-    assert_eq!(Ok(()), result);
-    consumer.assert_event_data_received(&events);
-});
