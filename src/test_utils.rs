@@ -5,6 +5,9 @@ use event_store::{EventStore, PersistenceResult};
 use event::{EventId, Event};
 use httparse;
 use std::collections::HashMap;
+use std::io;
+use std::path::Path;
+
 
 pub struct MockConsumerNotifier {
     pub notify_invokations: u32
@@ -52,6 +55,10 @@ impl MockEventStore {
 }
 
 impl EventStore for MockEventStore {
+	fn create(_base_dir: &Path, _namespace: &str) -> Result<Self, io::Error> {
+	    Ok(MockEventStore::new())
+	}
+
     fn store(&mut self, event: Event) -> PersistenceResult {
         let event_id = event.get_id();
         self.events.push(event);

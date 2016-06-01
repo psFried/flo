@@ -4,7 +4,7 @@ mod file_reader;
 use event::{EventId, Event};
 use std::fs::File;
 use std::io::{self, Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use lru_time_cache::LruCache;
 use self::index::{RingIndex, Entry};
 use self::file_reader::FileReader;
@@ -16,7 +16,9 @@ pub const MAX_NUM_EVENTS: usize = 1_000_000;
 
 pub type PersistenceResult = Result<EventId, io::Error>;
 
-pub trait EventStore {
+pub trait EventStore: Sized {
+
+	fn create(base_dir: &Path, namespace: &str) -> Result<Self, io::Error>;
 
     fn store(&mut self, event: Event) -> PersistenceResult;
 
@@ -69,6 +71,11 @@ impl FileSystemEventStore {
 }
 
 impl EventStore for FileSystemEventStore {
+
+	fn create(base_dir: &Path, namespace: &str) -> Result<Self, io::Error> {
+	    let storage_dir = base_dir.join(namespace);
+	    Ok(FileSystemEventStore::new(storage_dir))
+	}
 
     fn store(&mut self, event: Event) -> PersistenceResult {
         debug!("Storing event: {:?}", &event.data);

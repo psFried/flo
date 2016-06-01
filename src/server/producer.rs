@@ -15,12 +15,12 @@ pub fn timeout(now: Time) -> Time {
     now + Duration::new(15, 0)
 }
 
-pub fn handle_request<C, S>(data: &[u8], res: &mut Response, context: &mut FloContext<C, S>)
+pub fn handle_request<C, S>(data: &[u8], namespace: &str, res: &mut Response, context: &mut FloContext<C, S>)
         where C: ConsumerNotifier, S: EventStore {
 
     match from_slice(data) {
         Ok(event) => {
-            match context.add_event(event) {
+            match context.add_event(event, namespace) {
                 Ok(event_id) => {
                     let json = ObjectBuilder::new().insert("id", event_id).unwrap();
                     let body = to_vec(&json).unwrap();
@@ -52,13 +52,13 @@ mod test {
     use test_utils::{self, assert_http_status, assert_response_body};
 
     macro_rules! test_request {
-        ( $request_body:expr) => {
+        ( $request_body:expr, $ns:expr) => {
             {
                 let mut buf = Buf::new();
                 {
                     let mut response = Response::new(&mut buf, Version::Http11, false, false);
                     let mut ctx = test_utils::create_test_flo_context();
-                    handle_request($request_body, &mut response, &mut ctx);
+                    handle_request($request_body, $ns, &mut response, &mut ctx);
                 }
                 let mut response_data = Vec::new();
                 buf.write_to(&mut response_data).unwrap();
@@ -69,19 +69,19 @@ mod test {
 
     #[test]
     fn handle_request_sends_error_if_event_is_not_valid_json() {
-        let response_buf = test_request!(b"lksdfjk");
+        let response_buf = test_request!(b"lksdfjk", "aNamespace");
         assert_http_status(400u16, response_buf.as_slice());
     }
 
     #[test]
     fn handle_request_sends_body_with_success_message() {
-        let response_data = test_request!(b"{\"anyKey\": \"anyValue\"}");
+        let response_data = test_request!(b"{\"anyKey\": \"anyValue\"}", "aNamespace");
         assert_response_body(r#"{"id":1}"#, response_data.as_slice());
     }
 
     #[test]
     fn handle_request_returns_status_200_if_event_was_valid_json() {
-        let response_data = test_request!(b"{\"anyKey\": \"anyValue\"}");
+        let response_data = test_request!(b"{\"anyKey\": \"anyValue\"}", "aNamespace");
         assert_http_status(200u16, response_data.as_slice());
     }
 

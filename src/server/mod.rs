@@ -1,5 +1,6 @@
 pub mod consumer;
 pub mod producer;
+pub mod namespace;
 
 
 use rotor::{Scope, Time};
@@ -17,7 +18,7 @@ use std::path::PathBuf;
 
 #[derive(Debug)]
 pub enum FloServer {
-    Producer,
+    Producer(String),
     Consumer(usize)
 }
 
@@ -35,7 +36,8 @@ impl <'a> Server for FloServer {
                 self::consumer::init_consumer(head, res, scope)
             },
             "PUT" => {
-                Some((FloServer::Producer, RecvMode::Buffered(1024), producer::timeout(scope.now())))
+				let namespace = get_namespace_from_path(head.path).to_string();
+                Some((FloServer::Producer(namespace), RecvMode::Buffered(1024), producer::timeout(scope.now())))
             },
             _ => None
         }
@@ -56,7 +58,7 @@ impl <'a> Server for FloServer {
             FloServer::Consumer(_idx) => {
                 Some((self, scope.now() + Duration::new(30, 0)))
             },
-            FloServer::Producer => None
+            FloServer::Producer(_) => None
         }
     }
 
@@ -72,14 +74,18 @@ impl <'a> Server for FloServer {
     fn request_received(self, data: &[u8], res: &mut Response, scope: &mut Scope<Self::Context>)
             -> Option<Self>
     {
-        if let FloServer::Producer = self {
-            producer::handle_request(data, res, scope);
+        if let FloServer::Producer(namespace) = self {
+            producer::handle_request(data, &namespace, res, scope);
             None
         } else {
             // Consumer won't have anything to do here
             Some(self)
         }
     }
+}
+
+pub fn get_namespace_from_path<'a>(request_path: &'a str) -> &'a str {
+    request_path.split_at(1).1
 }
 
 pub struct ServerOptions {
@@ -103,4 +109,16 @@ pub fn start_server(opts: ServerOptions) {
         Fsm::<FloServer, _>::new(listener, (), scope)
     }).unwrap();
     loop_inst.run().unwrap();
+}
+
+#[cfg(test)]
+mod test {
+	use super::get_namespace_from_path;
+    
+    #[test]
+    fn get_namespace_from_path_returns_path_without_leading_slash() {
+        let input = "/theNamespace";
+        assert_eq!("theNamespace", get_namespace_from_path(input));
+    }
+
 }

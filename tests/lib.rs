@@ -111,6 +111,42 @@ integration_test!(consumer_receives_an_event_produced_after_consumer_connected, 
 	
 });
 
+integration_test!(consumers_receive_only_the_events_for_the_namespace_they_have_subscribed_to, server_url, {
+    let namespace_a = "shopping";
+    let namespace_b = "iggy-pop";
+
+	let namespace_a_url = server_url.join(namespace_a).unwrap();
+	let namespace_b_url = server_url.join(namespace_b).unwrap();
+
+    let a_events = vec![
+        ObjectBuilder::new().insert("expected1", true).unwrap(),
+        ObjectBuilder::new().insert("expected2", "dig it").unwrap(),
+        ObjectBuilder::new().insert("expected3", 9999999).unwrap(),
+    ];
+
+    let b_events = vec![
+        ObjectBuilder::new().insert("expected1", true).unwrap(),
+        ObjectBuilder::new().insert("expected2", "dig it").unwrap(),
+        ObjectBuilder::new().insert("expected3", 9999999).unwrap(),
+    ];
+           
+	let producer_a = FloProducer::default(namespace_a_url.clone());
+	let mut producer_a_handler = TestProducerHandler::expect_success(vec![1, 2, 3]);
+	producer_a.produce_stream(a_events.iter(), &mut producer_a_handler);
+
+	let producer_b = FloProducer::default(namespace_b_url.clone());
+	let mut producer_b_handler = TestProducerHandler::expect_success(vec![1, 2, 3]);
+	producer_b.produce_stream(b_events.iter(), &mut producer_b_handler);
+
+	let mut consumer_a = TestConsumer::new(3);
+    run_consumer(&mut consumer_a, namespace_a_url, Duration::from_secs(5)).unwrap();
+	consumer_a.assert_event_data_received(&a_events);
+
+	let mut consumer_b = TestConsumer::new(3);
+    run_consumer(&mut consumer_b, namespace_b_url, Duration::from_secs(5)).unwrap();
+	consumer_b.assert_event_data_received(&b_events);
+});
+
 
 ///////////////////////////////////////////////////////////////////////////
 ///////  Test Utils            ////////////////////////////////////////////
