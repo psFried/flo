@@ -48,16 +48,13 @@ impl <N: ConsumerNotifier, S: EventStore> FloContext<N, S> {
     }
 
     pub fn add_event(&mut self, event_json: Value, namespace: &str) -> PersistenceResult {
-		if self.namespaces.contains_key(namespace) {
-		    let ref mut ns = self.namespaces.get_mut(namespace).unwrap();
-		    ns.add_event(event_json)
-		} else {
-			let path = PathBuf::from(".");
-		    Namespace::new(&path, namespace.to_string()).and_then(|mut ns| {
-                let result = ns.add_event(event_json);
-                self.namespaces.insert(namespace.to_string(), ns);
-                result
-            })
+		let result = self.with_namespace(namespace, |ns| {
+            ns.add_event(event_json)
+        });
+
+		match result {
+		    Ok(add_result) => add_result,
+		    Err(io_err) => Err(io_err)
 		}
     }
 
