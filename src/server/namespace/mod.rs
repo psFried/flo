@@ -4,7 +4,7 @@ use std::io;
 
 use event::{Event, EventId, Json};
 use server::consumer::ConsumerNotifier;
-use context::Consumer;
+use server::context::Consumer;
 use event_store::{EventStore, PersistenceResult};
 
 
@@ -84,7 +84,7 @@ fn notify_if_new_event<N: ConsumerNotifier>(current_event_id: EventId, consumer:
 mod test {
 	use test_utils::{MockConsumerNotifier, create_test_namespace};
 	use event::{Event, ObjectBuilder};
-	use context::Consumer;
+	use server::context::Consumer;
     
     #[test]
     fn get_next_event_returns_next_event_for_the_consumer() {

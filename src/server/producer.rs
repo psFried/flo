@@ -4,7 +4,7 @@ use serde_json::de::from_slice;
 use serde_json::to_vec;
 use serde_json::builder::ObjectBuilder;
 
-use context::FloContext;
+use server::context::FloContext;
 use server::consumer::ConsumerNotifier;
 use event_store::EventStore;
 

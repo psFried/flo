@@ -1,13 +1,14 @@
 pub mod consumer;
 pub mod producer;
 pub mod namespace;
+pub mod context;
 
 
 use rotor::{Scope, Time};
 use rotor_http::server::{RecvMode, Server, Head, Response, Fsm};
 use rotor::mio::tcp::TcpListener;
 
-use context::FloContext;
+use self::context::FloContext;
 use self::consumer::RotorConsumerNotifier;
 use event_store::FileSystemEventStore;
 

@@ -4,7 +4,7 @@ use rotor_http::server::{RecvMode, Head, Response};
 use event::EventId;
 use queryst;
 use serde_json::Value;
-use context::FloContext;
+use server::context::FloContext;
 use event_store::EventStore;
 use super::{get_namespace_from_path, FloServer};
 use std::time::Duration;

@@ -9,11 +9,13 @@ A naive and amateurish attempt at an event stream server in rust.
 - [X] persist events
 - [X] consumers start reading events at a specified point
 - [X] logging
-- [ ] namespaces
+- [X] namespaces
+- [ ] persist events across restarts
+- [ ] remove oldest events once max event threshold is reached
 - [ ] remove consumers after connections are closed
 - [ ] rebuild indexes from storage
-- [ ] add endpoint to clear event cache
 - [ ] multithreaded server
 - [ ] batch writes to consumers
 - [ ] Persist event index
 - [ ] event filtering
+- [ ] clustering

@@ -1,7 +1,7 @@
 
 use server::consumer::ConsumerNotifier;
 use server::namespace::Namespace;
-use context::FloContext;
+use server::context::FloContext;
 use event_store::{EventStore, PersistenceResult};
 use event::{EventId, Event};
 use httparse;

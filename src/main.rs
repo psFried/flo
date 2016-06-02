@@ -21,7 +21,6 @@ extern crate tempdir;
 
 
 pub mod server;
-pub mod context;
 pub mod event_store;
 pub mod event;
 
