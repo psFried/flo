@@ -40,17 +40,21 @@ pub struct FileSystemEventStore {
 
 impl FileSystemEventStore {
 
-    pub fn new(persistence_dir: PathBuf) -> FileSystemEventStore {
-        let file = File::create(persistence_dir.join(EVENTS_FILE_NAME)).unwrap();
-
-        FileSystemEventStore {
-            file_reader: FileReader::new(persistence_dir.join(EVENTS_FILE_NAME)),
-            current_file_position: file.metadata().map(|md| md.len()).unwrap_or(0),
-            events_file: file,
-            index: RingIndex::new(1000, MAX_NUM_EVENTS),
-            event_cache: LruCache::<EventId, Event>::with_capacity(MAX_CACHED_EVENTS),
-            persistence_dir: persistence_dir,
-        }
+    pub fn new(persistence_dir: PathBuf) -> Result<FileSystemEventStore, io::Error> {
+		use std::fs;
+		
+		fs::create_dir_all(&persistence_dir).and_then(|_| {
+            File::create(persistence_dir.join(EVENTS_FILE_NAME))
+        }).map(|file| {
+            FileSystemEventStore {
+                file_reader: FileReader::new(persistence_dir.join(EVENTS_FILE_NAME)),
+                current_file_position: file.metadata().map(|md| md.len()).unwrap_or(0),
+                events_file: file,
+                index: RingIndex::new(1000, MAX_NUM_EVENTS),
+                event_cache: LruCache::<EventId, Event>::with_capacity(MAX_CACHED_EVENTS),
+                persistence_dir: persistence_dir,
+            }
+        })
     }
 
     #[allow(dead_code)]
@@ -74,16 +78,17 @@ impl EventStore for FileSystemEventStore {
 
 	fn create(base_dir: &Path, namespace: &str) -> Result<Self, io::Error> {
 	    let storage_dir = base_dir.join(namespace);
-	    Ok(FileSystemEventStore::new(storage_dir))
+	    FileSystemEventStore::new(storage_dir)
 	}
 
     fn store(&mut self, event: Event) -> PersistenceResult {
-        debug!("Storing event: {:?}", &event.data);
         let mut evt = event;
         let event_id: EventId = evt.get_id();
         self.index.add(Entry::new(event_id, self.current_file_position));
+        trace!("added index entry: event_id: {}, offset: {}", event_id, self.current_file_position);
         self.events_file.write(evt.get_raw_bytes()).map(|_| {
             self.current_file_position += evt.get_raw_bytes().len() as u64;
+			trace!("finished writing event to disk: {}", event_id);
             self.event_cache.insert(event_id, evt);
             event_id
         })
@@ -126,7 +131,7 @@ mod test {
     #[test]
     fn storing_an_event_adds_its_starting_offset_to_the_index() {
         let temp_dir = TempDir::new("flo-persist-test").unwrap();
-        let mut store = FileSystemEventStore::new(temp_dir.path().to_path_buf());
+        let mut store = FileSystemEventStore::new(temp_dir.path().to_path_buf()).unwrap();
 
         let first_event_data = r#"{"id":1,"data":{"firstEventKey":"firstEventValue"}}"#;
 
@@ -143,7 +148,7 @@ mod test {
     #[test]
     fn storing_an_event_adds_its_event_id_to_the_index() {
         let temp_dir = TempDir::new("flo-persist-test").unwrap();
-        let mut store = FileSystemEventStore::new(temp_dir.path().to_path_buf());
+        let mut store = FileSystemEventStore::new(temp_dir.path().to_path_buf()).unwrap();
 
         let event_id: EventId = 3;
         let event = to_event(event_id, r#"{"myKey": "myValue"}"#).unwrap();
@@ -158,7 +163,7 @@ mod test {
     #[test]
     fn get_next_event_returns_a_non_cached_event_stored_on_disk() {
         let temp_dir = TempDir::new("flo-persist-test").unwrap();
-        let mut store = FileSystemEventStore::new(temp_dir.path().to_path_buf());
+        let mut store = FileSystemEventStore::new(temp_dir.path().to_path_buf()).unwrap();
 
         for i in 1..11 {
             let event_json = ObjectBuilder::new().insert("myKey", i).unwrap();
@@ -175,7 +180,7 @@ mod test {
     #[test]
     fn get_next_event_returns_a_cached_event() {
         let temp_dir = TempDir::new("flo-persist-test").unwrap();
-        let mut store = FileSystemEventStore::new(temp_dir.path().to_path_buf());
+        let mut store = FileSystemEventStore::new(temp_dir.path().to_path_buf()).unwrap();
         let event_id: EventId = 3;
         let mut event = to_event(event_id, r#"{"myKey": "one"}"#).unwrap();
 
@@ -189,7 +194,7 @@ mod test {
     #[test]
     fn events_are_put_into_the_cache_when_they_are_stored() {
         let temp_dir = TempDir::new("flo-persist-test").unwrap();
-        let mut store = FileSystemEventStore::new(temp_dir.path().to_path_buf());
+        let mut store = FileSystemEventStore::new(temp_dir.path().to_path_buf()).unwrap();
 
         let event = to_event(1, r#"{"myKey": "one"}"#).unwrap();
         store.store(event.clone()).unwrap();
@@ -199,7 +204,7 @@ mod test {
     #[test]
     fn multiple_events_are_saved_sequentially() {
         let temp_dir = TempDir::new("flo-persist-test").unwrap();
-        let mut store = FileSystemEventStore::new(temp_dir.path().to_path_buf());
+        let mut store = FileSystemEventStore::new(temp_dir.path().to_path_buf()).unwrap();
 
         let event1 = to_event(1, r#"{"myKey": "one"}"#).unwrap();
         store.store(event1.clone()).unwrap();
@@ -224,7 +229,7 @@ mod test {
     #[test]
     fn event_is_saved_to_a_file_within_the_persistence_directory() {
         let temp_dir = TempDir::new("flo-persist-test").unwrap();
-        let mut store = FileSystemEventStore::new(temp_dir.path().to_path_buf());
+        let mut store = FileSystemEventStore::new(temp_dir.path().to_path_buf()).unwrap();
 
         let event = to_event(1, r#"{"myKey": "myVal"}"#).unwrap();
         store.store(event.clone()).unwrap();

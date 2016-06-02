@@ -1,12 +1,13 @@
 
 use server::consumer::ConsumerNotifier;
+use server::namespace::Namespace;
 use context::FloContext;
 use event_store::{EventStore, PersistenceResult};
 use event::{EventId, Event};
 use httparse;
 use std::collections::HashMap;
 use std::io;
-use std::path::Path;
+use std::path::{PathBuf, Path};
 
 
 pub struct MockConsumerNotifier {
@@ -71,8 +72,14 @@ impl EventStore for MockEventStore {
 }
 
 pub fn create_test_flo_context() -> FloContext<MockConsumerNotifier, MockEventStore> {
-    FloContext::new(MockEventStore::new())
+    FloContext::new(PathBuf::from("."))
 }
+
+pub fn create_test_namespace() -> Namespace<MockEventStore, MockConsumerNotifier> {
+    let path = PathBuf::from(".");
+    Namespace::new(&path, "anyOldName".to_string()).unwrap()
+}
+
 
 pub fn assert_response_body(expected: &str, buffer: &[u8]) {
     let mut headers = [httparse::EMPTY_HEADER; 16];

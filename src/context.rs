@@ -10,12 +10,10 @@ use event::{EventId, Event};
 
 
 pub struct FloContext<N: ConsumerNotifier, S: EventStore> {
-    pub event_store: S,
 	namespaces: HashMap<String, Namespace<S, N>>,
 	consumer_to_ns: HashMap<usize, String>,
-    consumers: HashMap<usize, Consumer<N>>,
     next_consumer_id: usize,
-    current_event_id: EventId,
+	data_dir: PathBuf,
 }
 
 pub struct Consumer<N: ConsumerNotifier> {
@@ -25,6 +23,14 @@ pub struct Consumer<N: ConsumerNotifier> {
 }
 
 impl <N: ConsumerNotifier> Consumer<N> {
+
+	pub fn new(consumer_id: usize, last_event: EventId, notifier: N) -> Consumer<N> {
+	    Consumer {
+	        last_event: last_event,
+	        id: consumer_id,
+	        notifier: notifier,
+	    }
+	}
     pub fn notify(&mut self) {
         self.notifier.notify();
     }
@@ -32,14 +38,12 @@ impl <N: ConsumerNotifier> Consumer<N> {
 
 impl <N: ConsumerNotifier, S: EventStore> FloContext<N, S> {
 
-    pub fn new(event_store: S) -> FloContext<N, S> {
+    pub fn new(storage_dir: PathBuf) -> FloContext<N, S> {
         FloContext {
-            consumers: HashMap::new(),
 			namespaces: HashMap::new(),
-            event_store: event_store,
             next_consumer_id: 0usize,
-            current_event_id: 0,
 			consumer_to_ns: HashMap::new(),
+			data_dir: storage_dir
         }
     }
 
@@ -67,46 +71,29 @@ impl <N: ConsumerNotifier, S: EventStore> FloContext<N, S> {
                 last_event: last_event,
                 id: consumer_id,
             });
-        });
+        }).unwrap();
 
 		self.consumer_to_ns.insert(consumer_id, namespace.to_string());
 		consumer_id
 	}
 
 	fn with_namespace<T, F: FnOnce(&mut Namespace<S, N>) -> T>(&mut self, name: &str, fun: F) -> Result<T, io::Error> {
-	    if self.namespaces.contains_key(name) {
-	        Ok(fun(self.namespaces.get_mut(name).unwrap()))
+		let FloContext{ref mut namespaces, ref data_dir, ..} = *self;
+	    if namespaces.contains_key(name) {
+	        Ok(fun(namespaces.get_mut(name).unwrap()))
 	    } else {
-			let path = PathBuf::from(".");
-	        Namespace::new(&path, name.to_string()).map(|mut ns| {
+	        Namespace::new(data_dir, name.to_string()).map(|mut ns| {
                 let t = fun(&mut ns);
-                self.namespaces.insert(name.to_string(), ns);
+                namespaces.insert(name.to_string(), ns);
                 t
             })
 	    }
 	}
 
-    pub fn add_consumer(&mut self, notifier: N, last_event: EventId) -> usize {
-        let consumer_id = self.get_next_consumer_id();
-        debug!("Adding consumer: {}, lastEvent: {}", consumer_id, last_event);
-        let mut consumer = Consumer {
-            notifier: notifier,
-            last_event: last_event,
-            id: consumer_id,
-        };
-        if last_event < self.current_event_id {
-            consumer.notify();
-        }
-
-        self.consumers.insert(consumer_id, consumer);
-        consumer_id
-    }
-
     pub fn get_next_event(&mut self, consumer_id: usize) -> Option<&mut Event> {
-        match self.consumers.get(&consumer_id) {
-            Some(consumer) => self.event_store.get_event_greater_than(consumer.last_event),
-            _ => None
-        }
+		self.get_namespace_for_consumer(consumer_id).and_then(|ns| {
+            ns.get_next_event(consumer_id)
+        })
     }
 
     pub fn confirm_event_written(&mut self, consumer_id: usize, event_id: EventId) {
@@ -119,12 +106,15 @@ impl <N: ConsumerNotifier, S: EventStore> FloContext<N, S> {
         });
     }
 
-
-    fn get_consumer(&mut self, consumer_id: usize) -> Option<&mut Consumer<N>> {
+	fn get_namespace_for_consumer(&mut self, consumer_id: usize) -> Option<&mut Namespace<S, N>> {
 		let FloContext{ref mut consumer_to_ns, ref mut namespaces, .. } = *self;
 		consumer_to_ns.get(&consumer_id).and_then(move |ns_name| {
             namespaces.get_mut(ns_name)
-        }).and_then(|ns| {
+        })
+	}
+
+    fn get_consumer(&mut self, consumer_id: usize) -> Option<&mut Consumer<N>> {
+		self.get_namespace_for_consumer(consumer_id).and_then(|ns| {
             ns.get_consumer(consumer_id)
         })
     }
@@ -140,14 +130,35 @@ impl <N: ConsumerNotifier, S: EventStore> FloContext<N, S> {
 #[cfg(test)]
 mod test {
     use test_utils::{MockConsumerNotifier, MockEventStore, create_test_flo_context};
-    use event::{to_json, EventId, Event, to_event};
+    use event::{to_json, EventId, Event, to_event, ObjectBuilder};
     use super::*;
+
+	#[test]
+	fn get_next_event_returns_the_next_greatest_event_for_the_namespace_of_the_consumer() {
+        use test_utils::create_test_namespace;
+
+        let consumers_last_event: EventId = 0;
+        let expected_event = to_event(4, r#"{"foo": "bar"}"#).unwrap();
+
+        let mut context = create_test_flo_context();
+		let namespace = "space-space-space";
+		let mut ns = create_test_namespace();
+		ns.event_store.stub_get_event_greater_than(consumers_last_event, expected_event.clone());
+		context.namespaces.insert(namespace.to_string(), ns);
+
+        let notifier = MockConsumerNotifier::new();
+        let consumer_id = context.add_consumer_to_namespace(notifier, consumers_last_event, namespace);
+
+        let result = context.get_next_event(consumer_id);
+        assert!(result.is_some());
+        assert_eq!(&expected_event, result.unwrap());
+	}
 
     #[test]
     fn confirm_event_written_notifies_consumer_if_more_events_are_ready_to_be_written() {
         let mut context = create_test_flo_context();
         let consumer_id = context.add_consumer_to_namespace(MockConsumerNotifier::new(), 23, "theNS");
-        context.current_event_id = 25;
+
         context.confirm_event_written(consumer_id, 24);
         assert_consumer_notified(consumer_id, &mut context);
     }
@@ -155,8 +166,9 @@ mod test {
     #[test]
     fn add_consumer_notifies_consumer_if_last_event_is_les_than_context_current_event_id() {
         let mut context = create_test_flo_context();
-        context.current_event_id = 55;
-        let consumer_id = context.add_consumer_to_namespace(MockConsumerNotifier::new(), 23, "theNS");
+		let test_event = ObjectBuilder::new().insert("what", "evar").unwrap();
+		context.add_event(test_event, "theNS").unwrap();
+        let consumer_id = context.add_consumer_to_namespace(MockConsumerNotifier::new(), 0, "theNS");
         assert_consumer_notified(consumer_id, &mut context);
     }
 
@@ -185,38 +197,17 @@ mod test {
     }
 
     #[test]
-    fn add_event_creates_an_event_with_the_next_sequential_event_id() {
+    fn add_event_adds_events_to_the_correct_namespace() {
         let mut context = create_test_flo_context();
 
+		let namespace = "theNamespace";
         let evt1 = to_json(r#"{"someKey": "someValue1"}"#).unwrap();
         context.add_event(evt1.clone(), "theNamespace").unwrap();
 
-        let expected_event1 = Event::new(1, evt1);
-        context.event_store.assert_event_was_stored(&expected_event1);
-
-        let evt2 = to_json(r#"{"aDifferentKey": "totallyIrrelevantValue"}"#).unwrap();
-        context.add_event(evt2.clone(), "theNamespace").unwrap();
-
-		//TODO: assert event was added to the correct namespace
-
-        let expected_event2 = Event::new(2, evt2);
-        context.event_store.assert_event_was_stored(&expected_event2);
-    }
-
-    #[test]
-    fn get_next_event_delegates_to_event_store() {
-        let mut context = create_test_flo_context();
-
-        let consumers_last_event: EventId = 0;
-        let expected_event = to_event(4, r#"{"foo": "bar"}"#).unwrap();
-        context.event_store.stub_get_event_greater_than(consumers_last_event, expected_event.clone());
-
-        let notifier = MockConsumerNotifier::new();
-        let consumer_id = context.add_consumer(notifier, consumers_last_event);
-
-        let result = context.get_next_event(consumer_id);
-        assert!(result.is_some());
-        assert_eq!(&expected_event, result.unwrap());
+		context.with_namespace(namespace, |ns| {
+            let expected_event = Event::new(1, evt1);
+            ns.event_store.assert_event_was_stored(&expected_event);
+        }).unwrap();
     }
 
     #[test]
@@ -224,7 +215,7 @@ mod test {
         let mut context = create_test_flo_context();
 
         let notifier = MockConsumerNotifier::new();
-        let consumer_id = context.add_consumer(notifier, 0);
+        let consumer_id = context.add_consumer_to_namespace(notifier, 0, "any-old-namespace");
         let result = context.get_next_event(consumer_id);
         assert!(result.is_none());
     }
@@ -234,7 +225,7 @@ mod test {
         let mut ctx = create_test_flo_context();
         let event_id: EventId = 88;
 
-        let consumer_id = ctx.add_consumer(MockConsumerNotifier::new(), event_id);
+        let consumer_id = ctx.add_consumer_to_namespace(MockConsumerNotifier::new(), event_id, "anyNamespace");
         let consumer = ctx.get_consumer(consumer_id).unwrap();
         assert_eq!(event_id, consumer.last_event);
     }
@@ -242,10 +233,12 @@ mod test {
     #[test]
     fn add_consumer_returns_the_id_of_the_consumer_created() {
         let mut ctx = create_test_flo_context();
-        let result = ctx.add_consumer(MockConsumerNotifier::new(), 0);
+
+		let namespace = "dafuqisdat";
+        let result = ctx.add_consumer_to_namespace(MockConsumerNotifier::new(), 0, namespace);
         assert_eq!(1, result);
 
-        let result = ctx.add_consumer(MockConsumerNotifier::new(), 0);
+        let result = ctx.add_consumer_to_namespace(MockConsumerNotifier::new(), 0, namespace);
         assert_eq!(2, result);
 
     }

@@ -32,14 +32,15 @@ macro_rules! integration_test {
 }
 
 integration_test!(producer_produces_event_and_gets_event_id_in_response, server_url, {
-    let producer = FloProducer::default(server_url);
+	let producer_url = server_url.join("testNamespace").unwrap();
+    let producer = FloProducer::default(producer_url);
     let result = producer.emit_raw(r#"{"myKey": "what a great value!"}"#.as_bytes());
     assert_eq!(Ok(1), result);
 });
 
 integration_test!(producer_emits_multiple_events_and_returns_iterator_of_results, server_url, {
-	    
-    let producer = FloProducer::default(server_url);
+	let producer_url = server_url.join("testNamespace").unwrap();
+    let producer = FloProducer::default(producer_url);
 
     let events = vec![
         ObjectBuilder::new().insert("keyA", "valueA").unwrap(),
@@ -52,7 +53,8 @@ integration_test!(producer_emits_multiple_events_and_returns_iterator_of_results
 });
 
 integration_test!(consumer_consumes_events_starting_at_beginning_of_stream, server_url, {
-    let producer = FloProducer::default(server_url.clone());
+	let event_stream_url = server_url.join("testNamespace").unwrap();
+    let producer = FloProducer::default(event_stream_url.clone());
     let events = vec![
         ObjectBuilder::new().insert("keyA", "valueA").unwrap(),
         ObjectBuilder::new().insert("keyB", 123).unwrap(),
@@ -62,13 +64,14 @@ integration_test!(consumer_consumes_events_starting_at_beginning_of_stream, serv
 	producer.produce_stream(events.iter(), &mut producer_handler);
 
     let mut consumer = TestConsumer::new(3);
-    let result = run_consumer(&mut consumer, server_url, Duration::from_secs(5));
+    let result = run_consumer(&mut consumer,  event_stream_url, Duration::from_secs(5));
     assert_eq!(Ok(()), result);
     consumer.assert_event_data_received(&events);
 });
 
 integration_test!(consumer_consumes_events_starting_at_the_middle_of_the_stream, server_url, {
-    let producer = FloProducer::default(server_url.clone());
+	let event_stream_url = server_url.join("middle-of-stream").unwrap();
+    let producer = FloProducer::default(event_stream_url.clone());
 	let first_events = vec![
         ObjectBuilder::new().insert("keyA", "valueA").unwrap(),
         ObjectBuilder::new().insert("keyB", 123).unwrap(),
@@ -83,7 +86,7 @@ integration_test!(consumer_consumes_events_starting_at_the_middle_of_the_stream,
 	producer.produce_stream(first_events.iter().chain(expected_events.iter()), &mut producer_handler);
 
     let mut consumer = TestConsumer::new(3);
-	let mut consumer_url = server_url.clone();
+	let mut consumer_url = event_stream_url.clone();
 	consumer_url.query_pairs_mut().append_pair("lastEvent", "3");
     let result = run_consumer(&mut consumer, consumer_url, Duration::from_secs(5));
     assert_eq!(Ok(()), result);
@@ -91,10 +94,11 @@ integration_test!(consumer_consumes_events_starting_at_the_middle_of_the_stream,
 });
 
 integration_test!(consumer_receives_an_event_produced_after_consumer_connected, server_url, {
-        
+	let event_stream_url = server_url.join("testNamespace").unwrap();
+
 	let event_json = ObjectBuilder::new().insert("brain", "fart").unwrap();
 	let expected_events = vec![event_json.clone()];
-    let consumer_url = server_url.clone();
+    let consumer_url = event_stream_url.clone();
     let consumer_thread = thread::spawn(move || {
         let mut consumer = TestConsumer::new(1);
 		run_consumer(&mut consumer, consumer_url, Duration::from_secs(5)).unwrap();
@@ -104,7 +108,7 @@ integration_test!(consumer_receives_an_event_produced_after_consumer_connected, 
 	
     thread::sleep(Duration::from_millis(500));
 
-	let producer = FloProducer::default(server_url);
+	let producer = FloProducer::default(event_stream_url);
 	producer.emit(event_json).unwrap();
 	println!("Finished emitting event");
 	consumer_thread.join().unwrap();
@@ -170,6 +174,7 @@ pub struct FloServerProcess {
 impl FloServerProcess {
     pub fn new(port: u16, data_dir: &Path) -> FloServerProcess {
         use std::env::current_dir;
+		use std::process::Stdio;
 
         let mut flo_path = current_dir().unwrap();
         flo_path.push("target/debug/flo");
@@ -180,6 +185,8 @@ impl FloServerProcess {
                 .arg(format!("{}", port))
                 .arg("--data-dir")
                 .arg(data_dir)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
                 .spawn().unwrap();
 
         // hack to prevent test from starting until the server is actually started
@@ -196,7 +203,12 @@ impl Drop for FloServerProcess {
         self.child_proc.take().map(|mut child| {
             println!("killing flo server proc");
             child.kill().unwrap();
-            child.wait().unwrap();
+            child.wait_with_output().map(|output| {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    println!("stdout: \n {}", stdout);
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    println!("stderr: \n {}", stderr);
+            }).unwrap();
             println!("flo server proc completed");
         });
     }

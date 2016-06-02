@@ -6,7 +6,7 @@ use queryst;
 use serde_json::Value;
 use context::FloContext;
 use event_store::EventStore;
-use super::FloServer;
+use super::{get_namespace_from_path, FloServer};
 use std::time::Duration;
 
 
@@ -65,10 +65,12 @@ pub fn init_consumer<S: EventStore>(request: Head,
         response: &mut Response,
         scope: &mut Scope<FloContext<RotorConsumerNotifier, S>>)
         -> Option<(FloServer, RecvMode, Time)> {
+	
+	let namespace = get_namespace_from_path(request.path);
 
     let last_event_id = get_last_event_id(request.path).unwrap();
     let notifier = scope.notifier();
-    let consumer_id = scope.add_consumer(RotorConsumerNotifier::new(notifier), last_event_id);
+    let consumer_id = scope.add_consumer_to_namespace(RotorConsumerNotifier::new(notifier), last_event_id, &namespace);
 
     response.status(200u16, "Success");
     response.add_chunked().unwrap();

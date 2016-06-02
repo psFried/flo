@@ -84,10 +84,11 @@ impl <'a> Server for FloServer {
     }
 }
 
-pub fn get_namespace_from_path<'a>(request_path: &'a str) -> &'a str {
-    request_path.split_at(1).1
+pub fn get_namespace_from_path<'a>(request_path: &'a str) -> String {
+	request_path.chars().skip(1).take_while(|char| *char != '?').collect::<String>()
 }
 
+#[derive(Debug)]
 pub struct ServerOptions {
     pub port: u16,
     pub storage_dir: PathBuf,
@@ -96,9 +97,8 @@ pub struct ServerOptions {
 pub fn start_server(opts: ServerOptions) {
     use rotor::{Loop, Config};
 
-    info!("Starting server");
-    let event_store = FileSystemEventStore::new(opts.storage_dir);
-    let flo_context = FloContext::new(event_store);
+    info!("Starting server with options: {:?}", opts);
+    let flo_context = FloContext::new(opts.storage_dir);
 
     let event_loop = Loop::new(&Config::new()).unwrap();
     let mut loop_inst = event_loop.instantiate(flo_context);
@@ -118,7 +118,13 @@ mod test {
     #[test]
     fn get_namespace_from_path_returns_path_without_leading_slash() {
         let input = "/theNamespace";
-        assert_eq!("theNamespace", get_namespace_from_path(input));
+        assert_eq!("theNamespace", &get_namespace_from_path(input));
     }
+
+	#[test]
+	fn get_namespace_from_path_excludes_everything_after_question_mark() {
+	    let input = "/theNamespace?queryParam=paramValue";
+	    assert_eq!("theNamespace", &get_namespace_from_path(input));
+	}
 
 }
