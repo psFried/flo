@@ -151,6 +151,30 @@ integration_test!(consumers_receive_only_the_events_for_the_namespace_they_have_
 	consumer_b.assert_event_data_received(&b_events);
 });
 
+#[test]
+fn events_are_persisted_across_server_restarts() {
+    init_logger();
+    let port =  unsafe {
+        3000u16 + PORT.fetch_add(1, Ordering::Relaxed) as u16
+    };
+    let data_dir = tempdir::TempDir::new("flo-integration-test").unwrap();
+    let url: Url = Url::parse(&format!("http://localhost:{}/persist-events", port)).unwrap();
+
+    let mut flo_server_proc = FloServerProcess::new(port, data_dir.path());
+	
+	let event_json = ObjectBuilder::new().insert("persistentKey", "persistentValue").unwrap();
+	let producer = FloProducer::default(url.clone());
+	producer.emit(&event_json).unwrap();
+
+	flo_server_proc.kill();
+		
+	flo_server_proc.start();
+
+	let mut consumer = TestConsumer::new(1);
+	run_consumer(&mut consumer, url, Duration::from_secs(5)).unwrap();
+	consumer.assert_event_data_received(&vec![event_json]);
+}
+
 
 ///////////////////////////////////////////////////////////////////////////
 ///////  Test Utils            ////////////////////////////////////////////
@@ -169,12 +193,26 @@ fn init_logger() {
 
 pub struct FloServerProcess {
     child_proc: Option<Child>,
+	port: u16,
+	data_dir: String,
 }
 
 impl FloServerProcess {
     pub fn new(port: u16, data_dir: &Path) -> FloServerProcess {
+        let mut server_proc = FloServerProcess {
+            child_proc: None,
+            port: port,
+            data_dir: data_dir.to_str().unwrap().to_string()
+        };
+        server_proc.start();
+        server_proc
+    }
+
+	pub fn start(&mut self) {
         use std::env::current_dir;
 		use std::process::Stdio;
+		
+		assert!(self.child_proc.is_none(), "tried to start server but it's already started");
 
         let mut flo_path = current_dir().unwrap();
         flo_path.push("target/debug/flo");
@@ -182,24 +220,20 @@ impl FloServerProcess {
         println!("Starting flo server");
         let child = Command::new(flo_path)
                 .arg("--port")
-                .arg(format!("{}", port))
+                .arg(format!("{}", self.port))
                 .arg("--data-dir")
-                .arg(data_dir)
+                .arg(&self.data_dir)
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .spawn().unwrap();
+		self.child_proc = Some(child);
 
         // hack to prevent test from starting until the server is actually started
         // TODO: wait for log output that indicates server is ready
         thread::sleep(Duration::from_millis(500));
-        FloServerProcess {
-            child_proc: Some(child)
-        }
-    }
-}
+	}
 
-impl Drop for FloServerProcess {
-    fn drop(&mut self) {
+	pub fn kill(&mut self) {
         self.child_proc.take().map(|mut child| {
             println!("killing flo server proc");
             child.kill().unwrap();
@@ -211,6 +245,12 @@ impl Drop for FloServerProcess {
             }).unwrap();
             println!("flo server proc completed");
         });
+	}
+}
+
+impl Drop for FloServerProcess {
+    fn drop(&mut self) {
+		self.kill();
     }
 }
 

@@ -69,6 +69,10 @@ impl EventStore for MockEventStore {
     fn get_event_greater_than(&mut self, event_id: EventId) -> Option<&mut Event> {
         self.get_event_greater_than_stub.get_mut(&event_id)
     }
+
+	fn get_greatest_event_id(&self) -> EventId {
+	    self.events.iter().map(Event::get_id).max().unwrap_or(0)
+	}
 }
 
 pub fn create_test_flo_context() -> FloContext<MockConsumerNotifier, MockEventStore> {

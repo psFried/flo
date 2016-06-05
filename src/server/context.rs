@@ -60,7 +60,7 @@ impl <N: ConsumerNotifier, S: EventStore> FloContext<N, S> {
 
 	pub fn add_consumer_to_namespace(&mut self, notifier: N, last_event: EventId, namespace: &str) -> usize {
         let consumer_id = self.get_next_consumer_id();
-        debug!("Adding consumer: {}, lastEvent: {}", consumer_id, last_event);
+        debug!("Adding consumer: {}, namespace: \"{}\", lastEvent: {}", consumer_id, namespace, last_event);
 	    
 		self.with_namespace(namespace, move |ns| {
             ns.add_consumer(Consumer {

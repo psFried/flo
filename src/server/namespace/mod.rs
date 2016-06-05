@@ -13,7 +13,6 @@ pub struct Namespace<S: EventStore, N: ConsumerNotifier> {
     pub event_store: S,
 	name: String, 
     consumers: HashMap<usize, Consumer<N>>,
-    current_event_id: EventId,
 }
 
 impl <S: EventStore, N: ConsumerNotifier> Namespace<S, N> {
@@ -24,7 +23,6 @@ impl <S: EventStore, N: ConsumerNotifier> Namespace<S, N> {
                 name: namespace,
                 event_store: store,
                 consumers: HashMap::new(),
-				current_event_id: 0,
             }
         })
     }
@@ -46,7 +44,7 @@ impl <S: EventStore, N: ConsumerNotifier> Namespace<S, N> {
 
 	pub fn add_consumer(&mut self, mut consumer: Consumer<N>) {
 		trace!("adding consumer {} to namespace: {:?}", consumer.id, self.name);
-	    notify_if_new_event(self.current_event_id, &mut consumer);
+	    notify_if_new_event(self.event_store.get_greatest_event_id(), &mut consumer);
 		self.consumers.insert(consumer.id, consumer);
 	}
 
@@ -55,19 +53,18 @@ impl <S: EventStore, N: ConsumerNotifier> Namespace<S, N> {
             Some(consumer) => self.event_store.get_event_greater_than(consumer.last_event),
             _ => None
         }
- 
 	}
 
 	fn notify_all_consumers(&mut self) {
-		let Namespace {ref mut consumers, current_event_id, ..} = *self;
+		let Namespace {ref mut consumers, ref event_store, ..} = *self;
+		let current_event_id = event_store.get_greatest_event_id();
 	    for (_id, consumer) in consumers.iter_mut() {
 	        notify_if_new_event(current_event_id, consumer);
 	    }
 	}
 
 	fn next_event_id(&mut self) -> EventId {
-	    self.current_event_id += 1;
-	    self.current_event_id
+		self.event_store.get_greatest_event_id() + 1
 	}
 
 }
