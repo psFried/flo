@@ -9,7 +9,7 @@ pub struct EntryRangeIterator<'a> {
     iterations: usize,
 }
 
-impl <'a> EntryRangeIterator<'a> {
+impl<'a> EntryRangeIterator<'a> {
     pub fn new<'b>(entries: &'b [Option<Entry>], max_iterations: usize, start_index: usize) -> EntryRangeIterator<'b> {
         EntryRangeIterator {
             entries: entries,
@@ -32,7 +32,7 @@ impl <'a> EntryRangeIterator<'a> {
     }
 }
 
-impl <'a> Iterator for EntryRangeIterator<'a> {
+impl<'a> Iterator for EntryRangeIterator<'a> {
     type Item = Entry;
 
     fn next(&mut self) -> Option<Entry> {
@@ -102,10 +102,7 @@ mod test {
 
     #[test]
     fn next_returns_next_sequential_event_in_slice() {
-        let entries = vec![
-            Some(Entry{event_id: 6, offset: 1}),
-            Some(Entry{event_id: 7, offset: 2})
-        ];
+        let entries = vec![Some(Entry { event_id: 6, offset: 1 }), Some(Entry { event_id: 7, offset: 2 })];
         let mut iterator = EntryRangeIterator::new(entries.as_slice(), 99, 0);
         let result = iterator.next();
         assert_eq!(entries[0], result);
@@ -115,7 +112,7 @@ mod test {
 
     #[test]
     fn next_returns_none_if_slice_is_empty() {
-        let entries: Vec<Option<Entry>> = vec!();
+        let entries: Vec<Option<Entry>> = vec![];
         let mut iterator = EntryRangeIterator::new(entries.as_slice(), 99, 0);
         let result = iterator.next();
         assert!(result.is_none());

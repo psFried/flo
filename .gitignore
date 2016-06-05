@@ -12,3 +12,7 @@ events.json
 
 # mac junk
 .DS_Store
+
+# rustfmt backups
+*.bk
+

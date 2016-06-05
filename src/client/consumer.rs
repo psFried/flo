@@ -20,23 +20,24 @@ pub fn run_consumer<T: FloConsumer>(consumer: &mut T, url: Url, timeout: Duratio
     client.set_read_timeout(Some(timeout));
 
     debug!("Starting consumer request to: {:?}", url);
-    client.get(url).send().map_err(|req_err| {
-        error!("Request error: {:?}", req_err);
-        format!("Request Error: {}", req_err)
-    }).and_then(|mut response| {
-        debug!("Got response for Consumer");
-        let stop_result = process_streaming_response(consumer, &mut response);
-        debug!("finished running consumer with result: {:?}", stop_result);
-        stop_result
-    })
+    client.get(url)
+          .send()
+          .map_err(|req_err| {
+              error!("Request error: {:?}", req_err);
+              format!("Request Error: {}", req_err)
+          })
+          .and_then(|mut response| {
+              debug!("Got response for Consumer");
+              let stop_result = process_streaming_response(consumer, &mut response);
+              debug!("finished running consumer with result: {:?}", stop_result);
+              stop_result
+          })
 }
 
 fn process_streaming_response<T: FloConsumer>(consumer: &mut T, response: &mut Response) -> StopResult {
     use serde_json::de::StreamDeserializer;
 
-    let event_iter = StreamDeserializer::new(response.bytes()).map(|json_result| {
-        json_result.map(Event::from_complete_json)
-    });
+    let event_iter = StreamDeserializer::new(response.bytes()).map(|json_result| json_result.map(Event::from_complete_json));
 
     let mut result = Ok(());
     for event_result in event_iter {
@@ -47,7 +48,7 @@ fn process_streaming_response<T: FloConsumer>(consumer: &mut T, response: &mut R
                     result = stop_result;
                     break;
                 }
-            },
+            }
             Err(serde_error) => {
                 error!("got serde error: {:?}", serde_error);
                 result = Err(format!("serde_error: {:?}", serde_error));

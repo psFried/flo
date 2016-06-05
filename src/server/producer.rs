@@ -16,7 +16,9 @@ pub fn timeout(now: Time) -> Time {
 }
 
 pub fn handle_request<C, S>(data: &[u8], namespace: &str, res: &mut Response, context: &mut FloContext<C, S>)
-        where C: ConsumerNotifier, S: EventStore {
+    where C: ConsumerNotifier,
+          S: EventStore
+{
 
     match from_slice(data) {
         Ok(event) => {
@@ -25,10 +27,10 @@ pub fn handle_request<C, S>(data: &[u8], namespace: &str, res: &mut Response, co
                     let json = ObjectBuilder::new().insert("id", event_id).unwrap();
                     let body = to_vec(&json).unwrap();
                     write_response(200u16, &body, res);
-                },
-                Err(_) => write_response(500, b"oh shit man", res)
+                }
+                Err(_) => write_response(500, b"oh shit man", res),
             }
-        },
+        }
         _ => {
             write_response(400u16, b"invalid json", res);
         }

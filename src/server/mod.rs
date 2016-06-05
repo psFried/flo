@@ -20,27 +20,25 @@ use std::path::PathBuf;
 #[derive(Debug)]
 pub enum FloServer {
     Producer(String),
-    Consumer(usize)
+    Consumer(usize),
 }
 
-impl <'a> Server for FloServer {
+impl<'a> Server for FloServer {
     type Seed = ();
     type Context = FloContext<RotorConsumerNotifier, FileSystemEventStore>;
 
     fn headers_received(_seed: (),
                         head: Head,
                         res: &mut Response,
-                        scope: &mut Scope<Self::Context>) -> Option<(Self, RecvMode, Time)>
-    {
+                        scope: &mut Scope<Self::Context>)
+                        -> Option<(Self, RecvMode, Time)> {
         match head.method {
-            "GET" => {
-                self::consumer::init_consumer(head, res, scope)
-            },
+            "GET" => self::consumer::init_consumer(head, res, scope),
             "PUT" => {
-				let namespace = get_namespace_from_path(head.path).to_string();
+                let namespace = get_namespace_from_path(head.path).to_string();
                 Some((FloServer::Producer(namespace), RecvMode::Buffered(1024), producer::timeout(scope.now())))
-            },
-            _ => None
+            }
+            _ => None,
         }
     }
 
@@ -54,12 +52,12 @@ impl <'a> Server for FloServer {
     }
 
     fn timeout(self, response: &mut Response, scope: &mut Scope<Self::Context>) -> Option<(Self, Time)> {
-        debug!("** Timeout occured for {:?} ** reponse complete: {:?}", self, response.is_complete());
+        debug!("** Timeout occured for {:?} ** reponse complete: {:?}",
+               self,
+               response.is_complete());
         match self {
-            FloServer::Consumer(_idx) => {
-                Some((self, scope.now() + Duration::new(30, 0)))
-            },
-            FloServer::Producer(_) => None
+            FloServer::Consumer(_idx) => Some((self, scope.now() + Duration::new(30, 0))),
+            FloServer::Producer(_) => None,
         }
     }
 
@@ -72,9 +70,7 @@ impl <'a> Server for FloServer {
         Some(self)
     }
 
-    fn request_received(self, data: &[u8], res: &mut Response, scope: &mut Scope<Self::Context>)
-            -> Option<Self>
-    {
+    fn request_received(self, data: &[u8], res: &mut Response, scope: &mut Scope<Self::Context>) -> Option<Self> {
         if let FloServer::Producer(namespace) = self {
             producer::handle_request(data, &namespace, res, scope);
             None
@@ -86,7 +82,7 @@ impl <'a> Server for FloServer {
 }
 
 pub fn get_namespace_from_path<'a>(request_path: &'a str) -> String {
-	request_path.chars().skip(1).take_while(|char| *char != '?').collect::<String>()
+    request_path.chars().skip(1).take_while(|char| *char != '?').collect::<String>()
 }
 
 #[derive(Debug)]
@@ -106,26 +102,25 @@ pub fn start_server(opts: ServerOptions) {
     let address = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), opts.port));
 
     let listener = TcpListener::bind(&address).unwrap();
-    loop_inst.add_machine_with(|scope| {
-        Fsm::<FloServer, _>::new(listener, (), scope)
-    }).unwrap();
+    loop_inst.add_machine_with(|scope| Fsm::<FloServer, _>::new(listener, (), scope))
+             .unwrap();
     loop_inst.run().unwrap();
 }
 
 #[cfg(test)]
 mod test {
-	use super::get_namespace_from_path;
-    
+    use super::get_namespace_from_path;
+
     #[test]
     fn get_namespace_from_path_returns_path_without_leading_slash() {
         let input = "/theNamespace";
         assert_eq!("theNamespace", &get_namespace_from_path(input));
     }
 
-	#[test]
-	fn get_namespace_from_path_excludes_everything_after_question_mark() {
-	    let input = "/theNamespace?queryParam=paramValue";
-	    assert_eq!("theNamespace", &get_namespace_from_path(input));
-	}
+    #[test]
+    fn get_namespace_from_path_excludes_everything_after_question_mark() {
+        let input = "/theNamespace?queryParam=paramValue";
+        assert_eq!("theNamespace", &get_namespace_from_path(input));
+    }
 
 }

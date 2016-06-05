@@ -1,0 +1,6 @@
+
+max_width = 130
+ideal_width = 100
+
+struct_lit_width = 30
+fn_args_paren_newline = false

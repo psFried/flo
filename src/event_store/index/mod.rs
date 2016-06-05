@@ -35,7 +35,6 @@ pub struct RingIndex {
 }
 
 impl RingIndex {
-
     pub fn new(initial_size: usize, max_size: usize) -> RingIndex {
         let mut index = RingIndex {
             entries: Vec::with_capacity(initial_size),
@@ -52,13 +51,15 @@ impl RingIndex {
         index
     }
 
-	#[allow(dead_code)]
+    #[allow(dead_code)]
     pub fn num_entries(&self) -> usize {
         self.num_entries
     }
 
     pub fn add(&mut self, entry: Entry) {
-        trace!("Adding to index: {:?}, total entries: {}", entry, self.entries.len() + 1);
+        trace!("Adding to index: {:?}, total entries: {}",
+               entry,
+               self.entries.len() + 1);
         self.num_entries += 1;
         let idx = self.get_index(entry.event_id);
         self.ensure_capacity(idx);
@@ -66,7 +67,7 @@ impl RingIndex {
         self.set_new_head(entry.event_id, idx);
     }
 
-	#[allow(dead_code)]
+    #[allow(dead_code)]
     pub fn get(&self, event_id: EventId) -> Option<Entry> {
         let index = self.get_index(event_id);
         if index < self.entries.len() {
@@ -82,9 +83,9 @@ impl RingIndex {
         let mut max_events = self.head_event_id.saturating_sub(starting_after) as usize;
         max_events = ::std::cmp::min(max_events, self.max_num_events);
         trace!("index entry range: starting_after_event: {}, starting_index: {}, max: {}",
-                starting_after,
-                starting_index,
-                max_events);
+               starting_after,
+               starting_index,
+               max_events);
         EntryRangeIterator::new(self.entries.as_slice(), max_events, starting_index)
     }
 
@@ -92,7 +93,7 @@ impl RingIndex {
         self.entry_range(event_id).next()
     }
 
-	#[allow(dead_code)]
+    #[allow(dead_code)]
     pub fn drop(&mut self, min_event_id: EventId) {
         self.drop_to_event = min_event_id;
     }
@@ -117,7 +118,9 @@ impl RingIndex {
             let new_capacity = index + (index as f64 * LOAD_FACTOR) as usize;
             let max_additional = self.max_num_events - current_len;
             let additional_capacity = ::std::cmp::min(new_capacity - current_len, max_additional);
-            debug!("Growing index by: {}, from: {}", additional_capacity, current_len);
+            debug!("Growing index by: {}, from: {}",
+                   additional_capacity,
+                   current_len);
             self.entries.reserve_exact(additional_capacity);
             self.fill_entries();
         }
@@ -127,7 +130,6 @@ impl RingIndex {
         let idx = event_id as usize - 1;
         idx % self.max_num_events
     }
-
 }
 
 
@@ -149,8 +151,8 @@ mod test {
         let iterator = index.entry_range(14);
         let iterator_results = iterator.collect::<Vec<Entry>>();
         assert_eq!(15, iterator_results.len());
-        assert_eq!(Entry{event_id: 15, offset: 15}, iterator_results[0]);
-        assert_eq!(Entry{event_id: 29, offset: 29}, iterator_results[14]);
+        assert_eq!(Entry { event_id: 15, offset: 15 }, iterator_results[0]);
+        assert_eq!(Entry { event_id: 29, offset: 29 }, iterator_results[14]);
     }
 
     #[test]
@@ -182,7 +184,7 @@ mod test {
         let mut index = RingIndex::new(10, 10);
 
         index.add(Entry::new(1, 55));
-        assert_eq!(Some(Entry{event_id: 1, offset: 55}), index.entries[0]);
+        assert_eq!(Some(Entry { event_id: 1, offset: 55 }), index.entries[0]);
     }
 
     #[test]
@@ -191,7 +193,7 @@ mod test {
         index.add(Entry::new(7, 77));
         index.add(Entry::new(11, 111));
         let result = index.get_next_entry(7);
-        assert_eq!(Some(Entry{event_id: 11, offset: 111}), result);
+        assert_eq!(Some(Entry { event_id: 11, offset: 111 }), result);
     }
 
     #[test]
@@ -201,9 +203,9 @@ mod test {
         index.add(Entry::new(10, 100));
         index.add(Entry::new(11, 110));
 
-        assert_eq!(Some(Entry{event_id: 10, offset: 100}), index.entries[9]);
+        assert_eq!(Some(Entry { event_id: 10, offset: 100 }), index.entries[9]);
         let result = index.get_next_entry(10);
-        assert_eq!(Some(Entry{event_id: 11, offset: 110}), result);
+        assert_eq!(Some(Entry { event_id: 11, offset: 110 }), result);
         assert_eq!(result, index.entries[0]);
     }
 

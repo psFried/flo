@@ -40,37 +40,39 @@ fn main() {
     init_logging();
 
     let args = App::new("flo")
-            .version(FLO_VERSION)
-            .arg(Arg::with_name("port")
-                    .short("p")
-                    .long("port")
-                    .value_name("PORT")
-                    .help("port that the server should listen on")
-                    .default_value("3000"))
-            .arg(Arg::with_name("data-dir")
-                    .short("d")
-                    .long("data-dir")
-                    .value_name("DIR")
-                    .help("The directory to be used for storage")
-                    .default_value("."))
-            .get_matches();
+                   .version(FLO_VERSION)
+                   .arg(Arg::with_name("port")
+                            .short("p")
+                            .long("port")
+                            .value_name("PORT")
+                            .help("port that the server should listen on")
+                            .default_value("3000"))
+                   .arg(Arg::with_name("data-dir")
+                            .short("d")
+                            .long("data-dir")
+                            .value_name("DIR")
+                            .help("The directory to be used for storage")
+                            .default_value("."))
+                   .get_matches();
 
     let port = parse_arg_or_exit(&args, "port", 3000u16);
     let data_dir = PathBuf::from(args.value_of("data-dir").unwrap_or("."));
 
-    server::start_server(server::ServerOptions{
+    server::start_server(server::ServerOptions {
         port: port,
         storage_dir: data_dir,
     });
 }
 
 fn parse_arg_or_exit<T: FromStr + Default>(args: &ArgMatches, arg_name: &str, default: T) -> T {
-    args.value_of(arg_name).map(|value| {
-        match value.parse() {
-            Ok(parsed) => parsed,
-            Err(_) => {
-                panic!("Argument: {} is invalid", arg_name);
+    args.value_of(arg_name)
+        .map(|value| {
+            match value.parse() {
+                Ok(parsed) => parsed,
+                Err(_) => {
+                    panic!("Argument: {} is invalid", arg_name);
+                }
             }
-        }
-    }).unwrap_or(default)
+        })
+        .unwrap_or(default)
 }

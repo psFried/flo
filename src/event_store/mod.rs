@@ -17,15 +17,13 @@ pub const MAX_NUM_EVENTS: usize = 1_000_000;
 pub type PersistenceResult = Result<EventId, io::Error>;
 
 pub trait EventStore: Sized {
-
-	fn create(base_dir: &Path, namespace: &str) -> Result<Self, io::Error>;
+    fn create(base_dir: &Path, namespace: &str) -> Result<Self, io::Error>;
 
     fn store(&mut self, event: Event) -> PersistenceResult;
 
     fn get_event_greater_than(&mut self, event_id: EventId) -> Option<&mut Event>;
 
-	fn get_greatest_event_id(&self) -> EventId;
-
+    fn get_greatest_event_id(&self) -> EventId;
 }
 
 
@@ -42,40 +40,45 @@ pub struct FileSystemEventStore {
 
 
 impl FileSystemEventStore {
-
     pub fn new(persistence_dir: PathBuf) -> Result<FileSystemEventStore, io::Error> {
-		use std::fs;
-		
-		fs::create_dir_all(&persistence_dir).and_then(|_| {
-			fs::OpenOptions::new().append(true).create(true).open(persistence_dir.join(EVENTS_FILE_NAME))
-        }).and_then(|file| {
-            let store = FileSystemEventStore {
-                file_reader: FileReader::new(persistence_dir.join(EVENTS_FILE_NAME)),
-                current_file_position: 0,
-                events_file: file,
-                index: RingIndex::new(1000, MAX_NUM_EVENTS),
-                event_cache: LruCache::<EventId, Event>::with_capacity(MAX_CACHED_EVENTS),
-                persistence_dir: persistence_dir,
-				current_event_id: 0,
-            };
-            
-			store.initialize()
-        })
+        use std::fs;
+
+        fs::create_dir_all(&persistence_dir)
+            .and_then(|_| {
+                fs::OpenOptions::new()
+                    .append(true)
+                    .create(true)
+                    .open(persistence_dir.join(EVENTS_FILE_NAME))
+            })
+            .and_then(|file| {
+                let store = FileSystemEventStore {
+                    file_reader: FileReader::new(persistence_dir.join(EVENTS_FILE_NAME)),
+                    current_file_position: 0,
+                    events_file: file,
+                    index: RingIndex::new(1000, MAX_NUM_EVENTS),
+                    event_cache: LruCache::<EventId, Event>::with_capacity(MAX_CACHED_EVENTS),
+                    persistence_dir: persistence_dir,
+                    current_event_id: 0,
+                };
+
+                store.initialize()
+            })
     }
 
-	fn initialize(mut self) -> Result<FileSystemEventStore, io::Error> {
-	    use serde_json::Error as JsonError;
-	    
-		{
-            let FileSystemEventStore{ref mut file_reader, 
-                	ref mut event_cache, 
-                	ref mut current_file_position, 
-                	ref mut index, 
-                	ref persistence_dir, 
-                	ref mut current_event_id, ..} = self;
+    fn initialize(mut self) -> Result<FileSystemEventStore, io::Error> {
+        use serde_json::Error as JsonError;
 
-            
-			let mut num_events = 0;
+        {
+            let FileSystemEventStore { ref mut file_reader,
+                                       ref mut event_cache,
+                                       ref mut current_file_position,
+                                       ref mut index,
+                                       ref persistence_dir,
+                                       ref mut current_event_id,
+                                       .. } = self;
+
+
+            let mut num_events = 0;
             for event_result in file_reader.read_from_offset(0) {
                 match event_result {
                     Ok(mut event) => {
@@ -84,54 +87,61 @@ impl FileSystemEventStore {
                         index.add(Entry::new(event_id, event_data_len));
                         *current_file_position += event_data_len;
                         event_cache.insert(event_id, event);
-						num_events += 1;
-						*current_event_id = event_id;
-                    },
+                        num_events += 1;
+                        *current_event_id = event_id;
+                    }
                     Err(serde_error) => {
                         error!("Unable to Read Event: {:?}", serde_error);
                         match serde_error {
                             JsonError::Io(io_err) => return Err(io_err),
-                            err @ _ => return Err(io::Error::new(io::ErrorKind::InvalidData, format!("Error reading events file: {:?}", err)))
-                        }    
+                            err @ _ => {
+                                return Err(io::Error::new(io::ErrorKind::InvalidData,
+                                                          format!("Error reading events file: \
+                                                                   {:?}",
+                                                                  err)))
+                            }
+                        }
                     }
                 }
             }
-			info!("initialized event store with {} pre-existing events from file: {:?}", num_events,  persistence_dir);
-		    
-		}
+            info!("initialized event store with {} pre-existing events from file: {:?}",
+                  num_events,
+                  persistence_dir);
 
-		Ok(self)
-	}
+        }
 
+        Ok(self)
+    }
 }
 
 impl EventStore for FileSystemEventStore {
-
-	fn create(base_dir: &Path, namespace: &str) -> Result<Self, io::Error> {
-	    let storage_dir = base_dir.join(namespace);
-	    FileSystemEventStore::new(storage_dir)
-	}
+    fn create(base_dir: &Path, namespace: &str) -> Result<Self, io::Error> {
+        let storage_dir = base_dir.join(namespace);
+        FileSystemEventStore::new(storage_dir)
+    }
 
     fn store(&mut self, event: Event) -> PersistenceResult {
         let mut evt = event;
         let event_id: EventId = evt.get_id();
-		self.current_event_id = event_id;
+        self.current_event_id = event_id;
         self.index.add(Entry::new(event_id, self.current_file_position));
-        trace!("added index entry: event_id: {}, offset: {}", event_id, self.current_file_position);
+        trace!("added index entry: event_id: {}, offset: {}",
+               event_id,
+               self.current_file_position);
         self.events_file.write(evt.get_raw_bytes()).map(|_| {
             self.current_file_position += evt.get_raw_bytes().len() as u64;
-			trace!("finished writing event to disk: {}", event_id);
+            trace!("finished writing event to disk: {}", event_id);
             self.event_cache.insert(event_id, evt);
             event_id
         })
     }
 
-	fn get_greatest_event_id(&self) -> EventId {
-	    self.current_event_id
-	}
+    fn get_greatest_event_id(&self) -> EventId {
+        self.current_event_id
+    }
 
     fn get_event_greater_than(&mut self, event_id: EventId) -> Option<&mut Event> {
-        let FileSystemEventStore{ref mut index, ref mut event_cache, ref file_reader, ..} = *self;
+        let FileSystemEventStore { ref mut index, ref mut event_cache, ref file_reader, .. } = *self;
 
         index.get_next_entry(event_id).and_then(move |entry| {
             if event_cache.contains_key(&entry.event_id) {
@@ -140,11 +150,12 @@ impl EventStore for FileSystemEventStore {
             } else {
                 match file_reader.read_from_offset(entry.offset).next() {
                     Some(Ok(event)) => {
-                        trace!("event cache miss for event: {}, read from file", entry.event_id);
+                        trace!("event cache miss for event: {}, read from file",
+                               entry.event_id);
                         event_cache.insert(entry.event_id, event);
                         event_cache.get_mut(&entry.event_id)
-                    },
-                    _ => None
+                    }
+                    _ => None,
                 }
             }
 
@@ -161,29 +172,29 @@ mod test {
     use std::fs::File;
     use std::io::Read;
     use serde_json::StreamDeserializer;
-	use serde_json::builder::ObjectBuilder;
+    use serde_json::builder::ObjectBuilder;
     use event_store::index::Entry;
 
-	#[test]
-	fn new_event_store_is_created_with_existing_events_on_disk() {
+    #[test]
+    fn new_event_store_is_created_with_existing_events_on_disk() {
         let temp_dir = TempDir::new("flo-persist-test").unwrap();
-		let mut expected_event_1 = to_event(1, r#"{"firstEventKey":"firstEventValue"}"#).unwrap();
+        let mut expected_event_1 = to_event(1, r#"{"firstEventKey":"firstEventValue"}"#).unwrap();
         let mut expected_event_2 = to_event(2, r#"{"secondEventKey": "secondEventValue"}"#).unwrap();
 
-		{
+        {
             let mut store = FileSystemEventStore::new(temp_dir.path().to_path_buf()).unwrap();
             store.store(expected_event_1.clone()).unwrap();
             store.store(expected_event_2.clone()).unwrap();
-		}
+        }
 
-		let mut store = FileSystemEventStore::new(temp_dir.path().to_path_buf()).unwrap();
-		{
+        let mut store = FileSystemEventStore::new(temp_dir.path().to_path_buf()).unwrap();
+        {
             let actual_event_1 = store.get_event_greater_than(0);
             assert_eq!(Some(&mut expected_event_1), actual_event_1);
-		}
-		let actual_event_2 = store.get_event_greater_than(1);
-		assert_eq!(Some(&mut expected_event_2), actual_event_2);
-	}
+        }
+        let actual_event_2 = store.get_event_greater_than(1);
+        assert_eq!(Some(&mut expected_event_2), actual_event_2);
+    }
 
     #[test]
     fn storing_an_event_adds_its_starting_offset_to_the_index() {
@@ -275,8 +286,8 @@ mod test {
         let bytes = file.bytes();
         let deser = StreamDeserializer::new(bytes);
         let saved = deser.map(Result::unwrap)
-                .map(Event::from_complete_json)
-                .collect::<Vec<Event>>();
+                         .map(Event::from_complete_json)
+                         .collect::<Vec<Event>>();
 
         assert_eq!(2, saved.len());
         assert_eq!(event1, saved[0]);

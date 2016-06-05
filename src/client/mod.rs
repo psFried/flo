@@ -10,5 +10,5 @@ pub type StopResult = Result<(), String>;
 #[derive(Debug, PartialEq)]
 pub enum ConsumerCommand {
     Continue,
-    Stop(StopResult)
+    Stop(StopResult),
 }

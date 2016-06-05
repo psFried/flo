@@ -12,7 +12,6 @@ pub struct EventsFromDisk {
 }
 
 impl EventsFromDisk {
-
     fn new(path: &Path, starting_offset: u64) -> EventsFromDisk {
         use std::fs::OpenOptions;
 
@@ -20,9 +19,7 @@ impl EventsFromDisk {
         file.seek(SeekFrom::Start(starting_offset)).unwrap();
 
         let stream_deserializer = StreamDeserializer::new(file.bytes());
-        EventsFromDisk {
-            stream_deserializer: stream_deserializer,
-        }
+        EventsFromDisk { stream_deserializer: stream_deserializer }
     }
 }
 
@@ -30,22 +27,19 @@ impl Iterator for EventsFromDisk {
     type Item = ReadResult;
 
     fn next(&mut self) -> Option<ReadResult> {
-        self.stream_deserializer.next().map(|json| {
-            json.map(|value| Event::from_complete_json(value))
-        })
+        self.stream_deserializer
+            .next()
+            .map(|json| json.map(|value| Event::from_complete_json(value)))
     }
 }
 
 pub struct FileReader {
-    storage_file_path: PathBuf
+    storage_file_path: PathBuf,
 }
 
 impl FileReader {
-
     pub fn new(storage_path: PathBuf) -> FileReader {
-        FileReader {
-            storage_file_path: storage_path,
-        }
+        FileReader { storage_file_path: storage_path }
     }
 
     pub fn read_from_offset(&self, offset: u64) -> EventsFromDisk {
@@ -70,9 +64,9 @@ mod test {
 
         let expected_event_id: EventId = 6;
         let offset = events.iter_mut()
-                .take_while(|event| event.get_id() < expected_event_id)
-                .map(|event| event.get_raw_bytes().len() as u64)
-                .fold(0u64, |acc, val| acc + val);
+                           .take_while(|event| event.get_id() < expected_event_id)
+                           .map(|event| event.get_raw_bytes().len() as u64)
+                           .fold(0u64, |acc, val| acc + val);
         let reader = FileReader::new(file_path.clone());
         let results = reader.read_from_offset(offset).map(Result::unwrap).collect::<Vec<Event>>();
         assert_eq!(5, results.len());

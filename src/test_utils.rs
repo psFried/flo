@@ -11,19 +11,18 @@ use std::path::{PathBuf, Path};
 
 
 pub struct MockConsumerNotifier {
-    pub notify_invokations: u32
+    pub notify_invokations: u32,
 }
 
 impl MockConsumerNotifier {
-
     pub fn new() -> MockConsumerNotifier {
-        MockConsumerNotifier {
-            notify_invokations: 0
-        }
+        MockConsumerNotifier { notify_invokations: 0 }
     }
 
     pub fn assert_notify_was_called(&self) {
-        assert!(self.notify_invokations == 1, "Expected one invocation of notify(), got: {}", self.notify_invokations);
+        assert!(self.notify_invokations == 1,
+                "Expected one invocation of notify(), got: {}",
+                self.notify_invokations);
     }
 }
 
@@ -56,9 +55,9 @@ impl MockEventStore {
 }
 
 impl EventStore for MockEventStore {
-	fn create(_base_dir: &Path, _namespace: &str) -> Result<Self, io::Error> {
-	    Ok(MockEventStore::new())
-	}
+    fn create(_base_dir: &Path, _namespace: &str) -> Result<Self, io::Error> {
+        Ok(MockEventStore::new())
+    }
 
     fn store(&mut self, event: Event) -> PersistenceResult {
         let event_id = event.get_id();
@@ -70,9 +69,9 @@ impl EventStore for MockEventStore {
         self.get_event_greater_than_stub.get_mut(&event_id)
     }
 
-	fn get_greatest_event_id(&self) -> EventId {
-	    self.events.iter().map(Event::get_id).max().unwrap_or(0)
-	}
+    fn get_greatest_event_id(&self) -> EventId {
+        self.events.iter().map(Event::get_id).max().unwrap_or(0)
+    }
 }
 
 pub fn create_test_flo_context() -> FloContext<MockConsumerNotifier, MockEventStore> {

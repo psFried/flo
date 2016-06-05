@@ -26,12 +26,11 @@ impl PartialEq for Event {
 }
 
 impl Event {
-
     pub fn new(id: EventId, data: Json) -> Event {
         let data_with_id = builder::ObjectBuilder::new()
-                .insert(ID_KEY, id)
-                .insert(DATA_KEY, data)
-                .unwrap();
+                               .insert(ID_KEY, id)
+                               .insert(DATA_KEY, data)
+                               .unwrap();
         Event {
             data: data_with_id,
             raw_bytes: None,
@@ -53,37 +52,28 @@ impl Event {
     }
 
     pub fn from_complete_json(json: Json) -> Event {
-        Event {
-            data: json,
-            raw_bytes: None,
-        }
+        Event { data: json, raw_bytes: None }
     }
 
     pub fn from_slice(complete_data: &[u8]) -> ParseResult<Event> {
-        serde_json::de::from_slice(complete_data)
-                .map(Event::from_complete_json)
+        serde_json::de::from_slice(complete_data).map(Event::from_complete_json)
     }
 
 
     #[cfg(test)]
     pub fn from_reader<R: Read>(raw_data: R) -> ParseResult<Event> {
-        serde_json::de::from_reader(raw_data)
-                .map(Event::from_complete_json)
+        serde_json::de::from_reader(raw_data).map(Event::from_complete_json)
     }
 
     #[cfg(test)]
     pub fn from_str(complete_data: &str) -> ParseResult<Event> {
-        serde_json::de::from_str(complete_data)
-                .map(Event::from_complete_json)
+        serde_json::de::from_str(complete_data).map(Event::from_complete_json)
     }
-
 }
 
 
 pub fn to_event(id: EventId, json: &str) -> ParseResult<Event> {
-    to_json(json).map(|data| {
-        Event::new(id, data)
-    })
+    to_json(json).map(|data| Event::new(id, data))
 }
 
 pub fn to_json(json: &str) -> ParseResult<Json> {
@@ -98,7 +88,7 @@ pub fn to_bytes(json: &Json) -> ParseResult<Vec<u8>> {
 
 pub trait EventJson {
     fn json(&self) -> &Json;
-    
+
     fn to_bytes(&self) -> ParseResult<Vec<u8>> {
         let json = self.json();
         to_bytes(json)
@@ -111,7 +101,7 @@ impl EventJson for Value {
     }
 }
 
-impl <'a> EventJson for &'a Value {
+impl<'a> EventJson for &'a Value {
     fn json(&self) -> &Json {
         self
     }
