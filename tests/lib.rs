@@ -102,7 +102,6 @@ integration_test!(consumer_receives_an_event_produced_after_consumer_connected, 
     let consumer_thread = thread::spawn(move || {
         let mut consumer = TestConsumer::new(1);
 		run_consumer(&mut consumer, consumer_url, Duration::from_secs(5)).unwrap();
-		println!("asserting that event json was received");
 		consumer.assert_event_data_received(&expected_events);
     });
 	
@@ -110,7 +109,6 @@ integration_test!(consumer_receives_an_event_produced_after_consumer_connected, 
 
 	let producer = FloProducer::default(event_stream_url);
 	producer.emit(event_json).unwrap();
-	println!("Finished emitting event");
 	consumer_thread.join().unwrap();
 	
 });
@@ -120,7 +118,8 @@ integration_test!(consumers_receive_only_the_events_for_the_namespace_they_have_
     let namespace_b = "iggy-pop";
 
 	let namespace_a_url = server_url.join(namespace_a).unwrap();
-	let namespace_b_url = server_url.join(namespace_b).unwrap();
+	let namespace_b_url = server_url
+			.join(namespace_b).unwrap();
 
     let a_events = vec![
         ObjectBuilder::new().insert("expected1", true).unwrap(),
