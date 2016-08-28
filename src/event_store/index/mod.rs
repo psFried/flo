@@ -2,6 +2,7 @@ mod entry_range_iterator;
 
 pub use self::entry_range_iterator::EntryRangeIterator;
 use event::EventId;
+use std::cmp::max;
 
 const LOAD_FACTOR: f64 = 0.75;
 
@@ -24,63 +25,75 @@ impl Entry {
 #[derive(Debug)]
 pub struct RingIndex {
     entries: Vec<Option<Entry>>,
-    min_event: EventId,
-    max_event: EventId,
     num_entries: usize,
-    drop_to_event: EventId,
     drop_to_index: usize,
     max_num_events: usize,
     head_index: usize,
-    head_event_id: EventId,
+    min_event_id: EventId,
+    max_event_id: EventId,
 }
 
 impl RingIndex {
     pub fn new(initial_size: usize, max_size: usize) -> RingIndex {
         let mut index = RingIndex {
             entries: Vec::with_capacity(initial_size),
-            min_event: 0,
-            max_event: 0,
             num_entries: 0,
-            drop_to_event: 0,
             drop_to_index: 0,
             max_num_events: max_size,
             head_index: 0,
-            head_event_id: 1,
+            min_event_id: 1,
+            max_event_id: 0,
         };
         index.fill_entries();
         index
     }
 
     #[allow(dead_code)]
-    pub fn num_entries(&self) -> usize {
+    pub fn size(&self) -> usize {
         self.num_entries
     }
 
-    pub fn add(&mut self, entry: Entry) {
+    pub fn add(&mut self, entry: Entry) -> Option<Entry> {
         trace!("Adding to index: {:?}, total entries: {}",
                entry,
                self.entries.len() + 1);
         self.num_entries += 1;
         let idx = self.get_index(entry.event_id);
         self.ensure_capacity(idx);
+        let prev_entry = self.entries[idx];
+        if prev_entry.is_some() {
+            self.min_event_id += 1;
+        }
         self.entries[idx] = Some(entry);
         self.set_new_head(entry.event_id, idx);
+        prev_entry
+    }
+
+    #[allow(dead_code)]
+    pub fn remove(&mut self, event_id: EventId) {
+        self.get(event_id).map(|_| {
+            let index = self.get_index(event_id);
+            self.entries[index] = None;
+            self.num_entries -= 1;
+        });
     }
 
     #[allow(dead_code)]
     pub fn get(&self, event_id: EventId) -> Option<Entry> {
-        let index = self.get_index(event_id);
-        if index < self.entries.len() {
-            self.entries[index]
-        } else {
-            warn!("index was asked for unknown event: {}", event_id);
-            None
-        }
+        self.get_event_index(event_id).and_then(|index| {
+            let matches_event_id = self.entries[index].map(|entry| entry.event_id == event_id).unwrap_or(false);
+            if matches_event_id {
+                self.entries[index]
+            } else {
+                None
+            }
+        })
     }
 
     pub fn entry_range<'a>(&'a mut self, starting_after: EventId) -> EntryRangeIterator<'a> {
-        let starting_index = self.get_index(starting_after + 1);
-        let mut max_events = self.head_event_id.saturating_sub(starting_after) as usize;
+        let event_id = max(starting_after + 1, self.min_event_id);
+        let starting_index = self.get_index(event_id);
+        let mut max_events = self.max_event_id.saturating_sub(starting_after) as usize;
         max_events = ::std::cmp::min(max_events, self.max_num_events);
         trace!("index entry range: starting_after_event: {}, starting_index: {}, max: {}",
                starting_after,
@@ -93,15 +106,19 @@ impl RingIndex {
         self.entry_range(event_id).next()
     }
 
-    #[allow(dead_code)]
-    pub fn drop(&mut self, min_event_id: EventId) {
-        self.drop_to_event = min_event_id;
+    fn get_event_index(&self, event_id: EventId) -> Option<usize> {
+        let index = self.get_index(event_id);
+        if index < self.entries.len() {
+            Some(index)
+        } else {
+            None
+        }
     }
 
     fn set_new_head(&mut self, event_id: EventId, index: usize) {
-        if event_id > self.head_event_id {
+        if event_id > self.max_event_id {
             self.head_index = index;
-            self.head_event_id = event_id;
+            self.max_event_id = event_id;
         }
     }
 
@@ -143,6 +160,68 @@ mod test {
     }
 
     #[test]
+    fn get_next_entry_returns_smallest_event_greater_than_the_given_one_after_max_event_has_been_reached() {
+        let mut index = RingIndex::new(20, 20);
+        for i in 1..25 {
+            index.add(Entry::new(i, i));
+        }
+
+        let next_event = index.get_next_entry(0);
+        assert_eq!(Some(Entry::new(5, 5)), next_event);
+    }
+
+    #[test]
+    fn add_returns_removed_event_when_an_old_event_is_overwritten() {
+        let mut index = RingIndex::new(20, 20);
+        for i in 1..20 {
+            let add_result = index.add(Entry::new(i, i));
+            assert!(add_result.is_none());
+        }
+
+        let add_result = index.add(Entry::new(21, 789));
+        assert_eq!(Some(Entry::new(1, 1)), add_result);
+        let add_result = index.add(Entry::new(22, 789));
+        assert_eq!(Some(Entry::new(2, 2)), add_result);
+    }
+
+    #[test]
+    fn calling_remove_with_an_event_id_that_is_not_in_the_index_does_nothing() {
+        let mut index = RingIndex::new(20, 20);
+        for i in 10..25 {
+            index.add(Entry::new(i, i));
+        }
+        assert_eq!(15, index.size());
+        index.remove(5);
+        assert_eq!(15, index.size());
+
+    }
+
+    #[test]
+    fn calling_remove_with_an_event_id_greater_than_the_max_does_nothing() {
+        let mut index = RingIndex::new(20, 20);
+        let num_entries = 10;
+        for i in 1..(num_entries + 1) {
+            index.add(Entry::new(i, i));
+        }
+
+        index.remove(num_entries + 5);
+        assert_eq!(num_entries as usize, index.size());
+    }
+
+    #[test]
+    fn entry_is_removed_from_the_index() {
+        let mut index = RingIndex::new(20, 20);
+        for i in 1..31 {
+            index.add(Entry::new(i, i));
+        }
+        assert_eq!(30, index.size());
+
+        index.remove(12);
+        assert_eq!(29, index.size());
+        assert!(index.get(1).is_none());
+    }
+
+    #[test]
     fn entry_range_returns_iterator_over_range_of_entries() {
         let mut index = RingIndex::new(20, 20);
         for i in 1..30 {
@@ -164,7 +243,7 @@ mod test {
             index.add(Entry::new(i, 30 * i));
         }
         assert_eq!(max_capacity, index.entries.capacity());
-        assert_eq!(124, index.head_event_id);
+        assert_eq!(124, index.max_event_id);
         assert_eq!(23, index.head_index);
     }
 
@@ -246,10 +325,10 @@ mod test {
     #[test]
     fn adding_an_entry_increases_num_entries_by_one() {
         let mut idx = new_index();
-        assert_eq!(0, idx.num_entries());
+        assert_eq!(0, idx.size());
         idx.add(Entry::new(1, 886734));
-        assert_eq!(1, idx.num_entries());
+        assert_eq!(1, idx.size());
         idx.add(Entry::new(2, 8738458));
-        assert_eq!(2, idx.num_entries());
+        assert_eq!(2, idx.size());
     }
 }

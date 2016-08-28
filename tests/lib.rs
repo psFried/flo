@@ -31,6 +31,11 @@ macro_rules! integration_test {
     )
 }
 
+integration_test!(namespace_limits_the_maximum_number_of_events_and_automattically_drops_old_ones, server_url, {
+	let producer_url = server_url.join("testNamespace").unwrap();
+    let producer = FloProducer::default(producer_url);
+});
+
 integration_test!(producer_produces_event_and_gets_event_id_in_response, server_url, {
 	let producer_url = server_url.join("testNamespace").unwrap();
     let producer = FloProducer::default(producer_url);

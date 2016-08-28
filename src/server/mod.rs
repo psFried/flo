@@ -21,6 +21,7 @@ use std::path::PathBuf;
 pub enum FloServer {
     Producer(String),
     Consumer(usize),
+    NamespaceModifier(String),
 }
 
 impl<'a> Server for FloServer {
@@ -34,6 +35,10 @@ impl<'a> Server for FloServer {
                         -> Option<(Self, RecvMode, Time)> {
         match head.method {
             "GET" => self::consumer::init_consumer(head, res, scope),
+//            "POST" => {
+//                let namespace = get_namespace_from_path(head.path).to_string();
+//                Some((FloServer::NamespaceModifier(namespace), RecvMode::Buffered(1024), producer::timeout(scope.now())))
+//            },
             "PUT" => {
                 let namespace = get_namespace_from_path(head.path).to_string();
                 Some((FloServer::Producer(namespace), RecvMode::Buffered(1024), producer::timeout(scope.now())))
@@ -57,7 +62,7 @@ impl<'a> Server for FloServer {
                response.is_complete());
         match self {
             FloServer::Consumer(_idx) => Some((self, scope.now() + Duration::new(30, 0))),
-            FloServer::Producer(_) => None,
+            _ => None,
         }
     }
 

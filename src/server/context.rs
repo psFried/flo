@@ -9,6 +9,8 @@ use event_store::{EventStore, PersistenceResult};
 use event::{EventId, Event};
 
 
+const TEMP_MAX_EVENTS: usize = 100;
+
 pub struct FloContext<N: ConsumerNotifier, S: EventStore> {
     namespaces: HashMap<String, Namespace<S, N>>,
     consumer_to_ns: HashMap<usize, String>,
@@ -79,7 +81,7 @@ impl<N: ConsumerNotifier, S: EventStore> FloContext<N, S> {
         if namespaces.contains_key(name) {
             Ok(fun(namespaces.get_mut(name).unwrap()))
         } else {
-            Namespace::new(data_dir, name.to_string()).map(|mut ns| {
+            Namespace::new(data_dir, name.to_string(), TEMP_MAX_EVENTS).map(|mut ns| {
                 let t = fun(&mut ns);
                 namespaces.insert(name.to_string(), ns);
                 t

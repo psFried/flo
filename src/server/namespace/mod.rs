@@ -16,8 +16,8 @@ pub struct Namespace<S: EventStore, N: ConsumerNotifier> {
 }
 
 impl<S: EventStore, N: ConsumerNotifier> Namespace<S, N> {
-    pub fn new(base_dir: &Path, namespace: String) -> Result<Namespace<S, N>, io::Error> {
-        S::create(base_dir, &namespace).map(|store| {
+    pub fn new(base_dir: &Path, namespace: String, max_num_events: usize) -> Result<Namespace<S, N>, io::Error> {
+        S::create(base_dir, &namespace, max_num_events).map(|store| {
             Namespace {
                 name: namespace,
                 event_store: store,

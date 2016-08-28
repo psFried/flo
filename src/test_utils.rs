@@ -55,7 +55,7 @@ impl MockEventStore {
 }
 
 impl EventStore for MockEventStore {
-    fn create(_base_dir: &Path, _namespace: &str) -> Result<Self, io::Error> {
+    fn create(_base_dir: &Path, _namespace: &str, _max_events: usize) -> Result<Self, io::Error> {
         Ok(MockEventStore::new())
     }
 
@@ -80,7 +80,7 @@ pub fn create_test_flo_context() -> FloContext<MockConsumerNotifier, MockEventSt
 
 pub fn create_test_namespace() -> Namespace<MockEventStore, MockConsumerNotifier> {
     let path = PathBuf::from(".");
-    Namespace::new(&path, "anyOldName".to_string()).unwrap()
+    Namespace::new(&path, "anyOldName".to_string(), 100).unwrap()
 }
 
 
