@@ -4,9 +4,6 @@ version = "0.1.0"
 authors = ["pfried <philipsfried@gmail.com>"]
 
 [dependencies]
-rotor-http = "*"
-rotor = "*"
-netbuf = "*"
 serde_json = "*"
 queryst = "1.0"
 lru_time_cache = "0.3"
@@ -14,7 +11,7 @@ log = "0.3"
 log4rs = "0.4"
 url = "1.1"
 clap = "2.5"
-hyper = "*"
+nom = "1.2"
 
 [dev-dependencies]
 

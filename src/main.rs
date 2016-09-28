@@ -6,21 +6,15 @@ extern crate clap;
 
 #[macro_use]
 extern crate log;
-extern crate rotor;
-extern crate rotor_http;
-extern crate netbuf;
 extern crate serde_json;
 extern crate queryst;
 extern crate lru_time_cache;
 
-#[cfg(test)]
-extern crate httparse;
 
 #[cfg(test)]
 extern crate tempdir;
 
 
-pub mod server;
 pub mod event_store;
 pub mod event;
 
@@ -58,10 +52,6 @@ fn main() {
     let port = parse_arg_or_exit(&args, "port", 3000u16);
     let data_dir = PathBuf::from(args.value_of("data-dir").unwrap_or("."));
 
-    server::start_server(server::ServerOptions {
-        port: port,
-        storage_dir: data_dir,
-    });
 }
 
 fn parse_arg_or_exit<T: FromStr + Default>(args: &ArgMatches, arg_name: &str, default: T) -> T {
