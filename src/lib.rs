@@ -12,14 +12,14 @@ pub type EventCounter = u64;
 
 
 #[derive(Debug, PartialEq)]
-pub struct EventId {
+pub struct Dot {
     actor: ActorId,
     event_counter: EventCounter,
 }
 
-impl EventId {
-    pub fn new(actor: ActorId, counter: EventCounter) -> EventId {
-        EventId {
+impl Dot {
+    pub fn new(actor: ActorId, counter: EventCounter) -> Dot {
+        Dot {
             actor: actor,
             event_counter: counter,
         }
@@ -28,14 +28,14 @@ impl EventId {
 
 #[derive(Debug, PartialEq)]
 pub struct Event {
-    id: EventId,
+    id: Dot,
     data: Vec<u8>,
 }
 
 impl Event {
     pub fn new<T: Into<Vec<u8>>>(actor: ActorId, counter: EventCounter, bytes: T) -> Event {
         Event {
-            id: EventId::new(actor, counter),
+            id: Dot::new(actor, counter),
             data: bytes.into()
         }
     }
