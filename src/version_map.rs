@@ -28,7 +28,7 @@ impl VersionMap {
     }
 
     pub fn head(&self, actor_id: ActorId) -> EventCounter {
-        self.versions.get(&actor_id).map(|c| c.clone()).unwrap_or(0)
+        self.versions.get(&actor_id).map(|c| *c).unwrap_or(0)
     }
 
 }

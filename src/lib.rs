@@ -49,8 +49,8 @@ impl Ord for Dot {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Event {
-    id: Dot,
-    data: Vec<u8>,
+    pub id: Dot,
+    pub data: Vec<u8>,
 }
 
 impl Event {
@@ -62,6 +62,7 @@ impl Event {
     }
 }
 
+#[derive(Debug, PartialEq, Clone)]
 pub struct Delta {
     pub actor_id: ActorId,
     pub version_map: VersionMap,
@@ -101,7 +102,7 @@ impl AOSequence {
         println!("finished joining in versions: {:?}\nmy versions: {:?}", delta.version_map, self.actor_version_maps);
     }
 
-    fn get_delta(&mut self, other: ActorId) -> Option<Delta> {
+    pub fn get_delta(&mut self, other: ActorId) -> Option<Delta> {
         let events = {
             let AOSequence{ref events, ref mut actor_version_maps, ..} = *self;
             let other_version_map = actor_version_maps.entry(other).or_insert(VersionMap::new());
@@ -118,8 +119,14 @@ impl AOSequence {
 
     fn add_event(&mut self, event: Event) {
         let my_actor_id = self.actor_id;
-        self.increment_event_counter(my_actor_id, event.id.actor);
-        self.events.add_event(event);
+        let is_new_event = {
+            let map = self.actor_version_maps.entry(my_actor_id).or_insert(VersionMap::new());
+            event.id.event_counter > *map.versions.get(&event.id.actor).unwrap_or(&0)
+        };
+        if is_new_event {
+            self.increment_event_counter(my_actor_id, event.id.actor);
+            self.events.add_event(event);
+        }
     }
 
     fn update_version_vector(&mut self, actor_id: ActorId, version_vector: &VersionMap) {
@@ -134,13 +141,11 @@ impl AOSequence {
     }
 }
 
-
-
-
 /*
 # Version Vectors
 
-- Can maybe be represented as just a pointer to the HEAD counter for each actor???
+- Can maybe be represented as just a pointer to the HEAD counter for each actor
+    - This works because we will never update events out of sequence because a delta state always begins at the last acknowledged event
 
 # Delta States
 
@@ -161,10 +166,68 @@ impl AOSequence {
 fn two_aosequences_converge() {
     let actor_a = 0;
     let actor_b = 1;
-    let subject_a = AOSequence::new(actor_a);
-    let subject_b = AOSequence::new(actor_b);
+    let mut subject_a = AOSequence::new(actor_a);
+    let mut subject_b = AOSequence::new(actor_b);
 
+    subject_a.push("A event 1".to_owned());
 
+    subject_b.join(subject_a.get_delta(actor_b).unwrap());
+
+    subject_a.push("A event 2".to_owned());
+
+    subject_b.push("B event 1".to_owned());
+    subject_b.get_delta(actor_a); // This delta does not get joined to A
+
+    subject_b.push("B event 2".to_owned());
+    subject_a.join(subject_b.get_delta(actor_a).unwrap());
+    subject_b.join(subject_a.get_delta(actor_b).unwrap());
+
+    let expected = vec!["A event 1", "B event 1", "A event 2", "B event 2"];
+    let a_events = subject_a.events.iter_range(Dot::new(0, 0))
+            .map(|e| std::str::from_utf8(&e.data).unwrap())
+            .collect::<Vec<&str>>();
+    assert_eq!(expected, a_events);
+    let b_events = subject_b.events.iter_range(Dot::new(0, 0))
+                                   .map(|e| std::str::from_utf8(&e.data).unwrap())
+                                   .collect::<Vec<&str>>();
+    assert_eq!(expected, b_events);
+}
+
+#[test]
+fn three_aosequences_converge() {
+    let actor_a = 0;
+    let actor_b = 1;
+    let actor_c = 2;
+    let mut subject_a = AOSequence::new(actor_a);
+    let mut subject_b = AOSequence::new(actor_b);
+    let mut subject_c = AOSequence::new(actor_c);
+
+    subject_a.push("A1".to_owned());
+
+    subject_b.join(subject_a.get_delta(actor_b).unwrap());
+
+    subject_a.push("A2".to_owned());
+    subject_b.push("B1".to_owned());
+    subject_c.push("C1".to_owned());
+
+    subject_c.join(subject_b.get_delta(actor_c).unwrap());
+
+    subject_a.join(subject_c.get_delta(actor_a).unwrap());
+    subject_b.join(subject_a.get_delta(actor_b).unwrap());
+
+    let a_events = subject_a.events.iter_range(Dot::new(0, 0))
+                                   .map(|e| std::str::from_utf8(&e.data).unwrap())
+                                   .collect::<Vec<&str>>();
+    assert_eq!(vec!["A1", "B1", "C1", "A2"], a_events);
+    let b_events = subject_b.events.iter_range(Dot::new(0, 0))
+                                   .map(|e| std::str::from_utf8(&e.data).unwrap())
+                                   .collect::<Vec<&str>>();
+    assert_eq!(vec!["A1", "B1", "C1", "A2"], b_events);
+
+    let c_events = subject_c.events.iter_range(Dot::new(0, 0))
+                                   .map(|e| std::str::from_utf8(&e.data).unwrap())
+                                   .collect::<Vec<&str>>();
+    assert_eq!(vec!["A1", "B1", "C1"], c_events);
 }
 
 #[test]
