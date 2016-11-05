@@ -2,8 +2,8 @@ use ::{ActorId, Event, Dot};
 use version_map::VersionMap;
 
 #[derive(Debug, PartialEq)]
-pub struct EventStore {
-    events: Vec<Event>  //TODO: of course we'll need some
+pub struct EventStore { //TODO: change EventStore to a trait
+    events: Vec<Event>
 }
 
 impl EventStore {
