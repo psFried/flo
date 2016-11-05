@@ -16,7 +16,7 @@ impl VersionMap {
     pub fn update(&mut self, other: &VersionMap) {
         for (actor, counter) in other.versions.iter() {
             let existing_version = self.versions.entry(*actor).or_insert(0);
-            println!("Updating entry for Actor: {} from {} to {}", actor, existing_version, counter);
+            debug!("Updating entry for Actor: {} from {} to {}", actor, existing_version, counter);
             *existing_version = *counter;
         }
     }

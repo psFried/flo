@@ -1,5 +1,8 @@
 #![feature(conservative_impl_trait)]
 
+#[macro_use]
+extern crate log;
+
 mod version_map;
 mod event_store;
 
@@ -97,9 +100,9 @@ impl AOSequence {
         for evt in delta.events {
             self.add_event(evt);
         }
-        println!("joining in versions: {:?}\nmy versions: {:?}", delta.version_map, self.actor_version_maps);
+        debug!("joining in versions: {:?}\nmy versions: {:?}", delta.version_map, self.actor_version_maps);
         self.update_version_vector(delta.actor_id, &delta.version_map);
-        println!("finished joining in versions: {:?}\nmy versions: {:?}", delta.version_map, self.actor_version_maps);
+        debug!("finished joining in versions: {:?}\nmy versions: {:?}", delta.version_map, self.actor_version_maps);
     }
 
     pub fn get_delta(&mut self, other: ActorId) -> Option<Delta> {
@@ -130,9 +133,9 @@ impl AOSequence {
     }
 
     fn update_version_vector(&mut self, actor_id: ActorId, version_vector: &VersionMap) {
-        println!("Updating VersionVector from Actor: {}", actor_id);
+        debug!("Updating VersionVector from Actor: {}", actor_id);
         self.actor_version_maps.entry(actor_id).or_insert_with(|| VersionMap::new()).update(version_vector);
-        println!("Finished updating VersionVector from Actor: {}", actor_id);
+        debug!("Finished updating VersionVector from Actor: {}", actor_id);
 
     }
 

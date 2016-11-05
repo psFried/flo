@@ -31,8 +31,7 @@ impl EventStore {
     pub fn get_delta<'a>(&'a self, other_node: ActorId, version_vec: &'a VersionMap) -> impl Iterator<Item=&'a Event> + 'a {
         self.events.iter().filter(move |event| {
             let event_actor = event.id.actor;
-            event_actor != other_node &&
-                    event.id.event_counter > version_vec.head(event_actor)
+            event_actor != other_node && event.id.event_counter > version_vec.head(event_actor)
         })
     }
 }
