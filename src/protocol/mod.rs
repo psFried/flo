@@ -10,11 +10,10 @@ password_data: [u8]*[\n]
 Producer: [
     op: u8, Produce=1, ModifyNamespace=4
     Produce:
-        total_length: u32
         tags_data: [u8]* (,[u8])*[\n] (comma separated strings followed by newline)
+        data_length: u32
         event_data: [u8]
     ModifyNamespace:
-        total_length: u32
         key: [u8]*
         separator: [:]
         value: [u8]*[\n]
@@ -25,8 +24,10 @@ Consumer:
 */
 
 mod client_type;
+mod producer;
 
-use nom::be_u8;
+use nom::{be_u8, be_u32};
+pub use self::producer::{ProduceEvent, ModifyNamespace, ProducerMessage};
 pub use self::client_type::ClientType;
 
 #[derive(Debug, PartialEq)]
@@ -68,11 +69,41 @@ named!{pub parse_header<RequestHeader>,
     )
 }
 
+named!{pub parse_producer_event<ProduceEvent>,
+    chain!(
+        tags: parse_str ~
+        event_data: length_bytes!(be_u32),
+        || {
+            ProduceEvent {
+                tags: tags,
+                event_data: event_data,
+            }
+        }
+    )
+}
 
 #[cfg(test)]
 mod test {
     use super::*;
     use nom::IResult;
+
+    #[test]
+    fn parse_producer_event_parses_correct_event() {
+        let mut input = Vec::new();
+        input.extend_from_slice(b"tag1,tag2\n");
+        input.extend_from_slice(&[0, 0, 0, 5]); // hacky way to set the length as a u32
+        input.extend_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
+
+        let (remaining, result) = parse_producer_event(&input).unwrap();
+
+        let expected = ProduceEvent {
+            tags: "tag1,tag2",
+            event_data: &[1, 2, 3, 4, 5]
+        };
+        assert_eq!(expected, result);
+        assert_eq!(&[6, 7, 8], remaining);
+    }
+
 
     #[test]
     fn parse_header_returns_incomplete_result_when_password_is_missing() {
