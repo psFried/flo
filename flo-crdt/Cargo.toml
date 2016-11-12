@@ -1,0 +1,13 @@
+[package]
+name = "flo-crdt"
+version = "0.1.0"
+authors = ["pfried <philipsfried@gmail.com>"]
+
+[dependencies]
+log = "0.3"
+tokio-core = { git = "https://github.com/tokio-rs/tokio-core" }
+futures = { git = "https://github.com/alexcrichton/futures-rs" }
+test-logger = "0.1"
+
+[dev-dependencies]
+env_logger = "0.3"
