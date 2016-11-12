@@ -3,6 +3,13 @@
 #[macro_use]
 extern crate log;
 
+#[cfg(test)]
+#[macro_use]
+extern crate test_logger;
+
+#[cfg(test)]
+extern crate env_logger;
+
 mod version_map;
 mod event_store;
 mod dot;
@@ -129,204 +136,207 @@ impl AOSequence {
 
 */
 
-#[test]
-fn two_aosequences_converge() {
-    let actor_a = 0;
-    let actor_b = 1;
-    let mut subject_a = AOSequence::new(actor_a);
-    let mut subject_b = AOSequence::new(actor_b);
+#[cfg(test)]
+mod test {
+    use super::*;
+    use event_store::EventStore;
+    use version_map::VersionMap;
+    use std::collections::HashMap;
+    use std;
+    use test_logger;
 
-    subject_a.push("A event 1".to_owned());
+    test!(two_aosequences_converge, {
+        let actor_a = 0;
+        let actor_b = 1;
+        let mut subject_a = AOSequence::new(actor_a);
+        let mut subject_b = AOSequence::new(actor_b);
 
-    subject_b.join(subject_a.get_delta(actor_b).unwrap());
+        subject_a.push("A event 1".to_owned());
 
-    subject_a.push("A event 2".to_owned());
+        subject_b.join(subject_a.get_delta(actor_b).unwrap());
 
-    subject_b.push("B event 1".to_owned());
-    subject_b.get_delta(actor_a); // This delta does not get joined to A
+        subject_a.push("A event 2".to_owned());
 
-    subject_b.push("B event 2".to_owned());
-    subject_a.join(subject_b.get_delta(actor_a).unwrap());
-    subject_b.join(subject_a.get_delta(actor_b).unwrap());
+        subject_b.push("B event 1".to_owned());
+        subject_b.get_delta(actor_a); // This delta does not get joined to A
 
-    let expected = vec!["A event 1", "B event 1", "A event 2", "B event 2"];
-    let a_events = subject_a.events.iter_range(Dot::new(0, 0))
-            .map(|e| std::str::from_utf8(&e.data).unwrap())
-            .collect::<Vec<&str>>();
-    assert_eq!(expected, a_events);
-    let b_events = subject_b.events.iter_range(Dot::new(0, 0))
-                                   .map(|e| std::str::from_utf8(&e.data).unwrap())
-                                   .collect::<Vec<&str>>();
-    assert_eq!(expected, b_events);
-}
+        subject_b.push("B event 2".to_owned());
+        subject_a.join(subject_b.get_delta(actor_a).unwrap());
+        subject_b.join(subject_a.get_delta(actor_b).unwrap());
 
-#[test]
-fn three_aosequences_converge() {
-    let actor_a = 0;
-    let actor_b = 1;
-    let actor_c = 2;
-    let mut subject_a = AOSequence::new(actor_a);
-    let mut subject_b = AOSequence::new(actor_b);
-    let mut subject_c = AOSequence::new(actor_c);
+        let expected = vec!["A event 1", "B event 1", "A event 2", "B event 2"];
+        let a_events = subject_a.events.iter_range(Dot::new(0, 0))
+                .map(|e| std::str::from_utf8(&e.data).unwrap())
+                .collect::<Vec<&str>>();
+        assert_eq!(expected, a_events);
+        let b_events = subject_b.events.iter_range(Dot::new(0, 0))
+                                       .map(|e| std::str::from_utf8(&e.data).unwrap())
+                                       .collect::<Vec<&str>>();
+        assert_eq!(expected, b_events);
+    });
 
-    subject_a.push("A1".to_owned());
+    test!(three_aosequences_converge, {
+        let actor_a = 0;
+        let actor_b = 1;
+        let actor_c = 2;
+        let mut subject_a = AOSequence::new(actor_a);
+        let mut subject_b = AOSequence::new(actor_b);
+        let mut subject_c = AOSequence::new(actor_c);
 
-    subject_b.join(subject_a.get_delta(actor_b).unwrap());
+        subject_a.push("A1".to_owned());
 
-    subject_a.push("A2".to_owned());
-    subject_b.push("B1".to_owned());
-    subject_c.push("C1".to_owned());
+        subject_b.join(subject_a.get_delta(actor_b).unwrap());
 
-    subject_c.join(subject_b.get_delta(actor_c).unwrap());
+        subject_a.push("A2".to_owned());
+        subject_b.push("B1".to_owned());
+        subject_c.push("C1".to_owned());
 
-    subject_a.join(subject_c.get_delta(actor_a).unwrap());
-    subject_b.join(subject_a.get_delta(actor_b).unwrap());
+        subject_c.join(subject_b.get_delta(actor_c).unwrap());
 
-    let a_events = subject_a.events.iter_range(Dot::new(0, 0))
-                                   .map(|e| std::str::from_utf8(&e.data).unwrap())
-                                   .collect::<Vec<&str>>();
-    assert_eq!(vec!["A1", "B1", "C1", "A2"], a_events);
-    let b_events = subject_b.events.iter_range(Dot::new(0, 0))
-                                   .map(|e| std::str::from_utf8(&e.data).unwrap())
-                                   .collect::<Vec<&str>>();
-    assert_eq!(vec!["A1", "B1", "C1", "A2"], b_events);
+        subject_a.join(subject_c.get_delta(actor_a).unwrap());
+        subject_b.join(subject_a.get_delta(actor_b).unwrap());
 
-    let c_events = subject_c.events.iter_range(Dot::new(0, 0))
-                                   .map(|e| std::str::from_utf8(&e.data).unwrap())
-                                   .collect::<Vec<&str>>();
-    assert_eq!(vec!["A1", "B1", "C1"], c_events);
-}
+        let a_events = subject_a.events.iter_range(Dot::new(0, 0))
+                                       .map(|e| std::str::from_utf8(&e.data).unwrap())
+                                       .collect::<Vec<&str>>();
+        assert_eq!(vec!["A1", "B1", "C1", "A2"], a_events);
+        let b_events = subject_b.events.iter_range(Dot::new(0, 0))
+                                       .map(|e| std::str::from_utf8(&e.data).unwrap())
+                                       .collect::<Vec<&str>>();
+        assert_eq!(vec!["A1", "B1", "C1", "A2"], b_events);
 
-#[test]
-fn delta_excludes_events_that_the_other_actor_already_has() {
-    let actor_a = 0;
-    let actor_b = 1;
-    let actor_c = 2;
-    let mut subject = AOSequence::new(actor_a);
+        let c_events = subject_c.events.iter_range(Dot::new(0, 0))
+                                       .map(|e| std::str::from_utf8(&e.data).unwrap())
+                                       .collect::<Vec<&str>>();
+        assert_eq!(vec!["A1", "B1", "C1"], c_events);
+    });
 
-    // Setup pre-existing events from the other actor
-    let delta_to_join = {
+    test!(delta_excludes_events_that_the_other_actor_already_has, {
+        let actor_a = 0;
+        let actor_b = 1;
+        let actor_c = 2;
+        let mut subject = AOSequence::new(actor_a);
+
+        // Setup pre-existing events from the other actor
+        let delta_to_join = {
+            let mut delta_versions = VersionMap::new();
+            delta_versions.increment(actor_b);
+            delta_versions.increment(actor_c);
+            let b_event = Event::new(actor_b, 1, "those bytes".to_owned());
+            let c_event = Event::new(actor_c, 1, "c".to_owned());
+
+            Delta {
+                actor_id: actor_b,
+                version_map: delta_versions,
+                events: vec![b_event, c_event]
+            }
+        };
+        subject.join(delta_to_join);
+
+        // add new events
+        subject.push("new A event".to_owned());
+        let delta_to_join = {
+            let mut delta_versions = VersionMap::new();
+            delta_versions.increment(actor_c);
+            let event = Event::new(actor_c, 2, "new C event".to_owned());
+            Delta {
+                actor_id: actor_c,
+                version_map: delta_versions,
+                events: vec![event]
+            }
+        };
+        subject.join(delta_to_join);
+
+
+        let result = subject.get_delta(actor_b).unwrap();
+        assert_eq!(actor_a, result.actor_id);
+
+        let event_data: Vec<&str> = result.events.iter().map(|evt| std::str::from_utf8(&evt.data).unwrap()).collect();
+        assert_eq!(vec!["new A event", "new C event"], event_data);
+
+        let mut expected_version = HashMap::new();
+        expected_version.insert(actor_a, 1);
+        expected_version.insert(actor_b, 1);
+        expected_version.insert(actor_c, 2);
+        assert_eq!(expected_version, result.version_map.versions);
+    });
+
+    test!(delta_returns_all_events_when_no_version_vector_stored_for_given_actor, {
+        let mut subject = AOSequence::new(0);
+
+        let event1 = Event::new(0, 1, "these bytes".to_owned());
+        let event2 = Event::new(0, 2, "dees bytes".to_owned());
+        subject.push(event1.data.clone());
+        subject.push(event2.data.clone());
+
+        // Add events that have come from a different actor
+        let other_actor_id = 1;
+        let other_event = Event::new(other_actor_id, 1, "those bytes".to_owned());
+        let delta_to_join = {
+            let mut delta_versions = VersionMap::new();
+            delta_versions.increment(other_actor_id);
+            Delta {
+                actor_id: other_actor_id,
+                version_map: delta_versions,
+                events: vec![other_event.clone()]
+            }
+        };
+        subject.join(delta_to_join);
+
+        let result = subject.get_delta(2).unwrap();
+        assert_eq!(0, result.actor_id);
+        assert_eq!(vec![event1, other_event, event2], result.events);
+
+        let mut expected_version = HashMap::new();
+        expected_version.insert(0, 2);
+        expected_version.insert(1, 1);
+        assert_eq!(expected_version, result.version_map.versions);
+    });
+
+    test!(empty_version_vector_is_updated_to_add_all_elements_from_other, {
+        let mut a = AOSequence::new(0);
+
+        let mut other_vv = VersionMap::new();
+        other_vv.increment(1);
+        other_vv.increment(2);
+
+        a.update_version_vector(1, &other_vv);
+
+        let a_vv = a.actor_version_maps.get(&1).unwrap();
+        assert_eq!(*a_vv, other_vv);
+    });
+
+    test!(pushing_event_returns_next_event_counter, {
+        let actor_id = 5;
+        let mut subject = AOSequence::new(actor_id);
+        subject.push("thebytes".to_owned());
+        assert_eq!(1, subject.actor_version_maps.len());
+        let counter = subject.actor_version_maps.get(&actor_id).unwrap().head(actor_id);
+        assert_eq!(1, counter);
+    });
+
+    test!(joining_empty_to_delta_adds_events, {
+        let actor_id = 0;
+        let mut subject = AOSequence::new(actor_id);
+
         let mut delta_versions = VersionMap::new();
-        delta_versions.increment(actor_b);
-        delta_versions.increment(actor_c);
-        let b_event = Event::new(actor_b, 1, "those bytes".to_owned());
-        let c_event = Event::new(actor_c, 1, "c".to_owned());
+        delta_versions.increment(5);
+        delta_versions.increment(5);
+        delta_versions.increment(6);
 
-        Delta {
-            actor_id: actor_b,
+        let delta = Delta {
+            actor_id: 5,
             version_map: delta_versions,
-            events: vec![b_event, c_event]
-        }
-    };
-    subject.join(delta_to_join);
+            events: vec![
+                Event::new(5, 1, "event 1 bytes".to_owned()),
+                Event::new(5, 2, "event 2 bytes".to_owned()),
+                Event::new(6, 1, "moar bytes!!".to_owned()),
+            ],
+        };
 
-    // add new events
-    subject.push("new A event".to_owned());
-    let delta_to_join = {
-        let mut delta_versions = VersionMap::new();
-        delta_versions.increment(actor_c);
-        let event = Event::new(actor_c, 2, "new C event".to_owned());
-        Delta {
-            actor_id: actor_c,
-            version_map: delta_versions,
-            events: vec![event]
-        }
-    };
-    subject.join(delta_to_join);
+        subject.join(delta);
 
+        assert_eq!(3, subject.events.count());
+    });
 
-    let result = subject.get_delta(actor_b).unwrap();
-    assert_eq!(actor_a, result.actor_id);
-
-    let event_data: Vec<&str> = result.events.iter().map(|evt| std::str::from_utf8(&evt.data).unwrap()).collect();
-    assert_eq!(vec!["new A event", "new C event"], event_data);
-
-    let mut expected_version = HashMap::new();
-    expected_version.insert(actor_a, 1);
-    expected_version.insert(actor_b, 1);
-    expected_version.insert(actor_c, 2);
-    assert_eq!(expected_version, result.version_map.versions);
 }
-
-#[test]
-fn delta_returns_all_events_when_no_version_vector_stored_for_given_actor() {
-    let mut subject = AOSequence::new(0);
-
-    let event1 = Event::new(0, 1, "these bytes".to_owned());
-    let event2 = Event::new(0, 2, "dees bytes".to_owned());
-    subject.push(event1.data.clone());
-    subject.push(event2.data.clone());
-
-    // Add events that have come from a different actor
-    let other_actor_id = 1;
-    let other_event = Event::new(other_actor_id, 1, "those bytes".to_owned());
-    let delta_to_join = {
-        let mut delta_versions = VersionMap::new();
-        delta_versions.increment(other_actor_id);
-        Delta {
-            actor_id: other_actor_id,
-            version_map: delta_versions,
-            events: vec![other_event.clone()]
-        }
-    };
-    subject.join(delta_to_join);
-
-    let result = subject.get_delta(2).unwrap();
-    assert_eq!(0, result.actor_id);
-    assert_eq!(vec![event1, other_event, event2], result.events);
-
-    let mut expected_version = HashMap::new();
-    expected_version.insert(0, 2);
-    expected_version.insert(1, 1);
-    assert_eq!(expected_version, result.version_map.versions);
-}
-
-#[test]
-fn empty_version_vector_is_updated_to_add_all_elements_from_other() {
-    let mut a = AOSequence::new(0);
-
-    let mut other_vv = VersionMap::new();
-    other_vv.increment(1);
-    other_vv.increment(2);
-
-    a.update_version_vector(1, &other_vv);
-
-    let a_vv = a.actor_version_maps.get(&1).unwrap();
-    assert_eq!(*a_vv, other_vv);
-}
-
-#[test]
-fn pushing_event_returns_next_event_counter() {
-    let actor_id = 5;
-    let mut subject = AOSequence::new(actor_id);
-    subject.push("thebytes".to_owned());
-    assert_eq!(1, subject.actor_version_maps.len());
-    let counter = subject.actor_version_maps.get(&actor_id).unwrap().head(actor_id);
-    assert_eq!(1, counter);
-}
-
-#[test]
-fn joining_empty_to_delta_adds_events() {
-    let actor_id = 0;
-    let mut subject = AOSequence::new(actor_id);
-
-    let mut delta_versions = VersionMap::new();
-    delta_versions.increment(5);
-    delta_versions.increment(5);
-    delta_versions.increment(6);
-
-    let delta = Delta {
-        actor_id: 5,
-        version_map: delta_versions,
-        events: vec![
-            Event::new(5, 1, "event 1 bytes".to_owned()),
-            Event::new(5, 2, "event 2 bytes".to_owned()),
-            Event::new(6, 1, "moar bytes!!".to_owned()),
-        ],
-    };
-
-    subject.join(delta);
-
-    assert_eq!(3, subject.events.count());
-}
-
