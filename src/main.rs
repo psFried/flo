@@ -6,7 +6,6 @@ extern crate clap;
 
 #[macro_use]
 extern crate log;
-extern crate serde_json;
 extern crate queryst;
 extern crate lru_time_cache;
 
@@ -19,9 +18,6 @@ pub mod event_store;
 pub mod event;
 
 mod logging;
-
-#[cfg(test)]
-mod test_utils;
 
 use logging::init_logging;
 use clap::{App, Arg, ArgMatches};

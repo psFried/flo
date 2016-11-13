@@ -16,3 +16,5 @@ events.json
 # rustfmt backups
 *.bk
 
+.vscode
+

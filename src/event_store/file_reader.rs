@@ -1,15 +1,13 @@
 use std::fs::File;
 use std::path::{PathBuf, Path};
-use std::io::{Seek, SeekFrom, Bytes, Read};
+use std::io::{self, Seek, SeekFrom, Bytes, Read};
 
 use event::Event;
-use serde_json::{self, Value, StreamDeserializer};
 
-pub type ReadResult = Result<Event, serde_json::Error>;
+pub type ReadResult = Result<Event, io::Error>;
 
-pub struct EventsFromDisk {
-    stream_deserializer: StreamDeserializer<Value, Bytes<File>>,
-}
+//TODO: fix EventsFromDisk
+pub struct EventsFromDisk;
 
 impl EventsFromDisk {
     fn new(path: &Path, starting_offset: u64) -> EventsFromDisk {
@@ -18,8 +16,7 @@ impl EventsFromDisk {
         let mut file = OpenOptions::new().read(true).write(false).open(path).unwrap();
         file.seek(SeekFrom::Start(starting_offset)).unwrap();
 
-        let stream_deserializer = StreamDeserializer::new(file.bytes());
-        EventsFromDisk { stream_deserializer: stream_deserializer }
+        EventsFromDisk
     }
 }
 
@@ -27,9 +24,7 @@ impl Iterator for EventsFromDisk {
     type Item = ReadResult;
 
     fn next(&mut self) -> Option<ReadResult> {
-        self.stream_deserializer
-            .next()
-            .map(|json| json.map(|value| Event::from_complete_json(value)))
+        None //TODO: fixme
     }
 }
 
@@ -54,8 +49,7 @@ mod test {
     use event::{Event, EventId};
     use std::fs::File;
     use std::path::PathBuf;
-    use serde_json;
-    use serde_json::builder::ObjectBuilder;
+    use std::io::Write;
 
     #[test]
     fn file_reader_returns_events_starting_at_a_specified_offset() {
@@ -95,9 +89,10 @@ mod test {
 
         let mut events = Vec::new();
         for i in 1..11 {
-            let event_json = ObjectBuilder::new().insert("myKey", i).unwrap();
-            let event = Event::new(i, event_json);
-            serde_json::to_writer(&mut event_file, &event.data).unwrap();
+            let event_data = "eventData".to_owned().into_bytes();
+            let event = Event::new(i, event_data);
+
+            //TODO: actually write events
             events.push(event);
         }
 

@@ -64,8 +64,6 @@ impl FileSystemEventStore {
     }
 
     fn initialize(mut self) -> Result<FileSystemEventStore, io::Error> {
-        use serde_json::Error as JsonError;
-
         {
             let FileSystemEventStore { ref mut file_reader,
                                        ref mut event_cache,
@@ -78,7 +76,7 @@ impl FileSystemEventStore {
 
             let mut num_events = 0;
             for event_result in file_reader.read_from_offset(0) {
-                match event_result {
+/*                match event_result {
                     Ok(mut event) => {
                         let event_data_len = event.get_raw_bytes().len() as u64;
                         let event_id = event.get_id();
@@ -100,7 +98,7 @@ impl FileSystemEventStore {
                             }
                         }
                     }
-                }
+                }*/
             }
             info!("initialized event store with {} pre-existing events from file: {:?}",
                   num_events,
@@ -169,12 +167,14 @@ impl EventStore for FileSystemEventStore {
 mod test {
     use super::*;
     use tempdir::TempDir;
-    use event::{Event, EventId, to_event};
+    use event::{Event, EventId};
     use std::fs::File;
     use std::io::Read;
-    use serde_json::StreamDeserializer;
-    use serde_json::builder::ObjectBuilder;
     use event_store::index::Entry;
+
+    fn to_event(id: EventId, data: &str) -> Event {
+        Event::new(id, data.as_bytes().to_owned())
+    }
 
     #[test]
     fn once_the_maximum_number_of_events_is_exceeded_earlier_events_are_dropped() {
@@ -183,7 +183,7 @@ mod test {
         let mut store = FileSystemEventStore::new(temp_dir.path().to_path_buf(), max_events).unwrap();
 
         for i in 1..(max_events + 2) {
-            let event = to_event(i as u64, r#"{"what":"evar"}"#).unwrap();
+            let event = to_event(i as u64, r#"{"what":"evar"}"#);
             store.store(event).unwrap();
         }
 
@@ -194,8 +194,8 @@ mod test {
     #[test]
     fn new_event_store_is_created_with_existing_events_on_disk() {
         let temp_dir = TempDir::new("flo-persist-test").unwrap();
-        let mut expected_event_1 = to_event(1, r#"{"firstEventKey":"firstEventValue"}"#).unwrap();
-        let mut expected_event_2 = to_event(2, r#"{"secondEventKey": "secondEventValue"}"#).unwrap();
+        let mut expected_event_1 = to_event(1, r#"{"firstEventKey":"firstEventValue"}"#);
+        let mut expected_event_2 = to_event(2, r#"{"secondEventKey": "secondEventValue"}"#);
 
         {
             let mut store = FileSystemEventStore::new(temp_dir.path().to_path_buf(), 10).unwrap();
@@ -219,9 +219,9 @@ mod test {
 
         let first_event_data = r#"{"id":1,"data":{"firstEventKey":"firstEventValue"}}"#;
 
-        let event = Event::from_str(first_event_data).unwrap();
+        let event = to_event(1, "firstEventData");
         store.store(event).unwrap();
-        let event = to_event(2, r#"{"secondEventKey": "secondEventValue"}"#).unwrap();
+        let event = to_event(2, "secondEventValue");
         store.store(event).unwrap();
 
         let index_entry = store.index.get(2).unwrap();
@@ -235,7 +235,7 @@ mod test {
         let mut store = FileSystemEventStore::new(temp_dir.path().to_path_buf(), 10).unwrap();
 
         let event_id: EventId = 3;
-        let event = to_event(event_id, r#"{"myKey": "myValue"}"#).unwrap();
+        let event = to_event(event_id, r#"{"myKey": "myValue"}"#);
 
         store.store(event).unwrap();
 
@@ -250,8 +250,7 @@ mod test {
         let mut store = FileSystemEventStore::new(temp_dir.path().to_path_buf(), 20).unwrap();
 
         for i in 1..11 {
-            let event_json = ObjectBuilder::new().insert("myKey", i).unwrap();
-            let event = Event::new(i, event_json);
+            let event = Event::new(i, format!("event: {}", i).into_bytes());
             store.store(event).unwrap();
             store.event_cache.remove(&i);
         }
@@ -266,7 +265,7 @@ mod test {
         let temp_dir = TempDir::new("flo-persist-test").unwrap();
         let mut store = FileSystemEventStore::new(temp_dir.path().to_path_buf(), 10).unwrap();
         let event_id: EventId = 3;
-        let mut event = to_event(event_id, r#"{"myKey": "one"}"#).unwrap();
+        let mut event = to_event(event_id, r#"{"myKey": "one"}"#);
 
         store.event_cache.insert(event_id, event.clone());
         store.index.add(Entry::new(event_id, 9876));
@@ -280,7 +279,7 @@ mod test {
         let temp_dir = TempDir::new("flo-persist-test").unwrap();
         let mut store = FileSystemEventStore::new(temp_dir.path().to_path_buf(), 10).unwrap();
 
-        let event = to_event(1, r#"{"myKey": "one"}"#).unwrap();
+        let event = to_event(1, r#"{"myKey": "one"}"#);
         store.store(event.clone()).unwrap();
         assert_eq!(Some(&event), store.event_cache.get(&1));
     }
@@ -290,24 +289,18 @@ mod test {
         let temp_dir = TempDir::new("flo-persist-test").unwrap();
         let mut store = FileSystemEventStore::new(temp_dir.path().to_path_buf(), 10).unwrap();
 
-        let event1 = to_event(1, r#"{"myKey": "one"}"#).unwrap();
+        let event1 = to_event(1, r#"{"myKey": "one"}"#);
         store.store(event1.clone()).unwrap();
 
-        let event2 = to_event(2, r#"{"myKey": "one"}"#).unwrap();
+        let event2 = to_event(2, r#"{"myKey": "one"}"#);
         store.store(event2.clone()).unwrap();
 
         let file_path = temp_dir.path().join("events.json");
         let file = File::open(file_path).unwrap();
 
         let bytes = file.bytes();
-        let deser = StreamDeserializer::new(bytes);
-        let saved = deser.map(Result::unwrap)
-                         .map(Event::from_complete_json)
-                         .collect::<Vec<Event>>();
 
-        assert_eq!(2, saved.len());
-        assert_eq!(event1, saved[0]);
-        assert_eq!(event2, saved[1]);
+        panic!("still need to finish test");
     }
 
     #[test]
@@ -315,7 +308,7 @@ mod test {
         let temp_dir = TempDir::new("flo-persist-test").unwrap();
         let mut store = FileSystemEventStore::new(temp_dir.path().to_path_buf(), 10).unwrap();
 
-        let event = to_event(1, r#"{"myKey": "myVal"}"#).unwrap();
+        let event = to_event(1, r#"{"myKey": "myVal"}"#);
         store.store(event.clone()).unwrap();
 
         let file_path = temp_dir.path().join("events.json");
@@ -323,7 +316,6 @@ mod test {
 
         let mut contents = String::new();
         file.read_to_string(&mut contents).unwrap();
-        let saved_event = Event::from_str(&contents).unwrap();
-        assert_eq!(event, saved_event);
+        panic!("still need to finish test");
     }
 }

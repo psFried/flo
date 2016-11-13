@@ -11,10 +11,10 @@ extern crate test_logger;
 extern crate env_logger;
 
 mod version_map;
-mod event_store;
+mod element_store;
 mod dot;
 
-use event_store::EventStore;
+use element_store::ElementStore;
 use version_map::VersionMap;
 use std::collections::HashMap;
 
@@ -22,14 +22,14 @@ pub use dot::{ActorId, EventCounter, Dot};
 
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct Event {
+pub struct Element {
     pub id: Dot,
     pub data: Vec<u8>,
 }
 
-impl Event {
-    pub fn new<T: Into<Vec<u8>>>(actor: ActorId, counter: EventCounter, bytes: T) -> Event {
-        Event {
+impl Element {
+    pub fn new<T: Into<Vec<u8>>>(actor: ActorId, counter: EventCounter, bytes: T) -> Element {
+        Element {
             id: Dot::new(actor, counter),
             data: bytes.into()
         }
@@ -40,14 +40,14 @@ impl Event {
 pub struct Delta {
     pub actor_id: ActorId,
     pub version_map: VersionMap,
-    pub events: Vec<Event>,
+    pub events: Vec<Element>,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct AOSequence {
     pub actor_id: ActorId,
     pub actor_version_maps: HashMap<ActorId, VersionMap>,
-    pub events: EventStore
+    pub events: ElementStore
 }
 
 impl AOSequence {
@@ -56,20 +56,20 @@ impl AOSequence {
         AOSequence {
             actor_id: actor_id,
             actor_version_maps: HashMap::new(),
-            events: EventStore::new(),
+            events: ElementStore::new(),
         }
     }
 
     pub fn push<T: Into<Vec<u8>>>(&mut self, event_data: T) -> Dot {
         let actor_id = self.actor_id;
         let new_counter = self.increment_event_counter(actor_id, actor_id);
-        self.events.add_event(Event::new(actor_id, new_counter, event_data.into()));
+        self.events.add_element(Element::new(actor_id, new_counter, event_data.into()));
         Dot::new(actor_id, new_counter)
     }
 
     pub fn join(&mut self, delta: Delta) {
         for evt in delta.events {
-            self.add_event(evt);
+            self.add_element(evt);
         }
         debug!("joining in versions: {:?}\nmy versions: {:?}", delta.version_map, self.actor_version_maps);
         self.update_version_vector(delta.actor_id, &delta.version_map);
@@ -91,15 +91,15 @@ impl AOSequence {
         })
     }
 
-    fn add_event(&mut self, event: Event) {
+    fn add_element(&mut self, event: Element) {
         let my_actor_id = self.actor_id;
         let is_new_event = {
             let map = self.actor_version_maps.entry(my_actor_id).or_insert(VersionMap::new());
-            event.id.event_counter > *map.versions.get(&event.id.actor).unwrap_or(&0)
+            event.id.counter > *map.versions.get(&event.id.actor).unwrap_or(&0)
         };
         if is_new_event {
             self.increment_event_counter(my_actor_id, event.id.actor);
-            self.events.add_event(event);
+            self.events.add_element(event);
         }
     }
 
@@ -139,7 +139,7 @@ impl AOSequence {
 #[cfg(test)]
 mod test {
     use super::*;
-    use event_store::EventStore;
+    use element_store::ElementStore;
     use version_map::VersionMap;
     use std::collections::HashMap;
     use std;
