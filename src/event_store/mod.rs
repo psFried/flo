@@ -1,5 +1,6 @@
 mod index;
 mod file_reader;
+mod serializer;
 
 use event::{EventId, Event};
 use std::fs::File;

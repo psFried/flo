@@ -11,6 +11,7 @@ log4rs = "0.4"
 url = "1.1"
 clap = "2.5"
 nom = "1.2"
+byteorder = "0.5"
 flo-crdt = { path = "./flo-crdt" }
 
 [dev-dependencies]

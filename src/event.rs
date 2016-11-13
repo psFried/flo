@@ -3,13 +3,10 @@ use std::io::Read;
 
 pub type EventId = u64;
 
-const ID_KEY: &'static str = "id";
-const DATA_KEY: &'static str = "data";
-
 #[derive(Debug, Clone)]
 pub struct Event {
     pub id: EventId,
-    data: Vec<u8>
+    pub data: Vec<u8>
 }
 
 impl PartialEq for Event {
