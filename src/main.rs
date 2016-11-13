@@ -6,7 +6,6 @@ extern crate clap;
 
 #[macro_use]
 extern crate log;
-extern crate queryst;
 extern crate lru_time_cache;
 extern crate byteorder;
 
