@@ -1,4 +1,3 @@
-
 use std::io::{self, Read, Cursor};
 use event::{EventId, Event};
 
@@ -43,12 +42,6 @@ impl <'a> Read for EventSerializer<'a> {
         self.cursor.read(&mut buffer).map(|count| count + (2 * U64_AS_BYTES_LENGTH))
     }
 }
-
-pub struct EventDeserializer {
-    event: Option<Event>,
-    position: SerializePosition,
-}
-
 
 #[cfg(test)]
 mod test {
