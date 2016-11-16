@@ -9,160 +9,39 @@ use nom::{be_u32, be_u64, IResult};
 
 const DEFAULT_BUFFER_SIZE: usize = 8 * 1024;
 
-#[derive(Debug, PartialEq)]
-enum DeserializerState {
-    Id([u8; 8], usize),
-    Length(EventId, [u8; 4], usize),
-    Data(EventId, u32, Vec<u8>)
-}
-
-impl DeserializerState {
-    fn new() -> DeserializerState {
-        DeserializerState::Id([0; 8], 0)
-    }
-
-    fn is_complete(&self) -> bool {
-        match self {
-            &DeserializerState::Data(_, data_length, ref data) => {
-                data_length as usize == data.len()
-            }
-            _ => false
-        }
-    }
-
-    fn push_bytes(self, bytes: &[u8]) -> (usize, DeserializerState) {
-        let mut used = 0;
-        let mut ret = self;
-
-        if let DeserializerState::Id(mut id_bytes, mut written) = ret {
-            let write_count = DeserializerState::write_bytes(bytes, used, &mut id_bytes, written, 8);
-            used += write_count;
-            written += write_count;
-
-            if written == 8 {
-                let event_id = BigEndian::read_u64(&id_bytes);
-                ret = DeserializerState::Length(event_id, [0; 4], 0)
+named!{parse_event<Event>,
+    chain!(
+        event_id: be_u64 ~
+        event_data: length_bytes!(be_u32),
+        || {
+            let mut data = Vec::with_capacity(event_data.len());
+            data.extend_from_slice(event_data);
+            Event {
+                id: event_id,
+                data: data,
             }
         }
-
-        if let DeserializerState::Length(id, mut length_bytes, mut written) = ret {
-            let write_count = DeserializerState::write_bytes(bytes, used, &mut length_bytes, written, 4);
-            used += write_count;
-            written += write_count;
-
-            if written == 4 {
-                let data_length = BigEndian::read_u32(&length_bytes);
-                ret = DeserializerState::Data(id, data_length, vec![0; data_length as usize]);
-            }
-        }
-
-        if let DeserializerState::Data(id, data_length, mut data) = ret {
-            let already_written = data_length as usize - data.len();
-            let write_count = DeserializerState::write_bytes(bytes, used, &mut data, already_written, data_length as usize);
-            used += write_count;
-            ret = DeserializerState::Data(id, data_length, data);
-        }
-
-        (used, ret)
-    }
-
-    fn write_bytes(src: &[u8], already_used: usize, dest: &mut [u8], already_written: usize, max: usize) -> usize {
-        let src_end = cmp::min(already_used + max, src.len());
-
-        let to_copy = src_end - already_used;
-        let dest_end = already_written + to_copy;
-
-        dest[already_written .. dest_end].copy_from_slice(&src[already_used..src_end]);
-        to_copy
-    }
-}
-
-#[test]
-fn deserializer_state_push_bytes_sets_id() {
-    use std::u64;
-
-    let mut subject = DeserializerState::new();
-    let bytes = [255; 8];
-    let (num_consumed, state) = subject.push_bytes(&bytes);
-
-    assert_eq!(8, num_consumed);
-    let expected = DeserializerState::Length(u64::MAX, [0; 4], 0);
-    assert_eq!(expected, state);
-}
-
-#[test]
-fn deserializer_state_push_bytes_sets_id_and_length() {
-    let bytes = [
-        0, 0, 0, 0, 0, 0, 0, 1, //id
-        0, 0, 0, 7              //length
-    ];
-    let mut subject = DeserializerState::new();
-    let (num_consumed, state) = subject.push_bytes(&bytes);
-
-    assert_eq!(12, num_consumed);
-    let expected = DeserializerState::Data(1, 7, vec![0; 7]);
-    assert_eq!(expected, state);
-}
-
-#[test]
-fn deserializer_state_push_bytes_sets_id_length_and_data() {
-    let bytes = [
-        0, 0, 0, 0, 0, 0, 0, 1, //id
-        0, 0, 0, 7,             //length
-        1, 2, 3, 4, 5, 6, 7,    //data
-        9, 8, 7, 6, 5           //extra data
-    ];
-    let mut subject = DeserializerState::new();
-    let (num_consumed, state) = subject.push_bytes(&bytes);
-
-    assert_eq!(19, num_consumed);
-
-    let expected = DeserializerState::Data(1, 7, vec![1, 2, 3, 4, 5, 6, 7]);
-    assert_eq!(expected, state);
-}
-
-
-pub struct EventDeserializer {
-    buffer: Vec<u8>,
-    state: DeserializerState,
-    event_buffer: VecDeque<Event>,
-}
-
-impl EventDeserializer {
-    pub fn new() -> EventDeserializer {
-
-        EventDeserializer {
-            buffer: vec![0; DEFAULT_BUFFER_SIZE],
-            state: DeserializerState::Id([0; 8], 0),
-            event_buffer: VecDeque::with_capacity(8),
-        }
-    }
-
-    fn push_bytes(&mut self, bytes: &[u8]) {
-    }
-
-    fn has_next_event(&self) -> bool {
-        false
-    }
-
-    fn get_next_event(&self) -> Option<Event> {
-        None
-    }
-
+    )
 }
 
 pub struct EventStreamDeserializer<T: Read + Sized> {
-    deserializer: EventDeserializer,
+    next_event: Option<Event>,
     buffer: Vec<u8>,
     reader: T,
+    buffer_byte_count: usize,
 }
 
 impl <T: Read + Sized> EventStreamDeserializer<T> {
     pub fn new(reader: T) -> EventStreamDeserializer<T> {
+        EventStreamDeserializer::with_buffer_size(reader, DEFAULT_BUFFER_SIZE)
+    }
+
+    pub fn with_buffer_size(reader: T, buffer_size: usize) -> EventStreamDeserializer<T> {
         EventStreamDeserializer {
-            deserializer: EventDeserializer::new(),
-            buffer: vec![0; DEFAULT_BUFFER_SIZE],
+            next_event: None,
+            buffer: vec![0; buffer_size],
             reader: reader,
+            buffer_byte_count: 0,
         }
     }
 }
@@ -172,26 +51,71 @@ impl <T: Read + Sized> Iterator for EventStreamDeserializer<T> {
 
     fn next(&mut self) -> Option<Self::Item> {
 
-        while !self.deserializer.has_next_event() {
-            let EventStreamDeserializer {ref mut deserializer, ref mut buffer, ref mut reader, ..} = *self;
-            let read_result = reader.read(buffer);
+        let mut buffer_shift_amt = 0;
+        let mut buffer_shift_offset = 0;
 
+        while self.next_event.is_none() {
+            let EventStreamDeserializer {
+                    ref mut buffer_byte_count,
+                    ref mut next_event,
+                    ref mut buffer,
+                    ref mut reader,
+                ..} = *self;
+
+            //first try to parse an event
+            let buffer_length = buffer.len();
+            println!("Buffer byte count: {}", buffer_byte_count);
+            if *buffer_byte_count > 0 {
+                match parse_event(buffer) {
+                    IResult::Done(remaining, event) => {
+                        println!("Read event: {:?}", event);
+                        *next_event = Some(event);
+                        buffer_shift_amt = remaining.len();
+                        *buffer_byte_count -= (buffer_length - remaining.len());
+                        break;
+                    }
+                    IResult::Error(err) => {
+                        error!("Error parsing event: {:?}", err);
+                        break;
+                    }
+                    IResult::Incomplete(needed) => {
+                        //we need some more bytes. grow the buffer!
+                        panic!("Need to grow the buffer, but I haven't written that shit yet");
+                    }
+                }
+            }
+
+            let read_result = {
+                reader.read(buffer)
+            };
+            println!("read result: {:?}", read_result);
             match read_result {
                 Ok(0) => {
                     break;
                 }
                 Ok(byte_count) => {
-                    deserializer.push_bytes(&mut buffer[..byte_count]);
+                    //continue in the loop and try again
+                    println!("setting buffer byte count to: {}", byte_count);
+                    *buffer_byte_count = byte_count;
                 },
                 Err(ref err) => {
                     error!("Error reading into buffer: {:?}", err);
                     break;
                 }
             }
-
         }
 
-        self.deserializer.get_next_event()
+
+        //if we've read an event, may need to shift the buffer
+        if buffer_shift_amt > 0 {
+            let offset = self.buffer.len() - buffer_shift_amt;
+            println!("shifting {} bytes by: {} offset", buffer_shift_amt, offset);
+            for i in 0..buffer_shift_amt {
+                self.buffer.swap(i, i + offset);
+            }
+        }
+
+        self.next_event.take()
     }
 }
 
