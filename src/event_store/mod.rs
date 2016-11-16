@@ -149,7 +149,7 @@ impl EventStore for FileSystemEventStore {
                 event_cache.get_mut(&entry.event_id)
             } else {
                 match file_reader.read_from_offset(entry.offset).next() {
-                    Some(Ok(event)) => {
+                    Some(event) => {
                         trace!("event cache miss for event: {}, read from file",
                                entry.event_id);
                         event_cache.insert(entry.event_id, event);

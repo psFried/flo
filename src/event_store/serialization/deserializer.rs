@@ -4,7 +4,7 @@ use std::io::{self, Write, ErrorKind, Read};
 use std::collections::VecDeque;
 use std::mem;
 use std::cmp;
-use nom::{be_u32, be_u64, IResult};
+use nom::{be_u32, be_u64, IResult, le_u32};
 
 
 const DEFAULT_BUFFER_SIZE: usize = 8 * 1024;
@@ -80,7 +80,7 @@ impl <T: Read + Sized> Iterator for EventStreamDeserializer<T> {
                     }
                     IResult::Incomplete(needed) => {
                         //we need some more bytes. grow the buffer!
-                        panic!("Need to grow the buffer, but I haven't written that shit yet");
+                        panic!("Need to grow the buffer, but I haven't written that shit yet. Bytes needed: {:?}", needed);
                     }
                 }
             }
