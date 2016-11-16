@@ -64,11 +64,10 @@ impl <T: Read + Sized> Iterator for EventStreamDeserializer<T> {
 
             //first try to parse an event
             let buffer_length = buffer.len();
-            println!("Buffer byte count: {}", buffer_byte_count);
             if *buffer_byte_count > 0 {
                 match parse_event(buffer) {
                     IResult::Done(remaining, event) => {
-                        println!("Read event: {:?}", event);
+                        trace!("Read event: {:?}", event);
                         *next_event = Some(event);
                         buffer_shift_amt = remaining.len();
                         *buffer_byte_count -= (buffer_length - remaining.len());
@@ -88,14 +87,13 @@ impl <T: Read + Sized> Iterator for EventStreamDeserializer<T> {
             let read_result = {
                 reader.read(buffer)
             };
-            println!("read result: {:?}", read_result);
+            trace!("read result: {:?}", read_result);
             match read_result {
                 Ok(0) => {
                     break;
                 }
                 Ok(byte_count) => {
                     //continue in the loop and try again
-                    println!("setting buffer byte count to: {}", byte_count);
                     *buffer_byte_count = byte_count;
                 },
                 Err(ref err) => {
@@ -109,7 +107,7 @@ impl <T: Read + Sized> Iterator for EventStreamDeserializer<T> {
         //if we've read an event, may need to shift the buffer
         if buffer_shift_amt > 0 {
             let offset = self.buffer.len() - buffer_shift_amt;
-            println!("shifting {} bytes by: {} offset", buffer_shift_amt, offset);
+            trace!("shifting {} bytes by: {} offset", buffer_shift_amt, offset);
             for i in 0..buffer_shift_amt {
                 self.buffer.swap(i, i + offset);
             }

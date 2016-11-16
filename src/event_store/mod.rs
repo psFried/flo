@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use lru_time_cache::LruCache;
 use self::index::{RingIndex, Entry};
 use self::file_reader::FileReader;
+use self::serialization::{EventSerializer, size_on_disk};
 
 const EVENTS_FILE_NAME: &'static str = "events.json";
 const MAX_CACHED_EVENTS: usize = 150;
@@ -77,29 +78,12 @@ impl FileSystemEventStore {
 
             let mut num_events = 0;
             for event_result in file_reader.read_from_offset(0) {
-/*                match event_result {
-                    Ok(mut event) => {
-                        let event_data_len = event.get_raw_bytes().len() as u64;
-                        let event_id = event.get_id();
-                        index.add(Entry::new(event_id, event_data_len));
-                        *current_file_position += event_data_len;
-                        event_cache.insert(event_id, event);
-                        num_events += 1;
-                        *current_event_id = event_id;
-                    }
-                    Err(serde_error) => {
-                        error!("Unable to Read Event: {:?}", serde_error);
-                        match serde_error {
-                            JsonError::Io(io_err) => return Err(io_err),
-                            err @ _ => {
-                                return Err(io::Error::new(io::ErrorKind::InvalidData,
-                                                          format!("Error reading events file: \
-                                                                   {:?}",
-                                                                  err)))
-                            }
-                        }
-                    }
-                }*/
+                let event_id = event_result.get_id();
+                index.add(Entry::new(event_id, *current_file_position));
+                *current_file_position += size_on_disk(&event_result) as u64;
+                event_cache.insert(event_id, event_result);
+                num_events += 1;
+                *current_event_id = event_id;
             }
             info!("initialized event store with {} pre-existing events from file: {:?}",
                   num_events,
@@ -118,6 +102,7 @@ impl EventStore for FileSystemEventStore {
     }
 
     fn store(&mut self, event: Event) -> PersistenceResult {
+        let event_size = size_on_disk(&event) as u64;
         let mut evt = event;
         let event_id: EventId = evt.get_id();
         self.current_event_id = event_id;
@@ -128,8 +113,9 @@ impl EventStore for FileSystemEventStore {
                dropped_entry);
 
         dropped_entry.map(|entry| self.event_cache.remove(&entry.event_id));
-        self.events_file.write(evt.get_raw_bytes()).map(|_| {
-            self.current_file_position += evt.get_raw_bytes().len() as u64;
+
+        ::std::io::copy(&mut EventSerializer::new(&evt), &mut self.events_file).map(|_| {
+            self.current_file_position += event_size;
             trace!("finished writing event to disk: {}", event_id);
             self.event_cache.insert(event_id, evt);
             event_id
@@ -172,6 +158,7 @@ mod test {
     use std::fs::File;
     use std::io::Read;
     use event_store::index::Entry;
+    use event_store::serialization::size_on_disk;
 
     fn to_event(id: EventId, data: &str) -> Event {
         Event::new(id, data.as_bytes().to_owned())
@@ -218,15 +205,13 @@ mod test {
         let temp_dir = TempDir::new("flo-persist-test").unwrap();
         let mut store = FileSystemEventStore::new(temp_dir.path().to_path_buf(), 10).unwrap();
 
-        let first_event_data = r#"{"id":1,"data":{"firstEventKey":"firstEventValue"}}"#;
-
-        let event = to_event(1, "firstEventData");
-        store.store(event).unwrap();
-        let event = to_event(2, "secondEventValue");
-        store.store(event).unwrap();
+        let event1 = to_event(1, "firstEventData");
+        let expected_offset = size_on_disk(&event1) as u64;
+        store.store(event1).unwrap();
+        let event2 = to_event(2, "secondEventValue");
+        store.store(event2).unwrap();
 
         let index_entry = store.index.get(2).unwrap();
-        let expected_offset = first_event_data.as_bytes().len() as u64;
         assert_eq!(expected_offset, index_entry.offset);
     }
 
