@@ -114,12 +114,15 @@ impl EventStore for FileSystemEventStore {
 
         dropped_entry.map(|entry| self.event_cache.remove(&entry.event_id));
 
-        ::std::io::copy(&mut EventSerializer::new(&evt), &mut self.events_file).map(|_| {
-            self.current_file_position += event_size;
-            trace!("finished writing event to disk: {}", event_id);
-            self.event_cache.insert(event_id, evt);
-            event_id
-        })
+        ::std::io::copy(&mut EventSerializer::new(&evt), &mut self.events_file)
+            .and_then(|_| {
+                self.events_file.flush()
+            }).map(|_| {
+                self.current_file_position += event_size;
+                trace!("finished writing event to disk: {}", event_id);
+                self.event_cache.insert(event_id, evt);
+                event_id
+            })
     }
 
     fn get_greatest_event_id(&self) -> EventId {
@@ -159,6 +162,7 @@ mod test {
     use std::io::Read;
     use event_store::index::Entry;
     use event_store::serialization::size_on_disk;
+    use event_store::file_reader::FileReader;
 
     fn to_event(id: EventId, data: &str) -> Event {
         Event::new(id, data.as_bytes().to_owned())
@@ -282,26 +286,13 @@ mod test {
         store.store(event2.clone()).unwrap();
 
         let file_path = temp_dir.path().join("events.json");
-        let file = File::open(file_path).unwrap();
+        let reader = FileReader::new(file_path);
+        let mut results = reader.read_from_offset(0);
+        
+        let actual1 = results.next().expect("Expected first event");
+        assert_eq!(event1, actual1);
 
-        let bytes = file.bytes();
-
-        panic!("still need to finish test");
-    }
-
-    #[test]
-    fn event_is_saved_to_a_file_within_the_persistence_directory() {
-        let temp_dir = TempDir::new("flo-persist-test").unwrap();
-        let mut store = FileSystemEventStore::new(temp_dir.path().to_path_buf(), 10).unwrap();
-
-        let event = to_event(1, r#"{"myKey": "myVal"}"#);
-        store.store(event.clone()).unwrap();
-
-        let file_path = temp_dir.path().join("events.json");
-        let mut file = File::open(file_path).unwrap();
-
-        let mut contents = String::new();
-        file.read_to_string(&mut contents).unwrap();
-        panic!("still need to finish test");
+        let actual2 = results.next().expect("expected second event");
+        assert_eq!(event2, actual2);
     }
 }
