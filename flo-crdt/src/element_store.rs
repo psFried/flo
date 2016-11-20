@@ -28,10 +28,10 @@ impl ElementStore {
         })
     }
 
-    pub fn get_delta<'a>(&'a self, other_node: ActorId, version_vec: &'a VersionMap) -> impl Iterator<Item=&'a Element> + 'a {
+    pub fn get_delta<'a, T: VersionMap>(&'a self, other_node: ActorId, version_vec: &'a T) -> impl Iterator<Item=&'a Element> + 'a {
         self.elements.iter().filter(move |element| {
             let element_actor = element.id.actor;
-            element_actor != other_node && element.id.counter > version_vec.head(element_actor)
+            element_actor != other_node && element.id.counter > version_vec.get_element_counter(element_actor).unwrap_or(0)
         })
     }
 }

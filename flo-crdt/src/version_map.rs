@@ -1,38 +1,70 @@
 use ::{ActorId, ElementCounter};
 use std::collections::HashMap;
 
-#[derive(Debug, PartialEq, Clone)]
-pub struct VersionMap {
-    versions: HashMap<ActorId, ElementCounter>
+use std::fmt::Debug;
+
+pub trait ActorVersionMaps<M: VersionMap>: PartialEq + Clone + Debug + Sized {
+    /// Should create a new map if one does not exist
+    fn get_version_map(&mut self, actor: ActorId) -> &M;
+
+    fn get_element_counter(&self, perspective: ActorId, actor: ActorId) -> ElementCounter;
+
+    fn increment_element_counter(&mut self, perspective: ActorId, actor: ActorId) -> ElementCounter;
+
+    fn update(&mut self, perspective: ActorId, other_version_map: &M);
 }
 
-impl VersionMap {
-    pub fn new() -> VersionMap {
-        VersionMap {
-            versions: HashMap::new()
-        }
+impl <M: VersionMap> ActorVersionMaps<M> for HashMap<ActorId, M> {
+    fn get_version_map(&mut self, actor: ActorId) -> &M {
+        self.entry(actor).or_insert_with(|| M::new())
     }
 
-    pub fn get_element_counter(&self, actor_id: ActorId) -> Option<ElementCounter> {
-        self.versions.get(&actor_id).map(|c| *c)
+    fn get_element_counter(&self, perspective: ActorId, actor: ActorId) -> ElementCounter {
+        self.get(&perspective).and_then(|version_map| {
+            version_map.get_element_counter(actor)
+        }).unwrap_or(0)
     }
 
-    pub fn update(&mut self, other: &VersionMap) {
-        for (actor, counter) in other.versions.iter() {
-            let existing_version = self.versions.entry(*actor).or_insert(0);
+    fn increment_element_counter(&mut self, perspective: ActorId, actor: ActorId) -> ElementCounter {
+        self.entry(perspective).or_insert_with(|| M::new()).increment(actor)
+    }
+
+    fn update(&mut self, perspective: ActorId, other_version_map: &M) {
+        self.entry(perspective).or_insert_with(|| M::new()).update(other_version_map);
+    }
+}
+
+pub trait VersionMap: PartialEq + Clone + Debug + Sized {
+    fn new() -> Self;
+
+    fn get_element_counter(&self, actor_id: ActorId) -> Option<ElementCounter>;
+
+    fn update(&mut self, other: &Self);
+
+    fn increment(&mut self, actor: ActorId) -> ElementCounter;
+}
+
+impl VersionMap for HashMap<ActorId, ElementCounter> {
+
+    fn new() -> Self {
+        HashMap::with_capacity(8)
+    }
+
+    fn get_element_counter(&self, actor_id: ActorId) -> Option<ElementCounter> {
+        self.get(&actor_id).map(|c| *c)
+    }
+
+    fn update(&mut self, other: &Self) {
+        for (actor, counter) in other.iter() {
+            let existing_version = self.entry(*actor).or_insert(0);
             debug!("Updating entry for Actor: {} from {} to {}", actor, existing_version, counter);
             *existing_version = *counter;
         }
     }
 
-    pub fn increment(&mut self, actor: ActorId) -> ElementCounter {
-        let counter = self.versions.entry(actor).or_insert(0);
+    fn increment(&mut self, actor: ActorId) -> ElementCounter {
+        let counter = self.entry(actor).or_insert(0);
         *counter += 1;
         *counter
     }
-
-    pub fn head(&self, actor_id: ActorId) -> ElementCounter {
-        self.versions.get(&actor_id).map(|c| *c).unwrap_or(0)
-    }
-
 }
