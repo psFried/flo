@@ -18,7 +18,7 @@ use element_store::ElementStore;
 use version_map::VersionMap;
 use std::collections::HashMap;
 
-pub use dot::{ActorId, EventCounter, Dot};
+pub use dot::{ActorId, ElementCounter, Dot};
 
 
 #[derive(Debug, PartialEq, Clone)]
@@ -28,7 +28,7 @@ pub struct Element {
 }
 
 impl Element {
-    pub fn new<T: Into<Vec<u8>>>(actor: ActorId, counter: EventCounter, bytes: T) -> Element {
+    pub fn new<T: Into<Vec<u8>>>(actor: ActorId, counter: ElementCounter, bytes: T) -> Element {
         Element {
             id: Dot::new(actor, counter),
             data: bytes.into()
@@ -95,7 +95,7 @@ impl AOSequence {
         let my_actor_id = self.actor_id;
         let is_new_event = {
             let map = self.actor_version_maps.entry(my_actor_id).or_insert(VersionMap::new());
-            event.id.counter > *map.versions.get(&event.id.actor).unwrap_or(&0)
+            event.id.counter > map.get_element_counter(event.id.actor).unwrap_or(0)
         };
         if is_new_event {
             self.increment_event_counter(my_actor_id, event.id.actor);
@@ -110,7 +110,7 @@ impl AOSequence {
 
     }
 
-    fn increment_event_counter(&mut self, perspective_of: ActorId, to_increment: ActorId) -> EventCounter {
+    fn increment_event_counter(&mut self, perspective_of: ActorId, to_increment: ActorId) -> ElementCounter {
         self.actor_version_maps.entry(perspective_of).or_insert_with(|| VersionMap::new()).increment(to_increment)
     }
 }
@@ -145,7 +145,8 @@ mod test {
     use std;
     use test_logger;
 
-    test!(two_aosequences_converge, {
+    #[test]
+    fn two_aosequences_converge() {
         let actor_a = 0;
         let actor_b = 1;
         let mut subject_a = AOSequence::new(actor_a);
@@ -173,9 +174,10 @@ mod test {
                                        .map(|e| std::str::from_utf8(&e.data).unwrap())
                                        .collect::<Vec<&str>>();
         assert_eq!(expected, b_events);
-    });
+    }
 
-    test!(three_aosequences_converge, {
+    #[test]
+    fn three_aosequences_converge() {
         let actor_a = 0;
         let actor_b = 1;
         let actor_c = 2;
@@ -209,9 +211,10 @@ mod test {
                                        .map(|e| std::str::from_utf8(&e.data).unwrap())
                                        .collect::<Vec<&str>>();
         assert_eq!(vec!["A1", "B1", "C1"], c_events);
-    });
+    }
 
-    test!(delta_excludes_events_that_the_other_actor_already_has, {
+    #[test]
+    fn delta_excludes_events_that_the_other_actor_already_has() {
         let actor_a = 0;
         let actor_b = 1;
         let actor_c = 2;
@@ -222,8 +225,8 @@ mod test {
             let mut delta_versions = VersionMap::new();
             delta_versions.increment(actor_b);
             delta_versions.increment(actor_c);
-            let b_event = Event::new(actor_b, 1, "those bytes".to_owned());
-            let c_event = Event::new(actor_c, 1, "c".to_owned());
+            let b_event = Element::new(actor_b, 1, "those bytes".to_owned());
+            let c_event = Element::new(actor_c, 1, "c".to_owned());
 
             Delta {
                 actor_id: actor_b,
@@ -238,7 +241,7 @@ mod test {
         let delta_to_join = {
             let mut delta_versions = VersionMap::new();
             delta_versions.increment(actor_c);
-            let event = Event::new(actor_c, 2, "new C event".to_owned());
+            let event = Element::new(actor_c, 2, "new C event".to_owned());
             Delta {
                 actor_id: actor_c,
                 version_map: delta_versions,
@@ -258,20 +261,23 @@ mod test {
         expected_version.insert(actor_a, 1);
         expected_version.insert(actor_b, 1);
         expected_version.insert(actor_c, 2);
-        assert_eq!(expected_version, result.version_map.versions);
-    });
+        assert_eq!(Some(1), result.version_map.get_element_counter(actor_a));
+        assert_eq!(Some(1), result.version_map.get_element_counter(actor_b));
+        assert_eq!(Some(2), result.version_map.get_element_counter(actor_c));
+    }
 
-    test!(delta_returns_all_events_when_no_version_vector_stored_for_given_actor, {
+    #[test]
+    fn delta_returns_all_events_when_no_version_vector_stored_for_given_actor() {
         let mut subject = AOSequence::new(0);
 
-        let event1 = Event::new(0, 1, "these bytes".to_owned());
-        let event2 = Event::new(0, 2, "dees bytes".to_owned());
+        let event1 = Element::new(0, 1, "these bytes".to_owned());
+        let event2 = Element::new(0, 2, "dees bytes".to_owned());
         subject.push(event1.data.clone());
         subject.push(event2.data.clone());
 
         // Add events that have come from a different actor
         let other_actor_id = 1;
-        let other_event = Event::new(other_actor_id, 1, "those bytes".to_owned());
+        let other_event = Element::new(other_actor_id, 1, "those bytes".to_owned());
         let delta_to_join = {
             let mut delta_versions = VersionMap::new();
             delta_versions.increment(other_actor_id);
@@ -290,10 +296,12 @@ mod test {
         let mut expected_version = HashMap::new();
         expected_version.insert(0, 2);
         expected_version.insert(1, 1);
-        assert_eq!(expected_version, result.version_map.versions);
-    });
+        assert_eq!(Some(2), result.version_map.get_element_counter(0u16));
+        assert_eq!(Some(1), result.version_map.get_element_counter(1u16));
+    }
 
-    test!(empty_version_vector_is_updated_to_add_all_elements_from_other, {
+    #[test]
+    fn empty_version_vector_is_updated_to_add_all_elements_from_other() {
         let mut a = AOSequence::new(0);
 
         let mut other_vv = VersionMap::new();
@@ -304,18 +312,20 @@ mod test {
 
         let a_vv = a.actor_version_maps.get(&1).unwrap();
         assert_eq!(*a_vv, other_vv);
-    });
+    }
 
-    test!(pushing_event_returns_next_event_counter, {
+    #[test]
+    fn pushing_event_returns_next_event_counter() {
         let actor_id = 5;
         let mut subject = AOSequence::new(actor_id);
         subject.push("thebytes".to_owned());
         assert_eq!(1, subject.actor_version_maps.len());
         let counter = subject.actor_version_maps.get(&actor_id).unwrap().head(actor_id);
         assert_eq!(1, counter);
-    });
+    }
 
-    test!(joining_empty_to_delta_adds_events, {
+    #[test]
+    fn joining_empty_to_delta_adds_events() {
         let actor_id = 0;
         let mut subject = AOSequence::new(actor_id);
 
@@ -328,15 +338,15 @@ mod test {
             actor_id: 5,
             version_map: delta_versions,
             events: vec![
-                Event::new(5, 1, "event 1 bytes".to_owned()),
-                Event::new(5, 2, "event 2 bytes".to_owned()),
-                Event::new(6, 1, "moar bytes!!".to_owned()),
+                Element::new(5, 1, "event 1 bytes".to_owned()),
+                Element::new(5, 2, "event 2 bytes".to_owned()),
+                Element::new(6, 1, "moar bytes!!".to_owned()),
             ],
         };
 
         subject.join(delta);
 
         assert_eq!(3, subject.events.count());
-    });
+    }
 
 }

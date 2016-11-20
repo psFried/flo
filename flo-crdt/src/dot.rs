@@ -2,16 +2,16 @@
 use std::cmp::Ordering;
 
 pub type ActorId = u16;
-pub type EventCounter = u64;
+pub type ElementCounter = u64;
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub struct Dot {
     pub actor: ActorId,
-    pub counter: EventCounter,
+    pub counter: ElementCounter,
 }
 
 impl Dot {
-    pub fn new(actor: ActorId, counter: EventCounter) -> Dot {
+    pub fn new(actor: ActorId, counter: ElementCounter) -> Dot {
         Dot {
             actor: actor,
             counter: counter,

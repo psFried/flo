@@ -1,7 +1,6 @@
 #![feature(conservative_impl_trait)]
 
 extern crate flo;
-extern crate log4rs;
 
 #[macro_use]
 extern crate clap;
@@ -15,18 +14,11 @@ Since we want to use the one from the log crate, that has to go last.
 */
 #[macro_use]
 extern crate log;
-extern crate lru_time_cache;
-extern crate byteorder;
 
-
-#[cfg(test)]
-extern crate tempdir;
+extern crate log4rs;
 
 #[cfg(test)]
 extern crate env_logger;
-
-pub mod event_store;
-pub mod event;
 
 mod logging;
 
