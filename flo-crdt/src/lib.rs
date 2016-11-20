@@ -54,13 +54,13 @@ pub struct AOSequence<T: VersionMap, A: ActorVersionMaps<T>> {
 
 pub type InMemoryAOSequence = AOSequence<HashMap<ActorId, ElementCounter>, HashMap<ActorId, HashMap<ActorId, ElementCounter>>>;
 
-impl <T: VersionMap, A: ActorVersionMaps<T>> AOSequence<T, A> {
+impl <V: VersionMap, A: ActorVersionMaps<V>> AOSequence<V, A> {
 
     pub fn new_in_memory(actor_id: ActorId) -> InMemoryAOSequence {
         AOSequence::new(actor_id, HashMap::new())
     }
 
-    pub fn new(actor_id: ActorId, actor_version_maps: A) -> AOSequence<T, A> {
+    pub fn new(actor_id: ActorId, actor_version_maps: A) -> AOSequence<V, A> {
         AOSequence {
             actor_id: actor_id,
             actor_version_maps: actor_version_maps,
@@ -76,7 +76,7 @@ impl <T: VersionMap, A: ActorVersionMaps<T>> AOSequence<T, A> {
         Dot::new(actor_id, new_counter)
     }
 
-    pub fn join(&mut self, delta: Delta<T>) {
+    pub fn join(&mut self, delta: Delta<V>) {
         for evt in delta.events {
             self.add_element(evt);
         }
@@ -85,7 +85,7 @@ impl <T: VersionMap, A: ActorVersionMaps<T>> AOSequence<T, A> {
         debug!("finished joining in versions: {:?}\nmy versions: {:?}", delta.version_map, self.actor_version_maps);
     }
 
-    pub fn get_delta(&mut self, other: ActorId) -> Option<Delta<T>> {
+    pub fn get_delta(&mut self, other: ActorId) -> Option<Delta<V>> {
         let events = {
             let AOSequence{ref events, ref mut actor_version_maps, ..} = *self;
             let other_version_map = actor_version_maps.get_version_map(other);
@@ -109,7 +109,7 @@ impl <T: VersionMap, A: ActorVersionMaps<T>> AOSequence<T, A> {
         }
     }
 
-    fn update_version_vector(&mut self, actor_id: ActorId, version_vector: &T) {
+    fn update_version_vector(&mut self, actor_id: ActorId, version_vector: &V) {
         debug!("Updating VersionVector from Actor: {}", actor_id);
         self.actor_version_maps.update(actor_id, version_vector);
         debug!("Finished updating VersionVector from Actor: {}", actor_id);
