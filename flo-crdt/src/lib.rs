@@ -13,35 +13,23 @@ extern crate env_logger;
 mod version_map;
 mod element_store;
 mod dot;
+pub mod element;
 
 use element_store::ElementStore;
 use version_map::{VersionMap, ActorVersionMaps};
 use std::collections::HashMap;
 use std::marker::PhantomData;
+use element::OwnedElement;
 
 pub use dot::{ActorId, ElementCounter, Dot};
+pub use element::Element;
 
-
-#[derive(Debug, PartialEq, Clone)]
-pub struct Element {
-    pub id: Dot,
-    pub data: Vec<u8>,
-}
-
-impl Element {
-    pub fn new<T: Into<Vec<u8>>>(actor: ActorId, counter: ElementCounter, bytes: T) -> Element {
-        Element {
-            id: Dot::new(actor, counter),
-            data: bytes.into()
-        }
-    }
-}
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Delta<T: VersionMap> {
     pub actor_id: ActorId,
     pub version_map: T,
-    pub events: Vec<Element>,
+    pub events: Vec<OwnedElement>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -72,7 +60,7 @@ impl <V: VersionMap, A: ActorVersionMaps<V>> AOSequence<V, A> {
     pub fn push<B: Into<Vec<u8>>>(&mut self, event_data: B) -> Dot {
         let actor_id = self.actor_id;
         let new_counter = self.increment_event_counter(actor_id, actor_id);
-        self.events.add_element(Element::new(actor_id, new_counter, event_data.into()));
+        self.events.add_element(OwnedElement::new(actor_id, new_counter, event_data.into()));
         Dot::new(actor_id, new_counter)
     }
 
@@ -100,7 +88,7 @@ impl <V: VersionMap, A: ActorVersionMaps<V>> AOSequence<V, A> {
         })
     }
 
-    fn add_element(&mut self, event: Element) {
+    fn add_element(&mut self, event: OwnedElement) {
         let my_actor_id = self.actor_id;
         let is_new_event = self.actor_version_maps.get_element_counter(my_actor_id, event.id.actor) < event.id.counter;
         if is_new_event {
@@ -146,6 +134,7 @@ impl <V: VersionMap, A: ActorVersionMaps<V>> AOSequence<V, A> {
 mod test {
     use super::*;
     use element_store::ElementStore;
+    use element::OwnedElement;
     use version_map::{VersionMap, ActorVersionMaps};
     use std::collections::HashMap;
     use std;
@@ -235,8 +224,8 @@ mod test {
             let mut delta_versions = HashMap::new();
             delta_versions.increment(actor_b);
             delta_versions.increment(actor_c);
-            let b_event = Element::new(actor_b, 1, "those bytes".to_owned());
-            let c_event = Element::new(actor_c, 1, "c".to_owned());
+            let b_event = OwnedElement::new(actor_b, 1, "those bytes".to_owned());
+            let c_event = OwnedElement::new(actor_c, 1, "c".to_owned());
 
             Delta {
                 actor_id: actor_b,
@@ -251,7 +240,7 @@ mod test {
         let delta_to_join = {
             let mut delta_versions = HashMap::new();
             delta_versions.increment(actor_c);
-            let event = Element::new(actor_c, 2, "new C event".to_owned());
+            let event = OwnedElement::new(actor_c, 2, "new C event".to_owned());
             Delta {
                 actor_id: actor_c,
                 version_map: delta_versions,
@@ -280,14 +269,14 @@ mod test {
     fn delta_returns_all_events_when_no_version_vector_stored_for_given_actor() {
         let mut subject = new_in_memory(0);
 
-        let event1 = Element::new(0, 1, "these bytes".to_owned());
-        let event2 = Element::new(0, 2, "dees bytes".to_owned());
+        let event1 = OwnedElement::new(0, 1, "these bytes".to_owned());
+        let event2 = OwnedElement::new(0, 2, "dees bytes".to_owned());
         subject.push(event1.data.clone());
         subject.push(event2.data.clone());
 
         // Add events that have come from a different actor
         let other_actor_id = 1;
-        let other_event = Element::new(other_actor_id, 1, "those bytes".to_owned());
+        let other_event = OwnedElement::new(other_actor_id, 1, "those bytes".to_owned());
         let delta_to_join = {
             let mut delta_versions = HashMap::new();
             delta_versions.increment(other_actor_id);
@@ -348,9 +337,9 @@ mod test {
             actor_id: 5,
             version_map: delta_versions,
             events: vec![
-                Element::new(5, 1, "event 1 bytes".to_owned()),
-                Element::new(5, 2, "event 2 bytes".to_owned()),
-                Element::new(6, 1, "moar bytes!!".to_owned()),
+                OwnedElement::new(5, 1, "event 1 bytes".to_owned()),
+                OwnedElement::new(5, 2, "event 2 bytes".to_owned()),
+                OwnedElement::new(6, 1, "moar bytes!!".to_owned()),
             ],
         };
 
