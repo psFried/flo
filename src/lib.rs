@@ -15,6 +15,8 @@ extern crate log;
 
 extern crate lru_time_cache;
 extern crate byteorder;
+extern crate tokio_core;
+extern crate futures;
 
 #[cfg(test)]
 extern crate env_logger;
@@ -25,3 +27,4 @@ extern crate tempdir;
 pub mod event_store;
 pub mod event;
 pub mod protocol;
+pub mod server;

@@ -26,6 +26,7 @@ use logging::init_logging;
 use clap::{App, Arg, ArgMatches};
 use std::str::FromStr;
 use std::path::PathBuf;
+use flo::server::{self, ServerOptions};
 
 const FLO_VERSION: &'static str = env!("CARGO_PKG_VERSION");
 
@@ -51,6 +52,12 @@ fn main() {
     let port = parse_arg_or_exit(&args, "port", 3000u16);
     let data_dir = PathBuf::from(args.value_of("data-dir").unwrap_or("."));
 
+    let server_options = ServerOptions {
+        port: port,
+        data_dir: data_dir,
+    };
+    server::run(&server_options);
+    info!("Shutdown server");
 }
 
 fn parse_arg_or_exit<T: FromStr + Default>(args: &ArgMatches, arg_name: &str, default: T) -> T {

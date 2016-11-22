@@ -1,7 +1,6 @@
 
 # Cargo stuff
 target
-Cargo.lock
 
 # eclipse stuff
 .project
