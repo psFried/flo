@@ -12,8 +12,8 @@ clap = "2.5"
 nom = "1.2"
 byteorder = "0.5"
 flo-crdt = { path = "./flo-crdt" }
-tokio-core = { git = "https://github.com/tokio-rs/tokio-core" }
-futures = { git = "https://github.com/alexcrichton/futures-rs" }
+tokio-core = "0.1.1"
+futures = "0.1.4"
 
 [dev-dependencies]
 tempdir = "*"
