@@ -32,7 +32,6 @@ pub use self::client_type::ClientType;
 
 #[derive(Debug, PartialEq)]
 pub struct RequestHeader<'a> {
-    client_type: ClientType,
     namespace: &'a str,
     username: &'a str,
     password: &'a str,
@@ -54,13 +53,12 @@ named!{pub parse_str<&str>,
 
 named!{pub parse_header<RequestHeader>,
     chain!(
-        client_type: parse_client_type ~
+        _tag: tag!("FLO_INI\n") ~
         namespace: parse_str ~
         username: parse_str ~
         password: parse_str,
         || {
             RequestHeader {
-                client_type: client_type,
                 namespace: namespace,
                 username: username,
                 password: password,
@@ -71,11 +69,10 @@ named!{pub parse_header<RequestHeader>,
 
 named!{pub parse_producer_event<ProduceEvent>,
     chain!(
-        tags: parse_str ~
+        _tag: tag!("FLO_PRO\n") ~
         event_data: length_bytes!(be_u32),
         || {
             ProduceEvent {
-                tags: tags,
                 event_data: event_data,
             }
         }
@@ -90,14 +87,13 @@ mod test {
     #[test]
     fn parse_producer_event_parses_correct_event() {
         let mut input = Vec::new();
-        input.extend_from_slice(b"tag1,tag2\n");
+        input.extend_from_slice(b"FLO_PRO\n");
         input.extend_from_slice(&[0, 0, 0, 5]); // hacky way to set the length as a u32
         input.extend_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
 
         let (remaining, result) = parse_producer_event(&input).unwrap();
 
         let expected = ProduceEvent {
-            tags: "tag1,tag2",
             event_data: &[1, 2, 3, 4, 5]
         };
         assert_eq!(expected, result);
@@ -108,7 +104,7 @@ mod test {
     #[test]
     fn parse_header_returns_incomplete_result_when_password_is_missing() {
         let mut input = Vec::new();
-        input.push(2u8);
+        input.extend_from_slice(b"FLO_INI\n");
         input.extend_from_slice(b"hello\n");
         input.extend_from_slice(b"world\n");
 
@@ -122,14 +118,13 @@ mod test {
     #[test]
     fn parse_header_parses_valid_header_with_no_remaining_bytes() {
         let mut input = Vec::new();
-        input.push(2);
+        input.extend_from_slice(b"FLO_INI\n");
         input.extend_from_slice(b"hello\n");
         input.extend_from_slice(b"usr\n");
         input.extend_from_slice(b"pass\n");
         let (remaining, result) = parse_header(&input).unwrap();
 
         let expected_header = RequestHeader {
-            client_type: ClientType::Consumer,
             namespace: "hello",
             username: "usr",
             password: "pass",

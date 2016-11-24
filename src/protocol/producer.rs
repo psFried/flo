@@ -10,7 +10,6 @@ pub enum ProducerMessage<'a> {
 
 #[derive(Debug, PartialEq)]
 pub struct ProduceEvent<'a> {
-    pub tags: &'a str,
     pub event_data: &'a [u8],
 }
 
