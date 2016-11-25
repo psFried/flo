@@ -15,6 +15,8 @@ extern crate log;
 
 extern crate lru_time_cache;
 extern crate byteorder;
+
+#[macro_use]
 extern crate tokio_core;
 extern crate futures;
 

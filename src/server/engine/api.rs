@@ -9,12 +9,11 @@ use std::fmt::{self, Debug};
 
 pub type ConnectionId = usize;
 
-static CURRENT_CLIENT_ID: atomic::AtomicUsize = atomic::ATOMIC_USIZE_INIT;
+static CURRENT_CONNECTION_ID: atomic::AtomicUsize = atomic::ATOMIC_USIZE_INIT;
 
-fn next_connection_id() -> ConnectionId {
-    CURRENT_CLIENT_ID.fetch_add(1, atomic::Ordering::SeqCst)
+pub fn next_connection_id() -> ConnectionId {
+    CURRENT_CONNECTION_ID.fetch_add(1, atomic::Ordering::SeqCst)
 }
-
 
 pub struct NewClient {
     connection_id: ConnectionId,
@@ -36,6 +35,16 @@ impl Debug for NewClient {
     }
 }
 
+impl PartialEq for NewClient {
+    fn eq(&self, other: &NewClient) -> bool {
+        self.connection_id == other.connection_id &&
+                self.namespace == other.namespace &&
+                self.username == other.username &&
+                self.password == other.password &&
+                &(self.message_sender) as * const UnboundedSender<ServerMessage> == &(other.message_sender) as * const UnboundedSender<ServerMessage>
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub struct ProduceEvent {
     connection_id: ConnectionId,
@@ -44,12 +53,13 @@ pub struct ProduceEvent {
 }
 unsafe impl Send for ProduceEvent {}
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum ClientMessage {
     ClientConnect(NewClient),
     Produce(ProduceEvent),
     UpdateMarker(FloEventId),
-    StartConsuming
+    StartConsuming,
+    Disconnect,
 }
 unsafe impl Send for ClientMessage {}
 

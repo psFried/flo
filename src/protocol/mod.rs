@@ -26,7 +26,7 @@ Consumer:
 mod client_type;
 mod producer;
 
-use nom::{be_u8, be_u32};
+use nom::{be_u8, be_u32, IResult};
 pub use self::producer::{ProduceEvent, ModifyNamespace, ProducerMessage};
 pub use self::client_type::ClientType;
 
@@ -35,13 +35,6 @@ pub struct RequestHeader<'a> {
     namespace: &'a str,
     username: &'a str,
     password: &'a str,
-}
-
-named!{pub parse_client_type<ClientType>,
-    map_res!(
-        be_u8,
-        ClientType::from_byte
-    )
 }
 
 named!{pub parse_str<&str>,
@@ -77,6 +70,24 @@ named!{pub parse_producer_event<ProduceEvent>,
             }
         }
     )
+}
+
+pub trait ClientProtocol {
+    fn parse_header<'a>(&'a self, buffer: &'a [u8]) -> IResult<&'a [u8], RequestHeader>;
+    fn parse_producer_event<'a>(&'a self, buffer: &'a [u8]) -> IResult<&'a [u8], ProduceEvent>;
+
+}
+
+pub struct ClientProtocolImpl;
+
+impl ClientProtocol for ClientProtocolImpl {
+    fn parse_header<'a>(&'a self, buffer: &'a [u8]) -> IResult<&'a [u8], RequestHeader> {
+        parse_header(buffer)
+    }
+
+    fn parse_producer_event<'a>(&'a self, buffer: &'a [u8]) -> IResult<&'a [u8], ProduceEvent> {
+        parse_producer_event(buffer)
+    }
 }
 
 #[cfg(test)]
@@ -166,14 +177,5 @@ mod test {
         assert_eq!(expected_string, result);
         assert_eq!(&extra_bytes, &remaining);
     }
-
-    #[test]
-    fn parse_client_type_returns_client_type_from_byte_array() {
-        let input = vec![2u8, 3, 4, 5];
-        let (remaining, result) = parse_client_type(&input).unwrap();
-        assert_eq!(ClientType::Consumer, result);
-        assert_eq!(&input[1..], remaining);
-    }
-
 }
 
