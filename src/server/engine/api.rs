@@ -15,47 +15,46 @@ pub fn next_connection_id() -> ConnectionId {
     CURRENT_CONNECTION_ID.fetch_add(1, atomic::Ordering::SeqCst)
 }
 
-pub struct NewClient {
-    connection_id: ConnectionId,
-    message_sender: UnboundedSender<ServerMessage>,
-    namespace: String,
-    username: String,
-    password: String,
+pub struct ClientConnect {
+    pub connection_id: ConnectionId,
+    pub client_addr: ::std::net::SocketAddr,
+    pub message_sender: UnboundedSender<ServerMessage>,
 }
-unsafe impl Send for NewClient {}
+unsafe impl Send for ClientConnect {}
 
-impl Debug for NewClient {
-    //TODO: remove password from formatted output once things kinda work
+impl Debug for ClientConnect {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        write!(formatter, "NewClient {{ connection_id: {}, namespace: '{}', username: '{}', password: '{}' }}",
-                self.connection_id,
-                self.namespace,
-                self.username,
-                self.password)
+        write!(formatter, "NewClient {{ connection_id: {}, client_addr: {:?} }}", self.connection_id, self.client_addr)
     }
 }
 
-impl PartialEq for NewClient {
-    fn eq(&self, other: &NewClient) -> bool {
+impl PartialEq for ClientConnect {
+    fn eq(&self, other: &ClientConnect) -> bool {
         self.connection_id == other.connection_id &&
-                self.namespace == other.namespace &&
-                self.username == other.username &&
-                self.password == other.password &&
+                self.client_addr == other.client_addr &&
                 &(self.message_sender) as * const UnboundedSender<ServerMessage> == &(other.message_sender) as * const UnboundedSender<ServerMessage>
     }
 }
 
 #[derive(Debug, PartialEq)]
+pub struct ClientAuth {
+    pub namespace: String,
+    pub username: String,
+    pub password: String,
+}
+
+#[derive(Debug, PartialEq)]
 pub struct ProduceEvent {
-    connection_id: ConnectionId,
-    op_id: u64,
-    event_data: Vec<u8>
+    pub connection_id: ConnectionId,
+    pub op_id: u64,
+    pub event_data: Vec<u8>
 }
 unsafe impl Send for ProduceEvent {}
 
 #[derive(Debug, PartialEq)]
 pub enum ClientMessage {
-    ClientConnect(NewClient),
+    ClientConnect(ClientConnect),
+    ClientAuth(ClientAuth),
     Produce(ProduceEvent),
     UpdateMarker(FloEventId),
     StartConsuming,
@@ -65,9 +64,9 @@ unsafe impl Send for ClientMessage {}
 
 #[derive(Debug, PartialEq)]
 pub struct EventAck {
-    connection_id: ConnectionId,
-    op_id: u64,
-    event_id: FloEventId,
+    pub connection_id: ConnectionId,
+    pub op_id: u64,
+    pub event_id: FloEventId,
 }
 unsafe impl Send for EventAck {}
 

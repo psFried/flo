@@ -1,5 +1,5 @@
 mod buffer_pool;
-mod engine;
+pub mod engine;
 mod flo_io;
 
 use futures::stream::Stream;
