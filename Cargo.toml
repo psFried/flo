@@ -11,7 +11,7 @@ url = "1.1"
 clap = "2.5"
 nom = "1.2"
 byteorder = "0.5"
-flo-crdt = { path = "./flo-crdt" }
+flo-event = { path = "./flo-event" }
 tokio-core = "0.1.1"
 futures = "0.1.4"
 

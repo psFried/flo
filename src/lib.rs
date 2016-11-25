@@ -1,6 +1,6 @@
 #![feature(conservative_impl_trait)]
 
-extern crate flo_crdt;
+extern crate flo_event;
 
 #[macro_use]
 extern crate nom;

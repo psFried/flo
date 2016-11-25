@@ -1,5 +1,5 @@
 
-use flo_crdt::Dot;
+use flo_event::{FloEventId, FloEvent, OwnedFloEvent};
 
 use event::Event;
 use futures::sync::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
@@ -48,7 +48,7 @@ unsafe impl Send for ProduceEvent {}
 pub enum ClientMessage {
     ClientConnect(NewClient),
     Produce(ProduceEvent),
-    UpdateMarker(Dot),
+    UpdateMarker(FloEventId),
     StartConsuming
 }
 unsafe impl Send for ClientMessage {}
@@ -57,14 +57,14 @@ unsafe impl Send for ClientMessage {}
 pub struct EventAck {
     connection_id: ConnectionId,
     op_id: u64,
-    event_id: Dot,
+    event_id: FloEventId,
 }
 unsafe impl Send for EventAck {}
 
 #[derive(Debug, PartialEq)]
 pub enum ServerMessage {
     EventPersisted(EventAck),
-    Event(Arc<Event>),
+    Event(Arc<OwnedFloEvent>),
 }
 unsafe impl Send for ServerMessage {}
 
