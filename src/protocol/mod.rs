@@ -34,10 +34,10 @@ named!{pub parse_producer_event<ProtocolMessage>,
         op_id: be_u32 ~
         data_len: be_u32,
         || {
-            ProtocolMessage::ProduceEvent{
+            ProtocolMessage::ProduceEvent(EventHeader{
                 op_id: op_id,
                 data_length: data_len
-            }
+            })
         }
     )
 }
@@ -45,11 +45,14 @@ named!{pub parse_producer_event<ProtocolMessage>,
 named!{pub parse_any<ProtocolMessage>, alt!( parse_producer_event | parse_auth ) }
 
 #[derive(Debug, PartialEq)]
+pub struct EventHeader {
+    pub op_id: u32,
+    pub data_length: u32,
+}
+
+#[derive(Debug, PartialEq)]
 pub enum ProtocolMessage {
-    ProduceEvent{
-        op_id: u32,
-        data_length: u32
-    },
+    ProduceEvent(EventHeader),
     ApiMessage(ClientMessage),
 }
 
@@ -81,7 +84,7 @@ mod test {
 
         let (remaining, result) = parse_producer_event(&input).unwrap();
 
-        let expected = ProtocolMessage::ProduceEvent{op_id: 9, data_length: 5};
+        let expected = ProtocolMessage::ProduceEvent(EventHeader{op_id: 9, data_length: 5});
         assert_eq!(expected, result);
         assert_eq!(&[6, 7, 8], remaining);
     }
