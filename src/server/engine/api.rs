@@ -46,7 +46,7 @@ pub struct ClientAuth {
 #[derive(Debug, PartialEq)]
 pub struct ProduceEvent {
     pub connection_id: ConnectionId,
-    pub op_id: u64,
+    pub op_id: u32,
     pub event_data: Vec<u8>
 }
 unsafe impl Send for ProduceEvent {}

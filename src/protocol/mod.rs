@@ -31,9 +31,13 @@ named!{pub parse_auth<ProtocolMessage>,
 named!{pub parse_producer_event<ProtocolMessage>,
     chain!(
         _tag: tag!("FLO_PRO\n") ~
+        op_id: be_u32 ~
         data_len: be_u32,
         || {
-            ProtocolMessage::ProduceEvent{data_length: data_len}
+            ProtocolMessage::ProduceEvent{
+                op_id: op_id,
+                data_length: data_len
+            }
         }
     )
 }
@@ -43,6 +47,7 @@ named!{pub parse_any<ProtocolMessage>, alt!( parse_producer_event | parse_auth )
 #[derive(Debug, PartialEq)]
 pub enum ProtocolMessage {
     ProduceEvent{
+        op_id: u32,
         data_length: u32
     },
     ApiMessage(ClientMessage),
@@ -70,12 +75,13 @@ mod test {
     fn parse_producer_event_parses_correct_event() {
         let mut input = Vec::new();
         input.extend_from_slice(b"FLO_PRO\n");
+        input.extend_from_slice(&[0, 0, 0, 9]); // op id
         input.extend_from_slice(&[0, 0, 0, 5]); // hacky way to set the length as a u32
         input.extend_from_slice(&[6, 7, 8]);
 
         let (remaining, result) = parse_producer_event(&input).unwrap();
 
-        let expected = ProtocolMessage::ProduceEvent{data_length: 5};
+        let expected = ProtocolMessage::ProduceEvent{op_id: 9, data_length: 5};
         assert_eq!(expected, result);
         assert_eq!(&[6, 7, 8], remaining);
     }
