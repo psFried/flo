@@ -1,5 +1,3 @@
-#[cfg(test)]
-use std::io::Read;
 
 pub type EventId = u64;
 

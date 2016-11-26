@@ -1,18 +1,11 @@
 use std::io::{self, Read, Cursor};
 use event::{EventId, Event};
 
-use byteorder::{ByteOrder, BigEndian, LittleEndian};
-
-enum SerializePosition {
-    Id,
-    DataLength,
-    Data(usize)
-}
+use byteorder::{ByteOrder, BigEndian};
 
 pub struct EventSerializer<'a> {
     event_id: EventId,
     cursor: Cursor<&'a [u8]>,
-    position: SerializePosition,
 }
 
 impl <'a> EventSerializer<'a> {
@@ -20,7 +13,6 @@ impl <'a> EventSerializer<'a> {
         EventSerializer {
             event_id: event.id,
             cursor: Cursor::new(&event.data),
-            position: SerializePosition::Id,
         }
     }
 }
@@ -43,7 +35,6 @@ impl <'a> Read for EventSerializer<'a> {
 
             let mut buffer = &mut buffer[4 ..];
             let byte_count = 12;
-            let free_space = buffer.len();
 
             self.cursor.read(&mut buffer).map(|count| count + byte_count)
         } else {
@@ -57,7 +48,6 @@ mod test {
     use super::*;
     use event::Event;
     use std::io::Read;
-    use std::io::Cursor;
 
     #[test]
     fn event_is_serialized() {

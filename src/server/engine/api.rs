@@ -1,8 +1,7 @@
 
-use flo_event::{FloEventId, FloEvent, OwnedFloEvent};
+use flo_event::{FloEventId, OwnedFloEvent};
 
-use event::Event;
-use futures::sync::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
+use futures::sync::mpsc::UnboundedSender;
 use std::sync::atomic;
 use std::sync::Arc;
 use std::fmt::{self, Debug};

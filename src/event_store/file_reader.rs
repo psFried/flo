@@ -1,32 +1,10 @@
 use std::fs::File;
 use std::path::{PathBuf, Path};
-use std::io::{self, Seek, SeekFrom, Bytes, Read};
+use std::io::{self, Seek, SeekFrom};
 
 use event::Event;
 
 pub type ReadResult = Result<Event, io::Error>;
-
-//TODO: fix EventsFromDisk
-pub struct EventsFromDisk;
-
-impl EventsFromDisk {
-    fn new(path: &Path, starting_offset: u64) -> EventsFromDisk {
-        use std::fs::OpenOptions;
-
-        let mut file = OpenOptions::new().read(true).write(false).open(path).unwrap();
-        file.seek(SeekFrom::Start(starting_offset)).unwrap();
-
-        EventsFromDisk
-    }
-}
-
-impl Iterator for EventsFromDisk {
-    type Item = ReadResult;
-
-    fn next(&mut self) -> Option<ReadResult> {
-        None //TODO: fixme
-    }
-}
 
 pub struct FileReader {
     storage_file_path: PathBuf,
@@ -41,7 +19,7 @@ impl FileReader {
         use std::fs::OpenOptions;
         use event_store::serialization::EventStreamDeserializer;
 
-        let mut file = OpenOptions::new().read(true).write(false).open(&self.storage_file_path).unwrap();
+        let mut file: File = OpenOptions::new().read(true).write(false).open(&self.storage_file_path).unwrap();
         file.seek(SeekFrom::Start(offset)).unwrap();
         EventStreamDeserializer::new(file)
     }
@@ -54,13 +32,12 @@ mod test {
     use event::{Event, EventId};
     use std::fs::File;
     use std::path::PathBuf;
-    use std::io::Write;
     use event_store::serialization::{EventSerializer, size_on_disk};
 
     #[test]
     fn file_reader_returns_events_starting_at_a_specified_offset() {
         let temp_dir = TempDir::new("file_reader_test").unwrap();
-        let (file_path, mut events) = write_test_events(&temp_dir);
+        let (file_path, events) = write_test_events(&temp_dir);
 
         let expected_event_id: EventId = 6;
         let offset = events.iter()
@@ -101,7 +78,7 @@ mod test {
 
             {
                 let mut serializer = EventSerializer::new(&event);
-                copy(&mut serializer, &mut event_file);
+                copy(&mut serializer, &mut event_file).unwrap();
             }
             events.push(event);
         }

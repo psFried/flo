@@ -103,8 +103,7 @@ impl EventStore for FileSystemEventStore {
 
     fn store(&mut self, event: Event) -> PersistenceResult {
         let event_size = size_on_disk(&event) as u64;
-        let mut evt = event;
-        let event_id: EventId = evt.get_id();
+        let event_id: EventId = event.get_id();
         self.current_event_id = event_id;
         let dropped_entry = self.index.add(Entry::new(event_id, self.current_file_position));
         debug!("added index entry: event_id: {}, offset: {}, dropped entry: {:?}",
@@ -114,13 +113,13 @@ impl EventStore for FileSystemEventStore {
 
         dropped_entry.map(|entry| self.event_cache.remove(&entry.event_id));
 
-        ::std::io::copy(&mut EventSerializer::new(&evt), &mut self.events_file)
+        ::std::io::copy(&mut EventSerializer::new(&event), &mut self.events_file)
             .and_then(|_| {
                 self.events_file.flush()
             }).map(|_| {
                 self.current_file_position += event_size;
                 trace!("finished writing event to disk: {}", event_id);
-                self.event_cache.insert(event_id, evt);
+                self.event_cache.insert(event_id, event);
                 event_id
             })
     }
@@ -158,8 +157,6 @@ mod test {
     use super::*;
     use tempdir::TempDir;
     use event::{Event, EventId};
-    use std::fs::File;
-    use std::io::Read;
     use event_store::index::Entry;
     use event_store::serialization::size_on_disk;
     use event_store::file_reader::FileReader;

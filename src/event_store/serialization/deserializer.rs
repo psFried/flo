@@ -1,10 +1,6 @@
-use byteorder::{ByteOrder, BigEndian};
-use event::{Event, EventId};
-use std::io::{self, Write, ErrorKind, Read};
-use std::collections::VecDeque;
-use std::mem;
-use std::cmp;
-use nom::{be_u32, be_u64, IResult, le_u32};
+use event::Event;
+use std::io::Read;
+use nom::{be_u32, be_u64, IResult};
 
 
 const DEFAULT_BUFFER_SIZE: usize = 8 * 1024;
@@ -52,7 +48,6 @@ impl <T: Read + Sized> Iterator for EventStreamDeserializer<T> {
     fn next(&mut self) -> Option<Self::Item> {
 
         let mut buffer_shift_amt = 0;
-        let mut buffer_shift_offset = 0;
 
         while self.next_event.is_none() {
             let EventStreamDeserializer {
@@ -121,6 +116,7 @@ impl <T: Read + Sized> Iterator for EventStreamDeserializer<T> {
 fn deserializer_reads_multiple_events() {
     use std::io::Cursor;
 
+    #[allow(unused_must_use)]
     ::env_logger::init();
 
     let bytes = vec![
