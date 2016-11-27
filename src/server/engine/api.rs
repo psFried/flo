@@ -63,8 +63,7 @@ unsafe impl Send for ClientMessage {}
 
 #[derive(Debug, PartialEq)]
 pub struct EventAck {
-    pub connection_id: ConnectionId,
-    pub op_id: u64,
+    pub op_id: u32,
     pub event_id: FloEventId,
 }
 unsafe impl Send for EventAck {}

@@ -8,6 +8,8 @@ use server::engine::api::{self, ClientMessage, ConnectionId};
 use protocol::{ClientProtocol, ProtocolMessage, EventHeader};
 use nom::IResult;
 
+const BUFFER_SIZE: usize = 8 * 1024;
+
 
 #[derive(Debug, PartialEq)]
 pub struct InProgressEvent {
@@ -48,6 +50,18 @@ pub struct ClientMessageStream<R: Read, P: ClientProtocol> {
 }
 
 impl <R: Read, P: ClientProtocol> ClientMessageStream<R, P> {
+    pub fn new(connection_id: ConnectionId, reader: R, protocol: P) -> ClientMessageStream<R, P> {
+        ClientMessageStream {
+            connection_id: connection_id,
+            tcp_reader: reader,
+            protocol: protocol,
+            buffer: vec![0; BUFFER_SIZE],
+            buffer_pos: 0,
+            filled_bytes: 0,
+            state: MessageStreamState::Reading,
+        }
+    }
+
     pub fn with_next_connection_id(reader: R, protocol: P) -> ClientMessageStream<R, P> {
         let conn_id = api::next_connection_id();
         let buffer = vec![0; 8 * 1024];

@@ -6,8 +6,17 @@ pub type EventCounter = u64;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct FloEventId {
-    actor: ActorId,
-    event_counter: EventCounter,
+    pub actor: ActorId,
+    pub event_counter: EventCounter,
+}
+
+impl FloEventId {
+    pub fn new(actor: ActorId, event_counter: EventCounter) -> FloEventId {
+        FloEventId {
+            actor: actor,
+            event_counter: event_counter,
+        }
+    }
 }
 
 impl Ord for FloEventId {
@@ -33,6 +42,7 @@ impl PartialOrd for FloEventId {
 pub trait FloEvent {
     fn id(&self) -> &FloEventId;
     fn namespace(&self) -> &str;
+    fn data_len(&self) -> u32;
     fn data(&self) -> &[u8];
 
     fn to_owned(&self) -> OwnedFloEvent;
@@ -40,9 +50,9 @@ pub trait FloEvent {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct OwnedFloEvent {
-    id: FloEventId,
-    namespace: String,
-    data: Vec<u8>,
+    pub id: FloEventId,
+    pub namespace: String,
+    pub data: Vec<u8>,
 }
 
 impl OwnedFloEvent {
@@ -62,6 +72,10 @@ impl FloEvent for OwnedFloEvent {
 
     fn namespace(&self) -> &str {
         &self.namespace
+    }
+
+    fn data_len(&self) -> u32 {
+        self.data.len() as u32
     }
 
     fn data(&self) -> &[u8] {
