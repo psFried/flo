@@ -155,7 +155,7 @@ impl <R: Read, P: ClientProtocol> ClientMessageStream<R, P> {
                         },
                         position: 0
                     }
-                }).expect("EventHeader must be Some sinc state was not ReadEvent")
+                }).expect("EventHeader must be Some since state was not ReadEvent")
             }
         };
 

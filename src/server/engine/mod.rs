@@ -40,6 +40,7 @@ pub struct Engine<S: StorageEngine, C: Client> {
     actor_id: ActorId,
     event_store: S,
     client_map: HashMap<ConnectionId, C>,
+    highest_event_id: EventCounter,
 }
 
 impl <S: StorageEngine, C: Client> Engine<S, C> {
@@ -49,11 +50,11 @@ impl <S: StorageEngine, C: Client> Engine<S, C> {
             actor_id: actor_id,
             event_store: event_store,
             client_map: HashMap::new(),
+            highest_event_id: 1,
         }
     }
 
     pub fn process(&mut self, client_message: ClientMessage) -> Result<(), String> {
-
         match client_message {
             ClientMessage::ClientConnect(client_connect) => {
                 self.client_connect(client_connect);
@@ -69,18 +70,21 @@ impl <S: StorageEngine, C: Client> Engine<S, C> {
     fn produce_event(&mut self, event: ProduceEvent) -> Result<(), String> {
         let connection_id = event.connection_id;
         let op_id = event.op_id;
-        let event_id = FloEventId::new(self.actor_id, 1);
+        let event_id = FloEventId::new(self.actor_id, self.highest_event_id);
         let owned_event = OwnedFloEvent {
             id: event_id,
             namespace: "whatever".to_owned(),
             data: event.event_data,
         };
 
-        self.event_store.store(owned_event).map(|()| {
+        self.event_store.store(owned_event).map(|event| {
+            self.highest_event_id += 1;
             self.send_to_client(connection_id, ServerMessage::EventPersisted(EventAck{
                 op_id: op_id,
                 event_id: event_id,
-            }))
+            }));
+
+            //TODO: send event to other clients
         });
         Ok(())
     }
@@ -118,18 +122,10 @@ mod test {
     use flo_event::{FloEvent, FloEventId, ActorId, EventCounter, OwnedFloEvent};
     use super::api::{ConnectionId, ClientMessage, ClientConnect, ProduceEvent, ServerMessage, EventAck};
     use std::str::FromStr;
+    use std::sync::Arc;
 
     const SUBJECT_ACTOR_ID: ActorId = 123;
-    type TestEngine = Engine<Vec<OwnedFloEvent>, MockClient>;
-
-    fn client_addr()-> ::std::net::SocketAddr {
-        ::std::net::SocketAddr::from_str("127.0.0.1:12345").unwrap()
-    }
-
-    fn assert_events_stored(actual: Vec<OwnedFloEvent>, expected_data: &[&[u8]]) {
-        let act: Vec<&[u8]> = actual.iter().map(|evt| evt.data()).collect();
-        assert_eq!(&act[..], expected_data);
-    }
+    type TestEngine = Engine<Vec<Arc<OwnedFloEvent>>, MockClient>;
 
     #[test]
     fn engine_saves_event_and_sends_ack() {
@@ -151,6 +147,59 @@ mod test {
         ]);
     }
 
+    #[test]
+    fn engine_increments_event_counter_for_each_event_saved() {
+        let connection: ConnectionId = 123;
+        let mut subject = subject_with_connected_clients(&[connection]);
+
+        subject.process(ClientMessage::Produce(ProduceEvent{
+            connection_id: 123,
+            op_id: 1,
+            event_data: b"one".to_vec(),
+        })).unwrap();
+        subject.process(ClientMessage::Produce(ProduceEvent{
+            connection_id: 123,
+            op_id: 1,
+            event_data: b"two".to_vec(),
+        })).unwrap();
+        subject.process(ClientMessage::Produce(ProduceEvent{
+            connection_id: 123,
+            op_id: 1,
+            event_data: b"three".to_vec(),
+        })).unwrap();
+
+        assert_events_stored(subject.event_store, &[b"one", b"two", b"three"]);
+
+        let client = subject.client_map.get(&connection).unwrap();
+        client.assert_messages_sent(&[
+            ServerMessage::EventPersisted(EventAck{op_id: 1, event_id: FloEventId::new(SUBJECT_ACTOR_ID, 1)}),
+            ServerMessage::EventPersisted(EventAck{op_id: 1, event_id: FloEventId::new(SUBJECT_ACTOR_ID, 2)}),
+            ServerMessage::EventPersisted(EventAck{op_id: 1, event_id: FloEventId::new(SUBJECT_ACTOR_ID, 3)})
+        ]);
+    }
+
+    #[test]
+    fn event_is_sent_to_other_connected_clients() {
+        let producer: ConnectionId = 123;
+        let consumer1: ConnectionId = 234;
+        let consumer2: ConnectionId = 234;
+
+        let mut subject = subject_with_connected_clients(&[producer, consumer1, consumer2]);
+
+        subject.process(ClientMessage::Produce(ProduceEvent{
+            connection_id: 123,
+            op_id: 1,
+            event_data: b"event data".to_vec(),
+        })).unwrap();
+
+        let expected = &[&b"event data"[..]];
+
+        let client1 = subject.client_map.get(&consumer1).unwrap();
+        client1.assert_events_received(&expected[..]);
+        let client2 = subject.client_map.get(&consumer1).unwrap();
+        client2.assert_events_received(&expected[..]);
+    }
+
     struct MockClient {
         connection_id: ConnectionId,
         addr: ::std::net::SocketAddr,
@@ -161,6 +210,19 @@ mod test {
 
         fn assert_messages_sent(&self, messages: &[ServerMessage]) {
             assert_eq!(messages, &self.sent_messages[..]);
+        }
+
+        fn assert_events_received(&self, events_data: &[&[u8]]) {
+            let actual = self.sent_messages.iter().flat_map(|msg| {
+                match msg {
+                    &ServerMessage::Event(ref event) => {
+                        Some(event.data())
+                    }
+                    _ => None
+                }
+            }).collect::<Vec<&[u8]>>();
+
+            assert_eq!(&actual[..], events_data);
         }
     }
 
@@ -187,7 +249,7 @@ mod test {
         }
     }
 
-    fn subject_with_connected_clients(clients: &[ConnectionId]) -> Engine<Vec<OwnedFloEvent>, MockClient> {
+    fn subject_with_connected_clients(clients: &[ConnectionId]) -> TestEngine {
         let mut subject = subject();
 
         for &client in clients {
@@ -200,9 +262,17 @@ mod test {
         subject
     }
 
-    fn subject() -> Engine<Vec<OwnedFloEvent>, MockClient> {
-        Engine::<Vec<OwnedFloEvent>, MockClient>::new(Vec::new(), SUBJECT_ACTOR_ID)
+    fn subject() -> TestEngine {
+        TestEngine::new(Vec::new(), SUBJECT_ACTOR_ID)
     }
 
+    fn client_addr()-> ::std::net::SocketAddr {
+        ::std::net::SocketAddr::from_str("127.0.0.1:12345").unwrap()
+    }
+
+    fn assert_events_stored(actual: Vec<Arc<OwnedFloEvent>>, expected_data: &[&[u8]]) {
+        let act: Vec<&[u8]> = actual.iter().map(|evt| evt.data()).collect();
+        assert_eq!(&act[..], expected_data);
+    }
 }
 

@@ -18,25 +18,27 @@ pub type PersistenceResult = Result<EventId, io::Error>;
 
 //TODO: create concreate implementation of new StorageEngine
 use flo_event::{FloEvent, OwnedFloEvent, FloEventId};
+use std::sync::Arc;
 
 pub trait StorageEngine: Sized {
     fn initialize(storage_dir: &Path, namespace: &str, max_num_events: usize) -> Result<Self, io::Error>;
 
-    fn store<E: FloEvent>(&mut self, event: E) -> Result<(), io::Error>;
+    fn store<E: FloEvent>(&mut self, event: E) -> Result<Arc<OwnedFloEvent>, io::Error>;
 
     //TODO: add method to get an iterator of events greater than a given version map
 }
 
 
 #[cfg(test)]
-impl StorageEngine for Vec<OwnedFloEvent> {
+impl StorageEngine for Vec<Arc<OwnedFloEvent>> {
     fn initialize(storage_dir: &Path, namespace: &str, max_num_events: usize) -> Result<Self, io::Error> {
         Ok(Vec::new())
     }
 
-    fn store<E: FloEvent>(&mut self, event: E) -> Result<(), io::Error> {
-        self.push(event.to_owned());
-        Ok(())
+    fn store<E: FloEvent>(&mut self, event: E) -> Result<Arc<OwnedFloEvent>, io::Error> {
+        let evt = Arc::new(event.to_owned());
+        self.push(evt.clone());
+        Ok(evt)
     }
 }
 
