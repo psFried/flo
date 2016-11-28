@@ -1,17 +1,14 @@
 use server::engine::api::{ConnectionId, ServerMessage};
-use protocol::{ServerProtocol, ServerProtocolImpl};
+use protocol::ServerProtocol;
 
 use futures::stream::Stream;
-use futures::{Future, IntoFuture, Async};
+use futures::Async;
 use futures::sync::mpsc::UnboundedReceiver;
-use tokio_core::net::TcpStream;
-use tokio_core::io as nio;
-use tokio_core::io::{copy, Copy};
 
 use std::io::{self, Read};
 
 pub struct ServerMessageStream<P: ServerProtocol> {
-    connection_id: ConnectionId,
+    _connection_id: ConnectionId,
     server_receiver: UnboundedReceiver<ServerMessage>,
     current_message: Option<P>,
 }
@@ -19,7 +16,7 @@ pub struct ServerMessageStream<P: ServerProtocol> {
 impl <P: ServerProtocol> ServerMessageStream<P> {
     pub fn new(connection_id: ConnectionId, server_rx: UnboundedReceiver<ServerMessage>) -> ServerMessageStream<P> {
         ServerMessageStream {
-            connection_id: connection_id,
+            _connection_id: connection_id,
             server_receiver: server_rx,
             current_message: None,
         }
@@ -27,14 +24,12 @@ impl <P: ServerProtocol> ServerMessageStream<P> {
 }
 
 fn not_ready() -> io::Error {
-    static not_ready_msg: &'static str = "Waiting for another message from the server";
-    io::Error::new(io::ErrorKind::WouldBlock, not_ready_msg)
+    static NOT_READY_MSG: &'static str = "Waiting for another message from the server";
+    io::Error::new(io::ErrorKind::WouldBlock, NOT_READY_MSG)
 }
 
 impl <P: ServerProtocol> Read for ServerMessageStream<P> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let mut buffer_position = 0usize;
-        let mut buffer_remaining = buf.len();
         let mut message = self.current_message.take();
 
         if message.is_none() {
@@ -50,6 +45,7 @@ impl <P: ServerProtocol> Read for ServerMessageStream<P> {
                     return Ok(0);
                 }
                 Err(err) => {
+                    error!("Error reading next message from server: {:?}", err);
                     return Err(io::Error::new(io::ErrorKind::Other, "Failed to read next message from server"));
                 }
             }

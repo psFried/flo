@@ -65,7 +65,7 @@ impl <T: Read + Sized> Iterator for EventStreamDeserializer<T> {
                         trace!("Read event: {:?}", event);
                         *next_event = Some(event);
                         buffer_shift_amt = remaining.len();
-                        *buffer_byte_count -= (buffer_length - remaining.len());
+                        *buffer_byte_count -= buffer_length - remaining.len();
                         break;
                     }
                     IResult::Error(err) => {
@@ -113,10 +113,10 @@ impl <T: Read + Sized> Iterator for EventStreamDeserializer<T> {
 }
 
 #[test]
+#[allow(unused_must_use)]
 fn deserializer_reads_multiple_events() {
     use std::io::Cursor;
 
-    #[allow(unused_must_use)]
     ::env_logger::init();
 
     let bytes = vec![

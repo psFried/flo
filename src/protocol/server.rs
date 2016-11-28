@@ -21,21 +21,6 @@ pub struct ServerProtocolImpl {
     state: ReadState,
 }
 
-impl ServerProtocolImpl {
-    fn size_of(message: &ServerMessage) -> usize {
-        match message {
-            &ServerMessage::EventPersisted(_) => 22,
-            &ServerMessage::Event(ref event) => {
-                // 8 for header
-                // 10 for event id (actor, counter)
-                // 1 for newline after the namespace
-                // 4 for the data length
-                23 + event.namespace.len() + event.data.len()
-            }
-        }
-    }
-}
-
 impl ServerProtocol for ServerProtocolImpl {
     fn new(server_message: ServerMessage) -> ServerProtocolImpl {
         ServerProtocolImpl {
@@ -108,7 +93,7 @@ impl Read for ServerProtocolImpl {
 #[cfg(test)]
 mod test {
     use super::*;
-    use std::io::{self, Read};
+    use std::io::Read;
     use server::engine::api::{ServerMessage, EventAck};
     use flo_event::{FloEventId, OwnedFloEvent};
     use std::sync::Arc;

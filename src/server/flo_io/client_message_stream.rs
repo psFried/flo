@@ -1,7 +1,5 @@
 use futures::{Poll, Async};
 use futures::stream::Stream;
-use tokio_core::net::TcpStream;
-use tokio_core::io as nio;
 use std::io::Read;
 
 use server::engine::api::{self, ClientMessage, ConnectionId};
@@ -56,20 +54,6 @@ impl <R: Read, P: ClientProtocol> ClientMessageStream<R, P> {
             tcp_reader: reader,
             protocol: protocol,
             buffer: vec![0; BUFFER_SIZE],
-            buffer_pos: 0,
-            filled_bytes: 0,
-            state: MessageStreamState::Reading,
-        }
-    }
-
-    pub fn with_next_connection_id(reader: R, protocol: P) -> ClientMessageStream<R, P> {
-        let conn_id = api::next_connection_id();
-        let buffer = vec![0; 8 * 1024];
-        ClientMessageStream {
-            connection_id: conn_id,
-            tcp_reader: reader,
-            protocol: protocol,
-            buffer: buffer,
             buffer_pos: 0,
             filled_bytes: 0,
             state: MessageStreamState::Reading,
@@ -265,7 +249,7 @@ mod test {
         let input_bytes = b"00000000the event data is a little bit longer and will be consumed in three reads";
         let reader = Reader(input_bytes.to_vec(), 0);
 
-        let mut subject = ClientMessageStream::with_next_connection_id(reader, Proto);
+        let mut subject = ClientMessageStream::new(123, reader, Proto);
 
         let result = subject.poll().expect("Expected Ok, got Err");
         assert_eq!(Async::NotReady, result);
@@ -295,7 +279,7 @@ mod test {
             }
         }
 
-        let mut subject = ClientMessageStream::with_next_connection_id(reader, Proto);
+        let mut subject = ClientMessageStream::new(123, reader, Proto);
 
         let result = subject.poll().expect("Expected Ok, got Err");
 
@@ -327,7 +311,7 @@ mod test {
                 })))
             }
         }
-        let mut subject = ClientMessageStream::with_next_connection_id(reader, Proto);
+        let mut subject = ClientMessageStream::new(123, reader, Proto);
 
         let result = subject.poll().expect("Expected Ok, got Err");
 
@@ -352,7 +336,7 @@ mod test {
 
     #[test]
     fn poll_returns_not_ready_when_reader_would_block() {
-        let mut subject = ClientMessageStream::with_next_connection_id(WouldBlockRead, FailProtocol);
+        let mut subject = ClientMessageStream::new(123, WouldBlockRead, FailProtocol);
 
         let result = subject.poll();
         assert_eq!(Ok(Async::NotReady), result);

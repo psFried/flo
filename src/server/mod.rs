@@ -1,24 +1,19 @@
-mod buffer_pool;
 pub mod engine;
 mod flo_io;
 
 use futures::stream::Stream;
-use futures::{Future, IntoFuture};
+use futures::{Future};
 use futures::sync::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use tokio_core::reactor::Core;
-use tokio_core::net::{TcpStream, TcpStreamNew, TcpListener, Incoming};
+use tokio_core::net::{TcpStream, TcpListener};
 use tokio_core::io as nio;
 use tokio_core::io::Io;
-use self::buffer_pool::BufferPool;
-use protocol;
-use event::Event;
 
-use protocol::{ClientProtocolImpl, ServerProtocolImpl, ServerProtocol};
+use protocol::{ClientProtocolImpl, ServerProtocolImpl};
 use server::engine::api::{self, ClientMessage, ServerMessage, ClientConnect};
 use server::flo_io::{ClientMessageStream, ServerMessageStream};
 use std::path::PathBuf;
 use std::net::{SocketAddr, Ipv4Addr, SocketAddrV4};
-use std::io::{Read, Write};
 
 
 pub struct ServerOptions {

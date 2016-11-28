@@ -5,7 +5,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::path::PathBuf;
 
-pub fn run(storage_dir: PathBuf) -> mpsc::Sender<ClientMessage> {
+pub fn run(_storage_dir: PathBuf) -> mpsc::Sender<ClientMessage> {
     let (sender, receiver) = mpsc::channel::<ClientMessage>();
 
     //TODO: write this whole fucking thing

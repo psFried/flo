@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::path::{PathBuf, Path};
+use std::path::{PathBuf};
 use std::io::{self, Seek, SeekFrom};
 
 use event::Event;
