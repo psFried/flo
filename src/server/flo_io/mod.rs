@@ -10,7 +10,7 @@ use tokio_core::io::{copy, ReadHalf, WriteHalf, Io};
 use std::sync::mpsc as std_mpsc;
 
 pub use self::client_message_stream::ClientMessageStream;
-
+pub use self::server_message_stream::ServerMessageStream;
 
 
 pub fn accept_connection(tcp_stream: TcpStream, server_receiver: UnboundedReceiver<ServerMessage>) {

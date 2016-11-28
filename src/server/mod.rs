@@ -3,16 +3,22 @@ pub mod engine;
 mod flo_io;
 
 use futures::stream::Stream;
+use futures::{Future, IntoFuture};
+use futures::sync::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use tokio_core::reactor::Core;
 use tokio_core::net::{TcpStream, TcpStreamNew, TcpListener, Incoming};
 use tokio_core::io as nio;
+use tokio_core::io::Io;
 use self::buffer_pool::BufferPool;
 use protocol;
 use event::Event;
 
+use protocol::{ClientProtocolImpl, ServerProtocolImpl, ServerProtocol};
+use server::engine::api::{self, ClientMessage, ServerMessage, ClientConnect};
+use server::flo_io::{ClientMessageStream, ServerMessageStream};
 use std::path::PathBuf;
 use std::net::{SocketAddr, Ipv4Addr, SocketAddrV4};
-use std::io::Write;
+use std::io::{Read, Write};
 
 
 pub struct ServerOptions {
@@ -29,39 +35,47 @@ pub fn run(options: &ServerOptions) {
 
     info!("Started listening on port: {}", options.port);
 
-    let clients: Incoming = listener.incoming();
+    let clients = listener.incoming().map_err(|io_err| {
+        format!("Error creating new connection: {:?}", io_err)
+    });
     let future = clients.and_then(move |(tcp_stream, client_addr): (TcpStream, SocketAddr)| {
         debug!("Got new connection from: {:?}", client_addr);
 
-        //TODO: accept client connections
-        /*
-        try to parse out a RequestHeader from the TcpStream
-        if it's error, then write some generic error message and just return an error
-        if it a success:
-            create a new futures::sync::mpsc::{UnboundedSender, UnboundedReceiver} pair
-            create a NewClient message with the UnboundedSender. Used for the backend engine to send messages to the io layer
-            send the NewClient message to the backend engine via the engine_sender channel
+        let (server_tx, server_rx): (UnboundedSender<ServerMessage>, UnboundedReceiver<ServerMessage>) = unbounded();
 
-            split the TcpStream into ReadHalf and WriteHalf
+        let connection_id = api::next_connection_id();
+        let (tcp_reader, tcp_writer) = tcp_stream.split();
 
-            let read_future = convert the ReadHalf into a Stream<ClientMessage> anf for_each:
-                send the ClientMessage to the backend engine via the engine_sender channel
+        let engine_sender = engine_sender.clone();
+        let client_connect = ClientConnect {
+            connection_id: connection_id,
+            client_addr: client_addr,
+            message_sender: server_tx,
+        };
 
-            let write_future = for_each on the UnboundedReceiver:
-                serialize each message and write it to the WriteHalf
+        //TODO: don't unwrap this result, propegate errors instead
+        engine_sender.send(ClientMessage::ClientConnect(client_connect)).unwrap();
 
-            return joined read_future and write_future
-        */
+        let client_stream = ClientMessageStream::new(connection_id, tcp_reader, ClientProtocolImpl);
+        let client_to_server = client_stream.map_err(|err| {
+            format!("Error sending message to backend server: {:?}", err)
+        }).and_then(move |client_message| {
+            engine_sender.send(client_message).map_err(|err| {
+                format!("Error sending message to backend server: {:?}", err)
+            })
+        });
 
+        let server_to_client = nio::copy(ServerMessageStream::<ServerProtocolImpl>::new(connection_id, server_rx), tcp_writer).map_err(|err| {
+            format!("Error writing to client: {:?}", err)
+        });
 
+        client_to_server.for_each(|inner_thing| {
+            info!("for each inner thingy: {:?}", inner_thing);
+            Ok(())
+        }).join(server_to_client)
 
-        nio::write_all(tcp_stream, b"Hello World!\n")
-    }).for_each(|(socket, buffer): (TcpStream, &[u8; 13])| {
-        if let Ok(str_val) = ::std::str::from_utf8(buffer) {
-            debug!("Successfully wrote to socket: {:?}: {:?}", socket, str_val);
-        } else {
-            debug!("Successfully wrote to socket: {:?}: {:?}", socket, buffer);
-        }
+    }).for_each(|thingy| {
+        info!("for_each thingy: {:?}", thingy);
         Ok(())
     });
 
