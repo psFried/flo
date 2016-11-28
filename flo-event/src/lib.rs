@@ -4,7 +4,7 @@ use std::cmp::{Ord, PartialOrd, Ordering};
 pub type ActorId = u16;
 pub type EventCounter = u64;
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct FloEventId {
     pub actor: ActorId,
     pub event_counter: EventCounter,

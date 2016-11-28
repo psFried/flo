@@ -14,6 +14,24 @@ pub fn next_connection_id() -> ConnectionId {
     CURRENT_CONNECTION_ID.fetch_add(1, atomic::Ordering::SeqCst)
 }
 
+#[derive(Debug, PartialEq)]
+pub enum ClientMessage {
+    ClientConnect(ClientConnect),
+    ClientAuth(ClientAuth),
+    Produce(ProduceEvent),
+    UpdateMarker(FloEventId),
+    StartConsuming,
+    Disconnect,
+}
+unsafe impl Send for ClientMessage {}
+
+#[derive(Debug, PartialEq)]
+pub enum ServerMessage {
+    EventPersisted(EventAck),
+    Event(Arc<OwnedFloEvent>),
+}
+unsafe impl Send for ServerMessage {}
+
 pub struct ClientConnect {
     pub connection_id: ConnectionId,
     pub client_addr: ::std::net::SocketAddr,
@@ -51,27 +69,9 @@ pub struct ProduceEvent {
 unsafe impl Send for ProduceEvent {}
 
 #[derive(Debug, PartialEq)]
-pub enum ClientMessage {
-    ClientConnect(ClientConnect),
-    ClientAuth(ClientAuth),
-    Produce(ProduceEvent),
-    UpdateMarker(FloEventId),
-    StartConsuming,
-    Disconnect,
-}
-unsafe impl Send for ClientMessage {}
-
-#[derive(Debug, PartialEq)]
 pub struct EventAck {
     pub op_id: u32,
     pub event_id: FloEventId,
 }
 unsafe impl Send for EventAck {}
-
-#[derive(Debug, PartialEq)]
-pub enum ServerMessage {
-    EventPersisted(EventAck),
-    Event(Arc<OwnedFloEvent>),
-}
-unsafe impl Send for ServerMessage {}
 
