@@ -2,7 +2,7 @@ pub mod api;
 
 mod client;
 
-pub use self::client::{Client, ClientSendError};
+pub use self::client::{Client, ClientManager, ClientManagerImpl, ClientSendError};
 
 use self::api::{ConnectionId, ServerMessage, ClientMessage, ClientConnect, ProduceEvent, EventAck};
 use event_store::StorageEngine;
@@ -10,7 +10,7 @@ use flo_event::{ActorId, OwnedFloEvent, EventCounter, FloEventId};
 
 use futures::sync::mpsc::UnboundedSender;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::mpsc;
 use std::thread;
 use std::path::PathBuf;
@@ -36,20 +36,20 @@ pub fn run(_storage_dir: PathBuf) -> mpsc::Sender<ClientMessage> {
     sender
 }
 
-pub struct Engine<S: StorageEngine, C: Client> {
+pub struct Engine<S: StorageEngine, C: ClientManager> {
     actor_id: ActorId,
     event_store: S,
-    client_map: HashMap<ConnectionId, C>,
+    client_manager: C,
     highest_event_id: EventCounter,
 }
 
-impl <S: StorageEngine, C: Client> Engine<S, C> {
+impl <S: StorageEngine, C: ClientManager> Engine<S, C> {
 
-    pub fn new(event_store: S, actor_id: ActorId) -> Engine<S, C> {
+    pub fn new(event_store: S, client_manager: C, actor_id: ActorId) -> Engine<S, C> {
         Engine {
             actor_id: actor_id,
             event_store: event_store,
-            client_map: HashMap::new(),
+            client_manager: client_manager,
             highest_event_id: 1,
         }
     }
@@ -57,7 +57,7 @@ impl <S: StorageEngine, C: Client> Engine<S, C> {
     pub fn process(&mut self, client_message: ClientMessage) -> Result<(), String> {
         match client_message {
             ClientMessage::ClientConnect(client_connect) => {
-                self.client_connect(client_connect);
+                self.client_manager.add_connection(client_connect);
                 Ok(())
             }
             ClientMessage::Produce(produce_event) => {
@@ -68,7 +68,7 @@ impl <S: StorageEngine, C: Client> Engine<S, C> {
     }
 
     fn produce_event(&mut self, event: ProduceEvent) -> Result<(), String> {
-        let connection_id = event.connection_id;
+        let producer_id = event.connection_id;
         let op_id = event.op_id;
         let event_id = FloEventId::new(self.actor_id, self.highest_event_id);
         let owned_event = OwnedFloEvent {
@@ -79,39 +79,15 @@ impl <S: StorageEngine, C: Client> Engine<S, C> {
 
         self.event_store.store(owned_event).map(|event| {
             self.highest_event_id += 1;
-            self.send_to_client(connection_id, ServerMessage::EventPersisted(EventAck{
+
+            self.client_manager.send_message(producer_id, ServerMessage::EventPersisted(EventAck{
                 op_id: op_id,
                 event_id: event_id,
             }));
 
-            //TODO: send event to other clients
+            self.client_manager.send_event(producer_id, event);
         });
         Ok(())
-    }
-
-    fn client_connect(&mut self, client_connect: ClientConnect) {
-        let client = C::from_client_connect(client_connect);
-        let id = client.connection_id();
-        self.client_map.insert(id, client);
-    }
-
-    fn send_to_client(&mut self, connection_id: ConnectionId, message: ServerMessage) -> Result<(), String> {
-        let mut remove_client = false;
-        let result = self.client_map.get_mut(&connection_id)
-                .ok_or_else(|| {format!("Connection: {} did not exist in the map", connection_id)})
-                .and_then(|client| {
-                    if let Err(_) = client.send(message) {
-                        error!("Error sending message to client: {}, removing it from the map", connection_id);
-                        remove_client = true;
-                    }
-                    // The client was in the map, so even a send error is OK, since we don't necessarily want to shut down the server
-                    Ok(())
-                });
-
-        if remove_client {
-            self.client_map.remove(&connection_id);
-        }
-        result
     }
 }
 
@@ -123,14 +99,15 @@ mod test {
     use super::api::{ConnectionId, ClientMessage, ClientConnect, ProduceEvent, ServerMessage, EventAck};
     use std::str::FromStr;
     use std::sync::Arc;
+    use std::collections::{HashMap};
 
     const SUBJECT_ACTOR_ID: ActorId = 123;
-    type TestEngine = Engine<Vec<Arc<OwnedFloEvent>>, MockClient>;
+    type TestEngine = Engine<Vec<Arc<OwnedFloEvent>>, MockClientManager>;
 
     #[test]
     fn engine_saves_event_and_sends_ack() {
         let connection: ConnectionId = 123;
-        let mut subject = subject_with_connected_clients(&[connection]);
+        let mut subject = subject();
 
         let mut input = ProduceEvent{
             connection_id: 123,
@@ -141,8 +118,7 @@ mod test {
 
         assert_events_stored(subject.event_store, &[b"the event data"]);
 
-        let client = subject.client_map.get(&connection).unwrap();
-        client.assert_messages_sent(&[
+        subject.client_manager.assert_messages_sent(connection, &[
             ServerMessage::EventPersisted(EventAck{op_id: 1, event_id: FloEventId::new(SUBJECT_ACTOR_ID, 1)})
         ]);
     }
@@ -150,7 +126,7 @@ mod test {
     #[test]
     fn engine_increments_event_counter_for_each_event_saved() {
         let connection: ConnectionId = 123;
-        let mut subject = subject_with_connected_clients(&[connection]);
+        let mut subject = subject();
 
         subject.process(ClientMessage::Produce(ProduceEvent{
             connection_id: 123,
@@ -170,8 +146,8 @@ mod test {
 
         assert_events_stored(subject.event_store, &[b"one", b"two", b"three"]);
 
-        let client = subject.client_map.get(&connection).unwrap();
-        client.assert_messages_sent(&[
+
+        subject.client_manager.assert_messages_sent(connection, &[
             ServerMessage::EventPersisted(EventAck{op_id: 1, event_id: FloEventId::new(SUBJECT_ACTOR_ID, 1)}),
             ServerMessage::EventPersisted(EventAck{op_id: 1, event_id: FloEventId::new(SUBJECT_ACTOR_ID, 2)}),
             ServerMessage::EventPersisted(EventAck{op_id: 1, event_id: FloEventId::new(SUBJECT_ACTOR_ID, 3)})
@@ -184,7 +160,7 @@ mod test {
         let consumer1: ConnectionId = 234;
         let consumer2: ConnectionId = 234;
 
-        let mut subject = subject_with_connected_clients(&[producer, consumer1, consumer2]);
+        let mut subject = subject();
 
         subject.process(ClientMessage::Produce(ProduceEvent{
             connection_id: 123,
@@ -194,76 +170,55 @@ mod test {
 
         let expected = &[&b"event data"[..]];
 
-        let client1 = subject.client_map.get(&consumer1).unwrap();
-        client1.assert_events_received(&expected[..]);
-        let client2 = subject.client_map.get(&consumer1).unwrap();
-        client2.assert_events_received(&expected[..]);
+        subject.client_manager.assert_events_received(123, expected);
     }
 
-    struct MockClient {
-        connection_id: ConnectionId,
-        addr: ::std::net::SocketAddr,
-        sent_messages: Vec<ServerMessage>,
+    struct MockClientManager {
+        sent_messages: HashMap<ConnectionId, Vec<ServerMessage>>,
+        events_produced: Vec<(ConnectionId, Arc<OwnedFloEvent>)>,
     }
 
-    impl MockClient {
-
-        fn assert_messages_sent(&self, messages: &[ServerMessage]) {
-            assert_eq!(messages, &self.sent_messages[..]);
-        }
-
-        fn assert_events_received(&self, events_data: &[&[u8]]) {
-            let actual = self.sent_messages.iter().flat_map(|msg| {
-                match msg {
-                    &ServerMessage::Event(ref event) => {
-                        Some(event.data())
-                    }
-                    _ => None
-                }
-            }).collect::<Vec<&[u8]>>();
-
-            assert_eq!(&actual[..], events_data);
-        }
-    }
-
-    impl Client for MockClient {
-        fn from_client_connect(message: ClientConnect) -> Self {
-            MockClient {
-                connection_id: message.connection_id,
-                addr: message.client_addr,
-                sent_messages: Vec::new(),
+    impl MockClientManager {
+        fn new() -> MockClientManager {
+            MockClientManager {
+                sent_messages: HashMap::new(),
+                events_produced: Vec::new(),
             }
         }
+        fn assert_events_received(&self, connection_id: ConnectionId, expected_data: &[&[u8]]) {
+            let actual = self.events_produced.iter().filter(|e| {
+                e.0 == connection_id
+            }).map(|e| {
+                e.1.data()
+            }).collect::<Vec<&[u8]>>();
 
-        fn connection_id(&self) -> ConnectionId {
-            self.connection_id
+            assert_eq!(expected_data, &actual[..]);
         }
 
-        fn addr(&self) -> &::std::net::SocketAddr {
-            &self.addr
+        fn assert_messages_sent(&self, connection_id: ConnectionId, messages: &[ServerMessage]) {
+            let actual = self.sent_messages.get(&connection_id)
+                    .expect(&format!("No messages sent to client: {}, expected: {}", connection_id, messages.len()));
+            assert_eq!(messages, &actual[..]);
+        }
+    }
+
+    impl ClientManager for MockClientManager {
+        fn add_connection(&mut self, client_connect: ClientConnect) {
+            //no-op
         }
 
-        fn send(&mut self, message: ServerMessage) -> Result<(), ClientSendError> {
-            self.sent_messages.push(message);
+        fn send_event(&mut self, event_producer: ConnectionId, event: Arc<OwnedFloEvent>) {
+            self.events_produced.push((event_producer, event));
+        }
+
+        fn send_message(&mut self, recipient: ConnectionId, message: ServerMessage) -> Result<(), ClientSendError> {
+            self.sent_messages.entry(recipient).or_insert_with(|| {Vec::new()}).push(message);
             Ok(())
         }
     }
 
-    fn subject_with_connected_clients(clients: &[ConnectionId]) -> TestEngine {
-        let mut subject = subject();
-
-        for &client in clients {
-            subject.client_map.insert(client, MockClient{
-                connection_id: client,
-                addr: client_addr(),
-                sent_messages: Vec::new(),
-            });
-        }
-        subject
-    }
-
     fn subject() -> TestEngine {
-        TestEngine::new(Vec::new(), SUBJECT_ACTOR_ID)
+        TestEngine::new(Vec::new(), MockClientManager::new(), SUBJECT_ACTOR_ID)
     }
 
     fn client_addr()-> ::std::net::SocketAddr {
