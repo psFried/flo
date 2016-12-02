@@ -28,8 +28,6 @@ pub trait StorageEngine: Sized {
     //TODO: add method to get an iterator of events greater than a given version map
 }
 
-
-#[cfg(test)]
 impl StorageEngine for Vec<Arc<OwnedFloEvent>> {
     fn initialize(storage_dir: &Path, namespace: &str, max_num_events: usize) -> Result<Self, io::Error> {
         Ok(Vec::new())

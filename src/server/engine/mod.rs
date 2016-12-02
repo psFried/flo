@@ -11,7 +11,7 @@ use flo_event::{ActorId, OwnedFloEvent, EventCounter, FloEventId};
 use futures::sync::mpsc::UnboundedSender;
 
 use std::collections::{HashMap, HashSet};
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 use std::thread;
 use std::path::PathBuf;
 use std::net::SocketAddr;
@@ -21,10 +21,13 @@ pub fn run(_storage_dir: PathBuf) -> mpsc::Sender<ClientMessage> {
 
     //TODO: write this whole fucking thing
     thread::spawn(move || {
+        let mut engine = Engine::new(Vec::<Arc<OwnedFloEvent>>::new(), ClientManagerImpl::new(), 1);
 
         loop {
             match receiver.recv() {
-                Ok(msg) => info!("Received message: {:?}", msg),
+                Ok(msg) => {
+                    engine.process(msg).unwrap();
+                }
                 Err(recv_err) => {
                     error!("Receive Error: {:?}", recv_err);
                     break;
@@ -79,6 +82,7 @@ impl <S: StorageEngine, C: ClientManager> Engine<S, C> {
 
         self.event_store.store(owned_event).map(|event| {
             self.highest_event_id += 1;
+            debug!("Stored event, new highest_event_id: {}", self.highest_event_id);
 
             self.client_manager.send_message(producer_id, ServerMessage::EventPersisted(EventAck{
                 op_id: op_id,

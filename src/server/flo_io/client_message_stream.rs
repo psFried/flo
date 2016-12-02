@@ -181,6 +181,8 @@ impl <R: Read, P: ClientProtocol> ClientMessageStream<R, P> {
             let dst_end = filled_buffer.len() + evt_current_pos;
             let mut dst = &mut in_progress_event.event.event_data[evt_current_pos..dst_end];
             dst.copy_from_slice(filled_buffer);
+            *buffer_pos += filled_buffer.len();
+            *filled_bytes -= filled_buffer.len();
         }
 
         if in_progress_event.remaining() == 0 {
@@ -222,10 +224,15 @@ impl <R: Read, P: ClientProtocol> Stream for ClientMessageStream<R, P> {
             self.try_parse()
         };
 
-        if self.read_complete && Ok(Async::NotReady) == result {
-            Ok(Async::Ready(None))
-        } else {
-            result
+        match result {
+            Ok(Async::NotReady) if self.read_complete => {
+                Ok(Async::Ready(None))
+            }
+            Err(err) => {
+                warn!("Error reading data from client. Closing connection: {:?}", err);
+                Ok(Async::Ready(None))
+            }
+            other @ _ => other
         }
     }
 }
@@ -238,9 +245,81 @@ mod test {
     use futures::stream::Stream;
     use std::io::{self, Read, Cursor};
 
-    use server::engine::api::{ClientMessage, ClientAuth};
-    use protocol::{ClientProtocol, ProtocolMessage, EventHeader};
-    use nom::{IResult, Needed};
+    use server::engine::api::{ClientMessage, ClientAuth, ProduceEvent};
+    use protocol::{ClientProtocol, ClientProtocolImpl, ProtocolMessage, EventHeader};
+    use nom::{IResult, Needed, ErrorKind, Err};
+
+    #[test]
+    fn multiple_events_are_read_in_sequence() {
+        let reader = {
+            let mut b = Vec::new();
+            b.extend_from_slice(b"FLO_PRO\n");
+            b.extend_from_slice(&[0, 0, 0, 4, 0, 0, 0, 7]);
+            b.extend_from_slice(b"evt_one");
+            b.extend_from_slice(b"FLO_AUT\n");
+            b.extend_from_slice(b"the namespace\n");
+            b.extend_from_slice(b"the username\n");
+            b.extend_from_slice(b"the password\n");
+            b.extend_from_slice(b"FLO_PRO\n");
+            b.extend_from_slice(&[0, 0, 0, 5, 0, 0, 0, 7]);
+            b.extend_from_slice(b"evt_two");
+            Cursor::new(b)
+        };
+
+        let mut subject = ClientMessageStream::new(123, reader, ClientProtocolImpl);
+
+        let result = subject.poll();
+        let expected = Ok(Async::Ready(Some(ClientMessage::Produce(ProduceEvent{
+            op_id: 4,
+            connection_id: 123,
+            event_data: "evt_one".to_owned().into_bytes()
+        }))));
+        assert_eq!(expected, result);
+        
+        let result = subject.poll();
+        let expected = Ok(Async::Ready(Some(ClientMessage::ClientAuth(ClientAuth{
+            namespace: "the namespace".to_owned(),
+            username: "the username".to_owned(),
+            password: "the password".to_owned()
+        }))));
+        assert_eq!(expected, result);
+
+        let result = subject.poll();
+        let expected = Ok(Async::Ready(Some(ClientMessage::Produce(ProduceEvent{
+            op_id: 5,
+            connection_id: 123,
+            event_data: "evt_two".to_owned().into_bytes()
+        }))));
+        assert_eq!(expected, result);
+        
+        let result = subject.poll();
+        let expected = Ok(Async::Ready(None));
+        assert_eq!(expected, result);
+    }
+
+    #[test]
+    fn poll_returns_ok_with_empty_option_when_protocol_returns_error() {
+        struct Proto;
+        impl ClientProtocol for Proto {
+            fn parse_any<'a>(&'a self, buffer: &'a [u8]) -> IResult<&'a [u8], ProtocolMessage> {
+                IResult::Error(Err::Code(ErrorKind::Alpha))
+            }
+        }
+
+        struct Reader;
+        impl Read for Reader {
+            fn read(&mut self, _buf: &mut [u8]) -> Result<usize, io::Error> {
+                Ok(99)
+            }
+        }
+
+        let mut subject = ClientMessageStream::new(123, Reader, Proto);
+
+        let result = subject.poll();
+
+        let expected = Ok(Async::Ready(None));
+        assert_eq!(expected, result);
+    }
 
     #[test]
     fn poll_returns_none_if_0_bytes_are_read_and_buffer_is_empty() {
@@ -309,14 +388,14 @@ mod test {
 
     #[test]
     fn poll_returns_event_when_read_and_parse_both_succeed() {
-        let bytes = b"00000000the event data extra bytes";
+        let bytes = b"FLO_PRO\n00009999the event data extra bytes";
         //op_id | data_length | event data  | extra bytes
         let reader = Cursor::new(&bytes[..]);
         struct Proto;
         impl ClientProtocol for Proto {
             fn parse_any<'a>(&'a self, buffer: &'a [u8]) -> IResult<&'a [u8], ProtocolMessage> {
                 //           remaining buffer excluded data length
-                IResult::Done(&buffer[8..], ProtocolMessage::ProduceEvent(EventHeader{op_id: 999, data_length: 14}))
+                IResult::Done(&buffer[16..], ProtocolMessage::ProduceEvent(EventHeader{op_id: 999, data_length: 14}))
             }
         }
 
@@ -335,6 +414,8 @@ mod test {
             }
         }
 
+        // 8 for header, 4 for op_id, 4 for length, + 14 for data
+        assert_eq!(30, subject.buffer_pos);
     }
 
     #[test]

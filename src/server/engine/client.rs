@@ -54,6 +54,7 @@ impl Client {
     }
 
     pub fn send(&mut self, message: ServerMessage) -> Result<(), ClientSendError> {
+        trace!("Sending message to client: {} : {:?}", self.connection_id, message);
         self.sender.send(message).map_err(|send_err| {
             ClientSendError(send_err.into_inner())
         })
@@ -96,6 +97,7 @@ impl ClientManager for ClientManagerImpl {
         for mut client in self.client_map.values_mut() {
             let client_id = client.connection_id();
             if client_id != event_producer {
+                debug!("Sending event: {:?} to client: {}", event.id, client_id);
                 if let Err(err) = client.send(ServerMessage::Event(event.clone())) {
                     warn!("Failed to send event: {:?} through client channel. Client likely just disconnected. ConnectionId: {}",
                           event.id,
