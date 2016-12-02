@@ -45,6 +45,7 @@ pub struct ClientMessageStream<R: Read, P: ClientProtocol> {
     buffer_pos: usize,
     filled_bytes: usize,
     state: MessageStreamState,
+    read_complete: bool,
 }
 
 impl <R: Read, P: ClientProtocol> ClientMessageStream<R, P> {
@@ -57,6 +58,7 @@ impl <R: Read, P: ClientProtocol> ClientMessageStream<R, P> {
             buffer_pos: 0,
             filled_bytes: 0,
             state: MessageStreamState::Reading,
+            read_complete: false,
         }
     }
 
@@ -67,7 +69,7 @@ impl <R: Read, P: ClientProtocol> ClientMessageStream<R, P> {
         self.filled_bytes == 0
     }
 
-    fn try_read(&mut self) -> Poll<(), String> {
+    fn try_read(&mut self) -> Poll<usize, String> {
         let ClientMessageStream{ref mut tcp_reader,
             ref mut buffer,
             ref mut buffer_pos,
@@ -79,7 +81,7 @@ impl <R: Read, P: ClientProtocol> ClientMessageStream<R, P> {
                 // Reset the buffer position after successful read
                 *buffer_pos = 0;
                 *filled_bytes = amount;
-                return Ok(Async::Ready(()))
+                return Ok(Async::Ready(amount))
             },
             Err(ref err) if err.kind() == ::std::io::ErrorKind::WouldBlock => {
                 return Ok(Async::NotReady);
@@ -91,7 +93,12 @@ impl <R: Read, P: ClientProtocol> ClientMessageStream<R, P> {
     }
 
     fn try_parse(&mut self) -> Poll<Option<ClientMessage>, String> {
-        let proto_message = {
+        enum ProtoResult {
+            Done(ProtocolMessage),
+            Incomplete
+        }
+
+        let proto_message: Result<ProtoResult, String> = {
             let parse_result = {
                 let ClientMessageStream {
                     ref mut buffer,
@@ -109,11 +116,11 @@ impl <R: Read, P: ClientProtocol> ClientMessageStream<R, P> {
                     let nused = self.filled_bytes - remaining.len();
                     self.buffer_pos += nused;
                     self.filled_bytes -= nused;
-                    Ok(proto_message)
+                    Ok(ProtoResult::Done(proto_message))
                 }
                 IResult::Incomplete(needed) => {
                     //TODO: in case buffer position is > 0, shift buffer in preparation for next read.
-                    Err(format!("Need to write handling of incomplete parse. Needed: {:?}", needed))
+                    Ok(ProtoResult::Incomplete)
                 }
                 IResult::Error(err) => {
                     Err(format!("Error parsing: {:?}", err))
@@ -121,12 +128,16 @@ impl <R: Read, P: ClientProtocol> ClientMessageStream<R, P> {
             }
         };
 
+
         match proto_message {
-            Ok(ProtocolMessage::ApiMessage(msg)) => {
+            Ok(ProtoResult::Done(ProtocolMessage::ApiMessage(msg))) => {
                 Ok(Async::Ready(Some(msg)))
             }
-            Ok(ProtocolMessage::ProduceEvent(evt_header)) => {
+            Ok(ProtoResult::Done(ProtocolMessage::ProduceEvent(evt_header))) => {
                 self.try_parse_event(Some(evt_header))
+            }
+            Ok(ProtoResult::Incomplete) => {
+                Ok(Async::NotReady)
             }
             Err(err) => Err(err)
         }
@@ -193,8 +204,8 @@ impl <R: Read, P: ClientProtocol> Stream for ClientMessageStream<R, P> {
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         if self.requires_read() {
             match self.try_read() {
-                Ok(Async::Ready(_)) => {
-
+                Ok(Async::Ready(nread)) => {
+                    self.read_complete = nread == 0;
                 }
                 Ok(Async::NotReady) => {
                     return Ok(Async::NotReady);
@@ -205,10 +216,16 @@ impl <R: Read, P: ClientProtocol> Stream for ClientMessageStream<R, P> {
             }
         }
 
-        if self.state.is_read_event() {
+        let result = if self.state.is_read_event() {
             self.try_parse_event(None)
         } else {
             self.try_parse()
+        };
+
+        if self.read_complete && Ok(Async::NotReady) == result {
+            Ok(Async::Ready(None))
+        } else {
+            result
         }
     }
 }
@@ -219,11 +236,35 @@ mod test {
     use super::*;
     use futures::Async;
     use futures::stream::Stream;
-    use std::io::{Read, Cursor};
+    use std::io::{self, Read, Cursor};
 
     use server::engine::api::{ClientMessage, ClientAuth};
     use protocol::{ClientProtocol, ProtocolMessage, EventHeader};
-    use nom::IResult;
+    use nom::{IResult, Needed};
+
+    #[test]
+    fn poll_returns_none_if_0_bytes_are_read_and_buffer_is_empty() {
+        struct Proto;
+        impl ClientProtocol for Proto {
+            fn parse_any<'a>(&'a self, buffer: &'a [u8]) -> IResult<&'a [u8], ProtocolMessage> {
+                IResult::Incomplete(Needed::Size(8))
+            }
+        }
+
+        struct Reader;
+        impl Read for Reader {
+            fn read(&mut self, _buf: &mut [u8]) -> Result<usize, io::Error> {
+                Ok(0)
+            }
+        }
+
+        let mut subject = ClientMessageStream::new(123, Reader, Proto);
+
+        let result = subject.poll();
+
+        let expected = Ok(Async::Ready(None));
+        assert_eq!(expected, result);
+    }
 
     #[test]
     fn poll_returns_event_after_multiple_reads() {

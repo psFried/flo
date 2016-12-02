@@ -53,7 +53,7 @@ pub fn run(options: &ServerOptions) {
 
         let client_stream = ClientMessageStream::new(connection_id, tcp_reader, ClientProtocolImpl);
         let client_to_server = client_stream.map_err(|err| {
-            format!("Error sending message to backend server: {:?}", err)
+            format!("Error parsing client stream: {:?}", err)
         }).and_then(move |client_message| {
             engine_sender.send(client_message).map_err(|err| {
                 format!("Error sending message to backend server: {:?}", err)
