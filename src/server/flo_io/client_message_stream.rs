@@ -416,6 +416,7 @@ mod test {
 
         // 8 for header, 4 for op_id, 4 for length, + 14 for data
         assert_eq!(30, subject.buffer_pos);
+        assert_eq!(" extra bytes".len(), subject.filled_bytes);
     }
 
     #[test]

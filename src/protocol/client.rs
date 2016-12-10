@@ -1,6 +1,15 @@
-use nom::{be_u32, IResult};
+use nom::{be_u64, be_u32, be_u16, be_i64, IResult};
 use server::engine::api::{ClientMessage, ClientAuth};
+use flo_event::FloEventId;
 
+pub mod headers {
+    pub const CLIENT_AUTH: &'static str = "FLO_AUT\n";
+    pub const PRODUCE_EVENT: &'static str = "FLO_PRO\n";
+    pub const UPDATE_MARKER: &'static str = "FLO_UMK\n";
+    pub const START_CONSUMING: &'static str = "FLO_CNS\n";
+}
+
+use self::headers::*;
 
 named!{pub parse_str<String>,
     map_res!(
@@ -13,7 +22,7 @@ named!{pub parse_str<String>,
 
 named!{pub parse_auth<ProtocolMessage>,
     chain!(
-        _tag: tag!("FLO_AUT\n") ~
+        _tag: tag!(CLIENT_AUTH) ~
         namespace: parse_str ~
         username: parse_str ~
         password: parse_str,
@@ -29,7 +38,7 @@ named!{pub parse_auth<ProtocolMessage>,
 
 named!{pub parse_producer_event<ProtocolMessage>,
     chain!(
-        _tag: tag!("FLO_PRO\n") ~
+        _tag: tag!(PRODUCE_EVENT) ~
         op_id: be_u32 ~
         data_len: be_u32,
         || {
@@ -41,7 +50,34 @@ named!{pub parse_producer_event<ProtocolMessage>,
     )
 }
 
-named!{pub parse_any<ProtocolMessage>, alt!( parse_producer_event | parse_auth ) }
+named!{parse_update_marker<ProtocolMessage>,
+    chain!(
+        _tag: tag!(UPDATE_MARKER) ~
+        counter: be_u64 ~
+        actor: be_u16,
+        || {
+            ProtocolMessage::ApiMessage(
+                ClientMessage::UpdateMarker(
+                    FloEventId::new(actor, counter)
+                )
+            )
+        }
+    )
+}
+
+named!{parse_start_consuming<ProtocolMessage>,
+    chain!(
+        _tag: tag!(START_CONSUMING) ~
+        count: be_i64,
+        || {
+            ProtocolMessage::ApiMessage(
+                ClientMessage::StartConsuming(count)
+            )
+        }
+    )
+}
+
+named!{pub parse_any<ProtocolMessage>, alt!( parse_producer_event | parse_update_marker | parse_start_consuming | parse_auth ) }
 
 #[derive(Debug, PartialEq)]
 pub struct EventHeader {
@@ -72,6 +108,47 @@ mod test {
     use super::*;
     use nom::IResult;
     use server::engine::api::{ClientMessage, ClientAuth};
+    use flo_event::FloEventId;
+
+    fn assert_parsed_eq(expected: ProtocolMessage, result: IResult<&[u8], ProtocolMessage>) {
+        match result {
+            IResult::Done(_rem, msg) => {
+                assert_eq!(expected, msg);
+            }
+            IResult::Error(err) => panic!("Error parsing: {:?}", err),
+            IResult::Incomplete(_) => panic!("Got incomplete result")
+        }
+    }
+
+    #[test]
+    fn event_marker_update_is_parsed() {
+        let mut input = Vec::new();
+        input.extend_from_slice(b"FLO_UMK\n");
+        input.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, 255]); //event counter
+        input.extend_from_slice(&[0, 2]);  //actor id
+
+        let expected = ProtocolMessage::ApiMessage(
+            ClientMessage::UpdateMarker(
+                FloEventId::new(2, 255)
+            )
+        );
+
+        assert_parsed_eq(expected, parse_any(&input));
+    }
+
+    #[test]
+    fn start_consuming_message_is_parsed() {
+        let input = {
+            let mut b = Vec::new();
+            b.extend_from_slice(b"FLO_CNS\n");
+            b.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, 196]);
+            b
+        };
+        let expected = ProtocolMessage::ApiMessage(
+            ClientMessage::StartConsuming(196)
+        );
+        assert_parsed_eq(expected, parse_any(&input));
+    }
 
     #[test]
     fn parse_producer_event_parses_correct_event() {

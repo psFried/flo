@@ -20,7 +20,7 @@ pub enum ClientMessage {
     ClientAuth(ClientAuth),
     Produce(ProduceEvent),
     UpdateMarker(FloEventId),
-    StartConsuming,
+    StartConsuming(i64),
     Disconnect,
 }
 unsafe impl Send for ClientMessage {}
