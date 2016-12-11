@@ -63,6 +63,10 @@ impl <S: StorageEngine, C: ClientManager> Engine<S, C> {
                 self.client_manager.add_connection(client_connect);
                 Ok(())
             }
+            ClientMessage::UpdateMarker(connection_id, event_id) => {
+                self.client_manager.update_marker(connection_id, event_id);
+                Ok(())
+            }
             ClientMessage::Produce(produce_event) => {
                 self.produce_event(produce_event)
             }
@@ -218,6 +222,9 @@ mod test {
         fn send_message(&mut self, recipient: ConnectionId, message: ServerMessage) -> Result<(), ClientSendError> {
             self.sent_messages.entry(recipient).or_insert_with(|| {Vec::new()}).push(message);
             Ok(())
+        }
+        fn update_marker(&mut self, connection: ConnectionId, marker: FloEventId) {
+            unimplemented!()
         }
     }
 

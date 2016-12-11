@@ -1,5 +1,4 @@
 use nom::{be_u64, be_u32, be_u16, be_i64, IResult};
-use server::engine::api::{ClientMessage, ClientAuth};
 use flo_event::FloEventId;
 
 pub mod headers {
@@ -27,11 +26,11 @@ named!{pub parse_auth<ProtocolMessage>,
         username: parse_str ~
         password: parse_str,
         || {
-            ProtocolMessage::ApiMessage(ClientMessage::ClientAuth(ClientAuth {
+            ProtocolMessage::ClientAuth {
                 namespace: namespace,
                 username: username,
                 password: password,
-            }))
+            }
         }
     )
 }
@@ -56,10 +55,8 @@ named!{parse_update_marker<ProtocolMessage>,
         counter: be_u64 ~
         actor: be_u16,
         || {
-            ProtocolMessage::ApiMessage(
-                ClientMessage::UpdateMarker(
-                    FloEventId::new(actor, counter)
-                )
+            ProtocolMessage::UpdateMarker(
+                FloEventId::new(actor, counter)
             )
         }
     )
@@ -70,9 +67,7 @@ named!{parse_start_consuming<ProtocolMessage>,
         _tag: tag!(START_CONSUMING) ~
         count: be_i64,
         || {
-            ProtocolMessage::ApiMessage(
-                ClientMessage::StartConsuming(count)
-            )
+            ProtocolMessage::StartConsuming(count)
         }
     )
 }
@@ -88,7 +83,13 @@ pub struct EventHeader {
 #[derive(Debug, PartialEq)]
 pub enum ProtocolMessage {
     ProduceEvent(EventHeader),
-    ApiMessage(ClientMessage),
+    UpdateMarker(FloEventId),
+    StartConsuming(i64),
+    ClientAuth {
+        namespace: String,
+        username: String,
+        password: String,
+    }
 }
 
 pub trait ClientProtocol {
@@ -127,11 +128,7 @@ mod test {
         input.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, 255]); //event counter
         input.extend_from_slice(&[0, 2]);  //actor id
 
-        let expected = ProtocolMessage::ApiMessage(
-            ClientMessage::UpdateMarker(
-                FloEventId::new(2, 255)
-            )
-        );
+        let expected = ProtocolMessage::UpdateMarker(FloEventId::new(2, 255));
 
         assert_parsed_eq(expected, parse_any(&input));
     }
@@ -144,9 +141,7 @@ mod test {
             b.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, 196]);
             b
         };
-        let expected = ProtocolMessage::ApiMessage(
-            ClientMessage::StartConsuming(196)
-        );
+        let expected = ProtocolMessage::StartConsuming(196);
         assert_parsed_eq(expected, parse_any(&input));
     }
 
@@ -189,11 +184,11 @@ mod test {
         input.extend_from_slice(b"pass\n");
         let (remaining, result) = parse_auth(&input).unwrap();
 
-        let expected_header = ProtocolMessage::ApiMessage(ClientMessage::ClientAuth(ClientAuth {
+        let expected_header = ProtocolMessage::ClientAuth {
             namespace: "hello".to_owned(),
             username: "usr".to_owned(),
             password: "pass".to_owned(),
-        }));
+        };
         assert_eq!(expected_header, result);
         assert!(remaining.is_empty());
     }

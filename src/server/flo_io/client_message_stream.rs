@@ -130,11 +130,13 @@ impl <R: Read, P: ClientProtocol> ClientMessageStream<R, P> {
 
 
         match proto_message {
-            Ok(ProtoResult::Done(ProtocolMessage::ApiMessage(msg))) => {
-                Ok(Async::Ready(Some(msg)))
-            }
-            Ok(ProtoResult::Done(ProtocolMessage::ProduceEvent(evt_header))) => {
-                self.try_parse_event(Some(evt_header))
+            Ok(ProtoResult::Done(message)) => {
+                if let ProtocolMessage::ProduceEvent(header) = message {
+                    self.try_parse_event(Some(header))
+                } else {
+                    let msg: ClientMessage = to_engine_api_message(message, self.connection_id);
+                    Ok(Async::Ready(Some(msg)))
+                }
             }
             Ok(ProtoResult::Incomplete) => {
                 Ok(Async::NotReady)
@@ -237,6 +239,23 @@ impl <R: Read, P: ClientProtocol> Stream for ClientMessageStream<R, P> {
     }
 }
 
+fn to_engine_api_message(protocol_message: ProtocolMessage, connection_id: ConnectionId) -> ClientMessage {
+    match protocol_message {
+        ProtocolMessage::StartConsuming(count) => ClientMessage::StartConsuming(connection_id, count),
+        ProtocolMessage::ClientAuth {namespace, username, password} => {
+            ClientMessage::ClientAuth(api::ClientAuth{
+                connection_id: connection_id,
+                namespace: namespace,
+                username: username,
+                password: password,
+            })
+        }
+        ProtocolMessage::UpdateMarker(event_id) => ClientMessage::UpdateMarker(connection_id, event_id),
+        m @ _ => {
+            panic!("Unexpected protocol message: {:?}", m)
+        }
+    }
+}
 
 #[cfg(test)]
 mod test {
@@ -278,6 +297,7 @@ mod test {
         
         let result = subject.poll();
         let expected = Ok(Async::Ready(Some(ClientMessage::ClientAuth(ClientAuth{
+            connection_id: 123,
             namespace: "the namespace".to_owned(),
             username: "the username".to_owned(),
             password: "the password".to_owned()
@@ -427,11 +447,11 @@ mod test {
         struct Proto;
         impl ClientProtocol for Proto {
             fn parse_any<'a>(&'a self, buffer: &'a [u8]) -> IResult<&'a [u8], ProtocolMessage> {
-                IResult::Done(&buffer[..14], ProtocolMessage::ApiMessage(ClientMessage::ClientAuth(ClientAuth{
+                IResult::Done(&buffer[..14], ProtocolMessage::ClientAuth{
                     namespace: "theNamespace".to_owned(),
                     username: "theUsername".to_owned(),
                     password: "thePassword".to_owned(),
-                })))
+                })
             }
         }
         let mut subject = ClientMessageStream::new(123, reader, Proto);

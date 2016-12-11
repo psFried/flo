@@ -19,9 +19,9 @@ pub enum ClientMessage {
     ClientConnect(ClientConnect),
     ClientAuth(ClientAuth),
     Produce(ProduceEvent),
-    UpdateMarker(FloEventId),
-    StartConsuming(i64),
-    Disconnect,
+    UpdateMarker(ConnectionId, FloEventId),
+    StartConsuming(ConnectionId, i64),
+    Disconnect(ConnectionId),
 }
 unsafe impl Send for ClientMessage {}
 
@@ -55,6 +55,7 @@ impl PartialEq for ClientConnect {
 
 #[derive(Debug, PartialEq)]
 pub struct ClientAuth {
+    pub connection_id: ConnectionId,
     pub namespace: String,
     pub username: String,
     pub password: String,

@@ -1,5 +1,5 @@
 use server::engine::api::{ConnectionId, ServerMessage, ClientConnect};
-use flo_event::{FloEvent, OwnedFloEvent};
+use flo_event::{FloEvent, OwnedFloEvent, FloEventId};
 
 use futures::sync::mpsc::UnboundedSender;
 
@@ -30,10 +30,16 @@ impl ::std::fmt::Display for ClientSendError {
     }
 }
 
+pub enum ConsumerState {
+    NotConsuming(FloEventId),
+    ConsumeForward(FloEventId),
+}
+
 pub struct Client {
     connection_id: ConnectionId,
     addr: SocketAddr,
     sender: UnboundedSender<ServerMessage>,
+    consumer_state: ConsumerState,
 }
 
 impl Client {
@@ -42,6 +48,7 @@ impl Client {
             connection_id: connect_message.connection_id,
             addr: connect_message.client_addr,
             sender: connect_message.message_sender,
+            consumer_state: ConsumerState::NotConsuming(FloEventId::new(0, 0)),
         }
     }
 
@@ -59,12 +66,22 @@ impl Client {
             ClientSendError(send_err.into_inner())
         })
     }
+
+    pub fn update_marker(&mut self, new_marker: FloEventId) {
+        trace!("Client {} updating marker to: {:?}", self.connection_id, new_marker);
+        let new_state = match self.consumer_state {
+            ConsumerState::NotConsuming(_) => ConsumerState::NotConsuming(new_marker),
+            ConsumerState::ConsumeForward(_) => ConsumerState::ConsumeForward(new_marker),
+        };
+        self.consumer_state = new_state;
+    }
 }
 
 pub trait ClientManager {
     fn add_connection(&mut self, client_connect: ClientConnect);
     fn send_event(&mut self, event_producer: ConnectionId, event: OwnedFloEvent);
     fn send_message(&mut self, recipient: ConnectionId, message: ServerMessage) -> Result<(), ClientSendError>;
+    fn update_marker(&mut self, connection: ConnectionId, marker: FloEventId);
 }
 
 pub struct ClientManagerImpl {
@@ -122,5 +139,11 @@ impl ClientManager for ClientManagerImpl {
             Some(client) => client.send(message),
             None => Err(ClientSendError(message))
         }
+    }
+
+    fn update_marker(&mut self, connection_id: ConnectionId, marker: FloEventId) {
+        self.client_map.get_mut(&connection_id).map(|client| {
+            client.update_marker(marker)
+        });
     }
 }
