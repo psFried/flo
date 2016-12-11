@@ -17,26 +17,39 @@ const MAX_CACHED_EVENTS: usize = 150;
 pub type PersistenceResult = Result<EventId, io::Error>;
 
 //TODO: create concreate implementation of new StorageEngine
-use flo_event::{FloEvent, OwnedFloEvent, FloEventId};
+use flo_event::{FloEvent, OwnedFloEvent, FloEventId, FloEventIdMap};
 use std::sync::Arc;
 
+
 pub trait StorageEngine: Sized {
+    type Error;
+    type Iter: Iterator<Item=OwnedFloEvent>;
+
     fn initialize(storage_dir: &Path, namespace: &str, max_num_events: usize) -> Result<Self, io::Error>;
 
-    fn store<E: FloEvent>(&mut self, event: E) -> Result<Arc<OwnedFloEvent>, io::Error>;
+    fn store<E: FloEvent>(&mut self, event: &E) -> Result<(), Self::Error>;
 
-    //TODO: add method to get an iterator of events greater than a given version map
+    fn load_range(&mut self, range_start: FloEventId, limit: usize) -> Self::Iter;
 }
 
-impl StorageEngine for Vec<Arc<OwnedFloEvent>> {
+impl <'a> StorageEngine for Vec<OwnedFloEvent> {
+    type Error = ();
+    type Iter = ::std::vec::IntoIter<OwnedFloEvent>;
+
     fn initialize(storage_dir: &Path, namespace: &str, max_num_events: usize) -> Result<Self, io::Error> {
         Ok(Vec::new())
     }
 
-    fn store<E: FloEvent>(&mut self, event: E) -> Result<Arc<OwnedFloEvent>, io::Error> {
-        let evt = Arc::new(event.to_owned());
-        self.push(evt.clone());
-        Ok(evt)
+    fn store<E: FloEvent>(&mut self, event: &E) -> Result<(), Self::Error> {
+        self.push(event.to_owned());
+        Ok(())
+    }
+
+    fn load_range(&mut self, range_start: FloEventId, limit: usize) -> Self::Iter {
+        let events: Vec<OwnedFloEvent> = self.iter().filter(|event| {
+            event.id > range_start
+        }).map(|e| e.clone()).collect();
+        events.into_iter()
     }
 }
 

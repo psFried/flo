@@ -63,7 +63,7 @@ impl Client {
 
 pub trait ClientManager {
     fn add_connection(&mut self, client_connect: ClientConnect);
-    fn send_event(&mut self, event_producer: ConnectionId, event: Arc<OwnedFloEvent>);
+    fn send_event(&mut self, event_producer: ConnectionId, event: OwnedFloEvent);
     fn send_message(&mut self, recipient: ConnectionId, message: ServerMessage) -> Result<(), ClientSendError>;
 }
 
@@ -92,19 +92,21 @@ impl ClientManager for ClientManagerImpl {
         self.client_map.insert(connection_id, client);
     }
 
-    fn send_event(&mut self, event_producer: ConnectionId, event: Arc<OwnedFloEvent>) {
+    fn send_event(&mut self, event_producer: ConnectionId, event: OwnedFloEvent) {
+        let event_id = event.id;
+        let event_arc = Arc::new(event);
         let mut clients_to_remove = Vec::new();
         for mut client in self.client_map.values_mut() {
             let client_id = client.connection_id();
             if client_id != event_producer {
-                debug!("Sending event: {:?} to client: {}", event.id, client_id);
-                if let Err(err) = client.send(ServerMessage::Event(event.clone())) {
+                debug!("Sending event: {:?} to client: {}", event_id, client_id);
+                if let Err(err) = client.send(ServerMessage::Event(event_arc.clone())) {
                     warn!("Failed to send event: {:?} through client channel. Client likely just disconnected. ConnectionId: {}",
-                          event.id,
+                          event_id,
                           client_id);
                     clients_to_remove.push(client_id);
                 } else {
-                    debug!("sent event: {:?} to client channel: {}", event.id, client_id);
+                    debug!("sent event: {:?} to client channel: {}", event_id, client_id);
                 }
             }
         }

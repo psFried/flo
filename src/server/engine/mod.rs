@@ -21,7 +21,7 @@ pub fn run(_storage_dir: PathBuf) -> mpsc::Sender<ClientMessage> {
 
     //TODO: write this whole fucking thing
     thread::spawn(move || {
-        let mut engine = Engine::new(Vec::<Arc<OwnedFloEvent>>::new(), ClientManagerImpl::new(), 1);
+        let mut engine = Engine::new(Vec::<OwnedFloEvent>::new(), ClientManagerImpl::new(), 1);
 
         loop {
             match receiver.recv() {
@@ -80,7 +80,7 @@ impl <S: StorageEngine, C: ClientManager> Engine<S, C> {
             data: event.event_data,
         };
 
-        self.event_store.store(owned_event).map(|event| {
+        self.event_store.store(&owned_event).map(|()| {
             self.highest_event_id += 1;
             debug!("Stored event, new highest_event_id: {}", self.highest_event_id);
 
@@ -89,7 +89,7 @@ impl <S: StorageEngine, C: ClientManager> Engine<S, C> {
                 event_id: event_id,
             }));
 
-            self.client_manager.send_event(producer_id, event);
+            self.client_manager.send_event(producer_id, owned_event);
         });
         Ok(())
     }
@@ -106,7 +106,7 @@ mod test {
     use std::collections::{HashMap};
 
     const SUBJECT_ACTOR_ID: ActorId = 123;
-    type TestEngine = Engine<Vec<Arc<OwnedFloEvent>>, MockClientManager>;
+    type TestEngine = Engine<Vec<OwnedFloEvent>, MockClientManager>;
 
     #[test]
     fn engine_saves_event_and_sends_ack() {
@@ -179,7 +179,7 @@ mod test {
 
     struct MockClientManager {
         sent_messages: HashMap<ConnectionId, Vec<ServerMessage>>,
-        events_produced: Vec<(ConnectionId, Arc<OwnedFloEvent>)>,
+        events_produced: Vec<(ConnectionId, OwnedFloEvent)>,
     }
 
     impl MockClientManager {
@@ -211,7 +211,7 @@ mod test {
             //no-op
         }
 
-        fn send_event(&mut self, event_producer: ConnectionId, event: Arc<OwnedFloEvent>) {
+        fn send_event(&mut self, event_producer: ConnectionId, event: OwnedFloEvent) {
             self.events_produced.push((event_producer, event));
         }
 
@@ -229,7 +229,7 @@ mod test {
         ::std::net::SocketAddr::from_str("127.0.0.1:12345").unwrap()
     }
 
-    fn assert_events_stored(actual: Vec<Arc<OwnedFloEvent>>, expected_data: &[&[u8]]) {
+    fn assert_events_stored(actual: Vec<OwnedFloEvent>, expected_data: &[&[u8]]) {
         let act: Vec<&[u8]> = actual.iter().map(|evt| evt.data()).collect();
         assert_eq!(&act[..], expected_data);
     }
