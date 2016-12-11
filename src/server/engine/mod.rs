@@ -2,7 +2,7 @@ pub mod api;
 
 mod client;
 
-pub use self::client::{Client, ClientManager, ClientManagerImpl, ClientSendError};
+pub use self::client::{ClientManager, ClientManagerImpl, ClientSendError};
 
 use self::api::{ConnectionId, ServerMessage, ClientMessage, ClientConnect, ProduceEvent, EventAck};
 use event_store::StorageEngine;
