@@ -2,6 +2,7 @@ pub mod api;
 
 mod producer;
 mod consumer;
+mod client_map;
 
 use self::api::ClientMessage;
 use self::producer::ProducerManager;

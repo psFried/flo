@@ -16,7 +16,7 @@ use std::thread::{self, JoinHandle};
 const MAX_CACHED_EVENTS: usize = 1024;
 
 
-pub trait ClientManager {
+/*pub trait ClientManager {
     fn add_connection(&mut self, client_connect: ClientConnect);
     fn send_event(&mut self, event_producer: ConnectionId, event: OwnedFloEvent);
     fn send_message(&mut self, recipient: ConnectionId, message: ServerMessage) -> Result<(), ClientSendError>;
@@ -87,4 +87,4 @@ impl ClientManager for ClientManagerImpl {
             client.update_marker(marker)
         });
     }
-}
+}*/

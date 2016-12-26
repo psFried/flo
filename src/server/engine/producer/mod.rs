@@ -1,6 +1,6 @@
 
 use server::engine::api::{ConnectionId, ClientConnect, ProduceEvent, EventAck, ClientMessage, ServerMessage};
-
+use server::engine::client_map::ClientMap;
 use event_store::StorageEngine;
 use event_store::test_util::TestStorageEngine;
 use flo_event::{ActorId, OwnedFloEvent, EventCounter, FloEventId};
@@ -14,38 +14,13 @@ use std::thread;
 use std::path::PathBuf;
 use std::net::SocketAddr;
 
-struct ProducerMap(HashMap<ConnectionId, ClientConnect>);
-impl ProducerMap {
-    pub fn new() -> ProducerMap {
-        ProducerMap(HashMap::with_capacity(32))
-    }
-
-    pub fn add(&mut self, client: ClientConnect) {
-        let connection_id = client.connection_id;
-        self.0.insert(connection_id, client);
-    }
-
-    pub fn remove(&mut self, client: ConnectionId) {
-        self.0.remove(&client);
-    }
-
-    pub fn send(&mut self, client: ConnectionId, message: ServerMessage) -> Result<(), String> {
-        self.0.get_mut(&client).ok_or_else(|| {
-            format!("Client: {} does not exist in producer map", client)
-        }).and_then(|client_connect| {
-            client_connect.message_sender.send(message).map_err(|err| {
-                format!("Failed to send to client: {}, addr: {:?}, err: {:?}", client, client_connect.client_addr, err)
-            })
-        })
-    }
-}
 
 pub struct ProducerManager<S: StorageEngine> {
     actor_id: ActorId,
     event_store: S,
     highest_event_id: EventCounter,
     consumer_manager_channel: Sender<ClientMessage>,
-    clients: ProducerMap,
+    clients: ClientMap,
 }
 
 impl <S: StorageEngine> ProducerManager<S> {
@@ -55,7 +30,7 @@ impl <S: StorageEngine> ProducerManager<S> {
             event_store: storage,
             highest_event_id: highest_event_id,
             consumer_manager_channel: consumer_manager_channel,
-            clients: ProducerMap::new(),
+            clients: ClientMap::new(),
         }
     }
 
