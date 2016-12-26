@@ -12,6 +12,7 @@ use tokio_core::io::Io;
 use protocol::{ClientProtocolImpl, ServerProtocolImpl};
 use server::engine::api::{self, ClientMessage, ServerMessage, ClientConnect};
 use server::flo_io::{ClientMessageStream, ServerMessageStream};
+use server::engine::BackendChannels;
 use std::path::PathBuf;
 use std::net::{SocketAddr, Ipv4Addr, SocketAddrV4};
 
@@ -26,7 +27,7 @@ pub fn run(options: &ServerOptions) {
     let address: SocketAddr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), options.port));
     let listener = TcpListener::bind(&address, &reactor.handle()).unwrap();
 
-    let engine_sender = engine::run(options.data_dir.clone());
+    let BackendChannels{producer_manager, consumer_manager} = engine::run(options.data_dir.clone());
 
     info!("Started listening on port: {}", options.port);
 
@@ -41,7 +42,7 @@ pub fn run(options: &ServerOptions) {
         let connection_id = api::next_connection_id();
         let (tcp_reader, tcp_writer) = tcp_stream.split();
 
-        let engine_sender = engine_sender.clone();
+        let producer_sender = producer_manager.clone();
         let client_connect = ClientConnect {
             connection_id: connection_id,
             client_addr: client_addr,
@@ -49,13 +50,14 @@ pub fn run(options: &ServerOptions) {
         };
 
         //TODO: don't unwrap this result, propegate errors instead
-        engine_sender.send(ClientMessage::ClientConnect(client_connect)).unwrap();
+        producer_sender.send(ClientMessage::ClientConnect(client_connect)).unwrap();
 
         let client_stream = ClientMessageStream::new(connection_id, tcp_reader, ClientProtocolImpl);
         let client_to_server = client_stream.map_err(|err| {
             format!("Error parsing client stream: {:?}", err)
         }).and_then(move |client_message| {
-            engine_sender.send(client_message).map_err(|err| {
+            //TODO: send to producer/consumer manager based on message type
+            producer_sender.send(client_message).map_err(|err| {
                 format!("Error sending message to backend server: {:?}", err)
             })
         });

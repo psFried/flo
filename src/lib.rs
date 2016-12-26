@@ -22,7 +22,6 @@ extern crate futures;
 
 #[cfg(test)]
 extern crate env_logger;
-
 #[cfg(test)]
 extern crate tempdir;
 
@@ -30,3 +29,4 @@ pub mod event_store;
 pub mod event;
 pub mod protocol;
 pub mod server;
+
