@@ -1,19 +1,20 @@
 use flo_event::FloEvent;
-use server::engine::api::ServerMessage;
-use std::io::{self, Read};
+use server::engine::api::{ServerMessage, EventAck};
+use std::io::{self, Read, Write};
 
 use byteorder::{ByteOrder, BigEndian};
-
 
 pub trait ServerProtocol: Read + Sized {
     fn new(server_message: ServerMessage) -> Self;
 }
 
+#[derive(Debug, PartialEq, Clone)]
 enum ReadState {
     Init,
     EventData {
         position: usize
-    }
+    },
+    Done,
 }
 
 pub struct ServerProtocolImpl {
@@ -40,8 +41,13 @@ impl Read for ServerProtocolImpl {
             ref mut state,
         } = *self;
 
+        if *state == ReadState::Done {
+            return Ok(0);
+        }
+
         match message {
             &ServerMessage::EventPersisted(ref ack) => {
+                trace!("serializing event ack: {:?}", ack);
                 let mut nread = 0;
                 &buf[..8].copy_from_slice(&ACK_HEADER[..]);
                 nread += 8;
@@ -51,11 +57,14 @@ impl Read for ServerProtocolImpl {
                 nread += 2;
                 BigEndian::write_u64(&mut buf[14..22], ack.event_id.event_counter);
                 nread += 8;
+
+                *state = ReadState::Done;
                 Ok(nread)
             }
             &ServerMessage::Event(ref event) => {
                 let (buffer_pos, data_pos): (usize, usize) = match *state {
                     ReadState::Init => {
+                        trace!("Writing header for event: {:?}", event);
                         let mut pos: usize = 8;
                         //only write this stuff if we haven't already
                         &buf[..pos].copy_from_slice(&EVENT_HEADER[..]);
@@ -73,7 +82,10 @@ impl Read for ServerProtocolImpl {
                         BigEndian::write_u32(&mut buf[pos..], event.data_len());
                         (pos + 4, 0)
                     }
-                    ReadState::EventData{ref position} => (0, *position)
+                    ReadState::EventData{ref position} => (0, *position),
+                    ReadState::Done => {
+                        return Ok(0);
+                    }
                 };
 
                 //write what we can of the event data, but the buffer might not have room for it
@@ -97,6 +109,31 @@ mod test {
     use server::engine::api::{ServerMessage, EventAck};
     use flo_event::{FloEventId, OwnedFloEvent};
     use std::sync::Arc;
+
+    #[test]
+    fn event_is_written_in_one_pass() {
+        let mut subject = ServerProtocolImpl::new(ServerMessage::Event(
+            Arc::new(OwnedFloEvent::new(FloEventId::new(12, 23), "the namespace".to_owned(), vec![9; 64]))
+        ));
+
+        let mut buffer = [0; 256];
+
+        let result = subject.read(&mut buffer[..]).unwrap();
+        assert_eq!(100, result);
+
+        let expected_header = b"FLO_EVT\n";
+        assert_eq!(&expected_header[..], &buffer[..8]);                //starts with header
+        assert_eq!(&[0, 12, 0, 0, 0, 0, 0, 0, 0, 23], &buffer[8..18]); //event id is actor id then event counter
+        let expected_namespace = b"the namespace\n";
+        assert_eq!(&expected_namespace[..], &buffer[18..32]);   // namespace written with terminating newline
+        assert_eq!(&[0, 0, 0, 64], &buffer[32..36]);            //data length as big endian u32
+
+        let expected_data = vec![9; 64];
+        assert_eq!(&expected_data[..], &buffer[36..100]);
+
+        let result = subject.read(&mut buffer[..]).unwrap();
+        assert_eq!(0, result);
+    }
 
     #[test]
     fn event_is_written_in_multiple_passes() {
@@ -128,6 +165,8 @@ mod test {
 
         let result = subject.read(&mut buffer[..]).unwrap();
         assert_eq!(0, result);
+        let result = subject.read(&mut buffer[..]).unwrap();
+        assert_eq!(0, result);
     }
 
     #[test]
@@ -147,6 +186,8 @@ mod test {
 
         assert_eq!(22, result);
 
+        let result = subject.read(&mut buffer[..]).unwrap();
+        assert_eq!(0, result);
     }
 }
 

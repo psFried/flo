@@ -1,90 +1,120 @@
 mod client;
 
-pub use self::client::{Client, ConsumerState, ClientSendError};
+pub use self::client::{Client, ClientState, ClientSendError};
 
-use server::engine::api::{ConnectionId, ServerMessage, ClientConnect};
+use server::engine::api::{ConnectionId, ServerMessage, ClientMessage, ClientConnect};
 use flo_event::{FloEvent, OwnedFloEvent, FloEventId};
 
 use futures::sync::mpsc::UnboundedSender;
 use lru_time_cache::LruCache;
 
-use std::sync::Arc;
-use std::collections::{HashMap, HashSet};
-use std::net::SocketAddr;
+use std::sync::{Arc, mpsc};
 use std::thread::{self, JoinHandle};
+use std::marker::Send;
+use std::collections::HashMap;
+
+use server::engine::client_map::ClientMap;
+use event_store::EventReader;
 
 const MAX_CACHED_EVENTS: usize = 1024;
 
-
-/*pub trait ClientManager {
-    fn add_connection(&mut self, client_connect: ClientConnect);
-    fn send_event(&mut self, event_producer: ConnectionId, event: OwnedFloEvent);
-    fn send_message(&mut self, recipient: ConnectionId, message: ServerMessage) -> Result<(), ClientSendError>;
-    fn update_marker(&mut self, connection: ConnectionId, marker: FloEventId);
+pub struct ConsumerManager<R: EventReader + 'static> {
+    event_reader: R,
+    my_sender: mpsc::Sender<ClientMessage>,
+    consumers: ConsumerMap,
 }
 
-pub struct ClientManagerImpl {
-    client_map: HashMap<ConnectionId, Client>,
-    event_cache: LruCache<FloEventId, Arc<OwnedFloEvent>>,
-}
-
-impl ClientManagerImpl {
-    pub fn new() -> ClientManagerImpl {
-        ClientManagerImpl {
-            client_map: HashMap::with_capacity(128),
-            event_cache: LruCache::with_capacity(MAX_CACHED_EVENTS),
+impl <R: EventReader + 'static> ConsumerManager<R> {
+    pub fn new(reader: R, sender: mpsc::Sender<ClientMessage>) -> Self {
+        ConsumerManager {
+            my_sender: sender,
+            event_reader: reader,
+            consumers: ConsumerMap::new(),
         }
     }
-}
 
-impl ClientManager for ClientManagerImpl {
+    pub fn process(&mut self, message: ClientMessage) -> Result<(), String> {
+        trace!("Got message: {:?}", message);
+        match message {
+            ClientMessage::ClientConnect(connect) => {
+                self.consumers.add(connect);
+                Ok(())
+            }
+            ClientMessage::StartConsuming(connection_id, limit) => {
+                self.start_consuming(connection_id, limit)
+            }
+            ClientMessage::EventLoaded(connection_id, event) => {
+                self.consumers.send_event(connection_id, Arc::new(event))
+            }
+            ClientMessage::EventPersisted(connection_id, event) => {
 
-    fn add_connection(&mut self, client_connect: ClientConnect) {
-        let connection_id = client_connect.connection_id;
-        let client_count = self.client_map.len() + 1;
-        debug!("Adding Client with connection_id: {}, peer_addr: {} total_connections_open: {}",
-               connection_id,
-               &client_connect.client_addr,
-               client_count);
-        let client = Client::from_client_connect(client_connect);
-        self.client_map.insert(connection_id, client);
-    }
-
-    fn send_event(&mut self, event_producer: ConnectionId, event: OwnedFloEvent) {
-        let event_id = event.id;
-        let event_arc = Arc::new(event);
-        let mut clients_to_remove = Vec::new();
-        for mut client in self.client_map.values_mut() {
-            let client_id = client.connection_id();
-            if client_id != event_producer && client.needs_event(event_id) {
-                debug!("Sending event: {:?} to client: {}", event_id, client_id);
-                if let Err(err) = client.send(ServerMessage::Event(event_arc.clone())) {
-                    warn!("Failed to send event: {:?} through client channel. Client likely just disconnected. ConnectionId: {}",
-                          event_id,
-                          client_id);
-                    clients_to_remove.push(client_id);
-                } else {
-                    debug!("sent event: {:?} to client channel: {}", event_id, client_id);
-                }
+                warn!("EventPersisted not yet implemented! ConnectionId: {}, Event: {:?}", connection_id, event);
+                Ok(())
+            }
+            m @ _ => {
+                panic!("Got unhandled message: {:?}", m);
             }
         }
-
-        // if we were unable to send messages to any clients, then remove them since the connection is probably now closed anyway
-        for id in clients_to_remove {
-            self.client_map.remove(&id);
-        }
     }
 
-    fn send_message(&mut self, connection_id: ConnectionId, message: ServerMessage) -> Result<(), ClientSendError> {
-        match self.client_map.get_mut(&connection_id) {
-            Some(client) => client.send(message),
-            None => Err(ClientSendError(message))
-        }
+    fn start_consuming(&mut self, connection_id: ConnectionId, limit: i64) -> Result<(), String> {
+        let ConsumerManager{ref mut event_reader, ref my_sender, ref consumers} = *self;
+        consumers.get_consumer_position(connection_id).map(|start_id| {
+            let event_iter = event_reader.load_range(start_id, limit as usize);
+
+            let event_sender = my_sender.clone();
+            thread::spawn(move || {
+                for event in event_iter {
+                    match event {
+                        Ok(owned_event) => {
+                            trace!("Reader thread sending event: {:?} to consumer manager", owned_event.id());
+                            //TODO: is unwrap the right thing here?
+                            event_sender.send(ClientMessage::EventLoaded(connection_id, owned_event)).unwrap();
+                        }
+                        Err(err) => {
+                            error!("Error reading event: {:?}", err);
+                            //TODO: send error message to consumer manager instead of just dying silently
+                            break;
+                        }
+                    }
+                }
+            });
+        })
+    }
+}
+
+pub struct ConsumerMap(HashMap<ConnectionId, Client>);
+impl ConsumerMap {
+    pub fn new() -> ConsumerMap {
+        ConsumerMap(HashMap::with_capacity(32))
     }
 
-    fn update_marker(&mut self, connection_id: ConnectionId, marker: FloEventId) {
-        self.client_map.get_mut(&connection_id).map(|client| {
-            client.update_marker(marker)
-        });
+    pub fn add(&mut self, connect: ClientConnect) {
+        let connection_id = connect.connection_id;
+        self.0.insert(connection_id, Client::from_client_connect(connect));
     }
-}*/
+
+    pub fn remove(&mut self, connection_id: ConnectionId) {
+        self.0.remove(&connection_id);
+    }
+
+    pub fn get_consumer_position(&self, connection_id: ConnectionId) -> Result<FloEventId, String> {
+        self.0.get(&connection_id).ok_or_else(|| {
+            format!("Consumer: {} does not exist", connection_id)
+        }).map(|consumer| {
+            consumer.get_current_position()
+        })
+    }
+
+    pub fn send_event(&mut self, connection_id: ConnectionId, event: Arc<OwnedFloEvent>) -> Result<(), String> {
+        self.0.get_mut(&connection_id).ok_or_else(|| {
+            format!("Cannot send event to consumer because consumer: {} does not exist", connection_id)
+        }).and_then(|mut client| {
+            client.send(ServerMessage::Event(event)).map_err(|err| {
+                format!("Error sending event to server channel: {:?}", err)
+            })
+        })
+    }
+}
+
+

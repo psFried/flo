@@ -1,8 +1,8 @@
 
 use server::engine::api::{ConnectionId, ClientConnect, ProduceEvent, EventAck, ClientMessage, ServerMessage};
 use server::engine::client_map::ClientMap;
-use event_store::StorageEngine;
-use event_store::test_util::TestStorageEngine;
+use event_store::EventWriter;
+use event_store::test_util::TestEventWriter;
 use flo_event::{ActorId, OwnedFloEvent, EventCounter, FloEventId};
 
 use futures::sync::mpsc::UnboundedSender;
@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use std::net::SocketAddr;
 
 
-pub struct ProducerManager<S: StorageEngine> {
+pub struct ProducerManager<S: EventWriter> {
     actor_id: ActorId,
     event_store: S,
     highest_event_id: EventCounter,
@@ -23,7 +23,7 @@ pub struct ProducerManager<S: StorageEngine> {
     clients: ClientMap,
 }
 
-impl <S: StorageEngine> ProducerManager<S> {
+impl <S: EventWriter> ProducerManager<S> {
     pub fn new(storage: S, consumer_manager_channel: Sender<ClientMessage>, actor_id: ActorId, highest_event_id: EventCounter) -> ProducerManager<S> {
         ProducerManager {
             actor_id: actor_id,

@@ -18,26 +18,32 @@ const MAX_CACHED_EVENTS: usize = 150;
 
 pub type PersistenceResult = Result<EventId, io::Error>;
 
-//TODO: create concreate implementation of new StorageEngine
+//TODO: create concrete implementation of new StorageEngine
 use flo_event::{FloEvent, OwnedFloEvent, FloEventId, FloEventIdMap};
 use std::sync::Arc;
 
 pub trait EventReader: Sized {
-    type Error;
-    type Iter: Iterator<Item=Result<OwnedFloEvent, Self::Error>>;
+    //TODO: bring sanity to error handling, maybe use std::error::Error, or else error_chain crate
+    type Error: ::std::fmt::Debug;
+    type Iter: Iterator<Item=Result<OwnedFloEvent, Self::Error>> + Send;
 
     fn load_range(&mut self, range_start: FloEventId, limit: usize) -> Self::Iter;
 
     fn get_highest_event_id(&mut self) -> FloEventId;
 }
 
-pub trait StorageEngine: Sized {
-    type Error;
-    type Reader: EventReader;
-
-    fn initialize(storage_dir: &Path, namespace: &str, max_num_events: usize) -> Result<(Self, Self::Reader), io::Error>;
+pub trait EventWriter: Sized {
+    //TODO: bring sanity to error handling, maybe use std::error::Error, or else error_chain crate
+    type Error: ::std::fmt::Debug;
 
     fn store<E: FloEvent>(&mut self, event: &E) -> Result<(), Self::Error>;
+}
+
+pub trait StorageEngine {
+    type Writer: EventWriter;
+    type Reader: EventReader;
+
+    fn initialize(storage_dir: &Path, namespace: &str, max_num_events: usize) -> Result<(Self::Writer, Self::Reader), io::Error>;
 }
 
 

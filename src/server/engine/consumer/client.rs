@@ -1,4 +1,4 @@
-use flo_event::FloEventId;
+use flo_event::{FloEvent, FloEventId};
 use server::engine::api::{ConnectionId, ClientMessage, ClientAuth, ClientConnect, ServerMessage};
 
 use futures::sync::mpsc::UnboundedSender;
@@ -29,17 +29,50 @@ impl ::std::fmt::Display for ClientSendError {
     }
 }
 
+pub enum ConsumeType {
+    File,
+    Memory,
+}
 
-pub enum ConsumerState {
+pub struct ConsumingState {
+    pub last_event_id: FloEventId,
+    pub consume_type: ConsumeType,
+    pub remaining: u64,
+}
+
+impl ConsumingState {
+    pub fn forward_from_file(id: FloEventId, limit: u64) -> ConsumingState {
+        ConsumingState {
+            last_event_id: id,
+            consume_type: ConsumeType::File,
+            remaining: limit,
+        }
+    }
+
+    pub fn forward_from_memory(id: FloEventId, limit: u64) -> ConsumingState {
+        ConsumingState {
+            last_event_id: id,
+            consume_type: ConsumeType::Memory,
+            remaining: limit,
+        }
+    }
+
+    pub fn event_sent(&mut self, id: FloEventId) {
+        self.last_event_id = id;
+        self.remaining -= 1;
+    }
+}
+
+pub enum ClientState {
     NotConsuming(FloEventId),
-    ConsumeForward(FloEventId, i64),
+    Consuming(ConsumingState),
 }
 
 pub struct Client {
     connection_id: ConnectionId,
     addr: SocketAddr,
     sender: UnboundedSender<ServerMessage>,
-    consumer_state: ConsumerState,
+    consumer_state: ClientState,
 }
 
 impl Client {
@@ -48,7 +81,7 @@ impl Client {
             connection_id: connect_message.connection_id,
             addr: connect_message.client_addr,
             sender: connect_message.message_sender,
-            consumer_state: ConsumerState::NotConsuming(FloEventId::new(0, 0)),
+            consumer_state: ClientState::NotConsuming(FloEventId::new(0, 0)),
         }
     }
 
@@ -61,10 +94,12 @@ impl Client {
     }
 
     pub fn send(&mut self, message: ServerMessage) -> Result<(), ClientSendError> {
-        trace!("Sending message to client: {} : {:?}", self.connection_id, message);
-        if let &ServerMessage::Event(_) = &message {
-            if let ConsumerState::ConsumeForward(ref id, ref mut count) = self.consumer_state {
-                *count += 1;
+        let conn_id = self.connection_id;
+        trace!("Sending message to client: {} : {:?}", conn_id, message);
+        if let &ServerMessage::Event(ref event) = &message {
+            if let ClientState::Consuming(ref mut state) = self.consumer_state {
+                trace!("Client {} about to update marker to: {:?}, remaining_in_batch: {}", conn_id, event.id(), state.remaining);
+                state.event_sent(*event.id());
             }
         }
         self.sender.send(message).map_err(|send_err| {
@@ -72,24 +107,10 @@ impl Client {
         })
     }
 
-    pub fn update_marker(&mut self, new_marker: FloEventId) {
-        trace!("Client {} updating marker to: {:?}", self.connection_id, new_marker);
+    pub fn get_current_position(&self) -> FloEventId {
         match self.consumer_state {
-            ConsumerState::NotConsuming(ref mut marker) => {
-                *marker = new_marker;
-            }
-            ConsumerState::ConsumeForward(ref mut marker, _) => {
-                *marker = new_marker;
-            }
-        };
-    }
-
-    pub fn needs_event(&self, event_id: FloEventId) -> bool {
-        match self.consumer_state {
-            ConsumerState::ConsumeForward(id, count) => {
-                event_id > id && count > 0
-            }
-            _ => false
+            ClientState::NotConsuming(id) => id,
+            ClientState::Consuming(ref state) => state.last_event_id
         }
     }
 }

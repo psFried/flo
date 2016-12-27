@@ -39,9 +39,11 @@ impl <P: ServerProtocol> Read for ServerMessageStream<P> {
                     return Err(not_ready());
                 }
                 Ok(Async::Ready(Some(msg))) => {
+                    trace!("ServerMessageStream got new message: {:?}", msg);
                     message = Some(P::new(msg))
                 }
                 Ok(Async::Ready(None)) => {
+                    debug!("End of ServerMessageStream");
                     return Ok(0);
                 }
                 Err(err) => {
@@ -58,11 +60,13 @@ impl <P: ServerProtocol> Read for ServerMessageStream<P> {
             match read_res {
                 Ok(nread) if nread > 0 => {
                     //if we've managed to read some bytes, then keep this message around since it may not be done
+                    trace!("Read {} bytes of current message", nread);
                     self.current_message = Some(msg);
                     Ok(nread)
                 }
                 Ok(_) => {
                     //we've finished reading this message, so try later to get another from the backend
+                    trace!("Finished reading from current message");
                     Err(not_ready())
                 }
                 e @ Err(_) => e

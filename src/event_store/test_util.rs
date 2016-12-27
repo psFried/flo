@@ -1,4 +1,4 @@
-use event_store::{StorageEngine, EventReader};
+use event_store::{StorageEngine, EventWriter, EventReader};
 use flo_event::{FloEvent, FloEventId, OwnedFloEvent};
 
 use std::sync::{Arc, Mutex};
@@ -15,6 +15,7 @@ pub struct TestEventIter {
     current_idx: usize,
     remaining: usize,
 }
+unsafe impl Send for TestEventIter {}
 
 impl Iterator for TestEventIter {
     type Item = Result<OwnedFloEvent, String>;
@@ -50,17 +51,16 @@ impl EventReader for TestEventReader {
     }
 }
 
-pub struct TestStorageEngine {
+pub struct TestEventWriter {
     storage: Arc<Mutex<Vec<OwnedFloEvent>>>,
 }
 
-impl TestStorageEngine {
-    pub fn new() -> TestStorageEngine {
-        TestStorageEngine {
+impl TestEventWriter {
+    pub fn new() -> TestEventWriter {
+        TestEventWriter {
             storage: Arc::new(Mutex::new(Vec::new()))
         }
     }
-
 
     pub fn assert_events_stored(&self, expected_data: &[&[u8]]) {
         let storage = self.storage.lock().unwrap();
@@ -69,24 +69,29 @@ impl TestStorageEngine {
     }
 }
 
-impl StorageEngine for TestStorageEngine {
+impl EventWriter for TestEventWriter {
     type Error = String;
-    type Reader = TestEventReader;
 
-    fn initialize(storage_dir: &Path, namespace: &str, max_num_events: usize) -> Result<(Self, Self::Reader), io::Error> {
+    fn store<E: FloEvent>(&mut self, event: &E) -> Result<(), Self::Error> {
+        let mut storage = self.storage.lock().unwrap();
+        storage.push(event.to_owned());
+        Ok(())
+    }
+}
+
+pub struct TestStorageEngine;
+impl StorageEngine for TestStorageEngine {
+    type Reader = TestEventReader;
+    type Writer = TestEventWriter;
+
+    fn initialize(storage_dir: &Path, namespace: &str, max_num_events: usize) -> Result<(Self::Writer, Self::Reader), io::Error> {
         let storage = Arc::new(Mutex::new(Vec::new()));
-        let writer = TestStorageEngine {
+        let writer = TestEventWriter {
             storage: storage.clone()
         };
         let reader = TestEventReader {
             storage: storage
         };
         Ok((writer, reader))
-    }
-
-    fn store<E: FloEvent>(&mut self, event: &E) -> Result<(), Self::Error> {
-        let mut storage = self.storage.lock().unwrap();
-        storage.push(event.to_owned());
-        Ok(())
     }
 }

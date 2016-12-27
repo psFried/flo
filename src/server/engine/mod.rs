@@ -6,8 +6,9 @@ mod client_map;
 
 use self::api::ClientMessage;
 use self::producer::ProducerManager;
-use event_store::test_util::TestStorageEngine;
-use event_store::{StorageEngine, EventReader};
+use self::consumer::ConsumerManager;
+use event_store::test_util::{TestStorageEngine, TestEventWriter};
+use event_store::{StorageEngine, EventWriter, EventReader};
 use flo_event::ActorId;
 
 use futures::sync::mpsc::UnboundedSender;
@@ -45,6 +46,23 @@ pub fn run(storage_dir: PathBuf) -> BackendChannels {
                 }
                 Err(recv_err) => {
                     error!("Receive Error: {:?}", recv_err);
+                    break;
+                }
+            }
+        }
+    });
+
+    let consumer_manager_sender = reader_sender.clone();
+    thread::spawn(move || {
+        let mut consumer_manager = ConsumerManager::new(event_reader, consumer_manager_sender);
+
+        loop {
+            match reader_receiver.recv() {
+                Ok(client_message) => {
+                    consumer_manager.process(client_message).unwrap();
+                }
+                Err(err) => {
+                    error!("Error reading for Consumer Manager: {:?}", err);
                     break;
                 }
             }

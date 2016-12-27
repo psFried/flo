@@ -14,7 +14,7 @@ pub fn next_connection_id() -> ConnectionId {
     CURRENT_CONNECTION_ID.fetch_add(1, atomic::Ordering::SeqCst)
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum ClientMessage {
     ClientConnect(ClientConnect),
     ClientAuth(ClientAuth),
@@ -22,6 +22,8 @@ pub enum ClientMessage {
     UpdateMarker(ConnectionId, FloEventId),
     StartConsuming(ConnectionId, i64),
     Disconnect(ConnectionId),
+    EventPersisted(ConnectionId, OwnedFloEvent),
+    EventLoaded(ConnectionId, OwnedFloEvent),
 }
 unsafe impl Send for ClientMessage {}
 
@@ -32,6 +34,7 @@ pub enum ServerMessage {
 }
 unsafe impl Send for ServerMessage {}
 
+#[derive(Clone)]
 pub struct ClientConnect {
     pub connection_id: ConnectionId,
     pub client_addr: ::std::net::SocketAddr,
@@ -53,7 +56,7 @@ impl PartialEq for ClientConnect {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct ClientAuth {
     pub connection_id: ConnectionId,
     pub namespace: String,
@@ -61,7 +64,7 @@ pub struct ClientAuth {
     pub password: String,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct ProduceEvent {
     pub connection_id: ConnectionId,
     pub op_id: u32,
