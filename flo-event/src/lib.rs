@@ -11,12 +11,24 @@ pub struct FloEventId {
     pub event_counter: EventCounter,
 }
 
+pub const ZERO_EVENT_ID: FloEventId = FloEventId{event_counter: 0, actor: 0};
+
 impl FloEventId {
+
+    #[inline]
+    pub fn zero() -> FloEventId {
+        ZERO_EVENT_ID
+    }
+
     pub fn new(actor: ActorId, event_counter: EventCounter) -> FloEventId {
         FloEventId {
             event_counter: event_counter,
             actor: actor,
         }
+    }
+
+    pub fn is_zero(&self) -> bool {
+        *self == ZERO_EVENT_ID
     }
 }
 
