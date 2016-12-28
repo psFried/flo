@@ -22,6 +22,12 @@ pub type PersistenceResult = Result<EventId, io::Error>;
 use flo_event::{FloEvent, OwnedFloEvent, FloEventId, FloEventIdMap};
 use std::sync::Arc;
 
+pub struct StorageEngineOptions {
+    pub storage_dir: PathBuf,
+    pub root_namespace: String,
+    pub max_events: usize,
+}
+
 pub trait EventReader: Sized {
     //TODO: bring sanity to error handling, maybe use std::error::Error, or else error_chain crate
     type Error: ::std::fmt::Debug;
@@ -43,7 +49,7 @@ pub trait StorageEngine {
     type Writer: EventWriter;
     type Reader: EventReader;
 
-    fn initialize(storage_dir: &Path, namespace: &str, max_num_events: usize) -> Result<(Self::Writer, Self::Reader), io::Error>;
+    fn initialize(options: StorageEngineOptions) -> Result<(Self::Writer, Self::Reader), io::Error>;
 }
 
 

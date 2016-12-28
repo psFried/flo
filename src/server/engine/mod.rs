@@ -8,7 +8,7 @@ use self::api::ClientMessage;
 use self::producer::ProducerManager;
 use self::consumer::ConsumerManager;
 use event_store::test_util::{TestStorageEngine, TestEventWriter};
-use event_store::{StorageEngine, EventWriter, EventReader};
+use event_store::{StorageEngine, EventWriter, EventReader, StorageEngineOptions};
 use flo_event::ActorId;
 
 use futures::sync::mpsc::UnboundedSender;
@@ -25,13 +25,13 @@ pub struct BackendChannels {
     pub consumer_manager: mpsc::Sender<ClientMessage>,
 }
 
-pub fn run(storage_dir: PathBuf) -> BackendChannels {
+pub fn run(storage_options: StorageEngineOptions) -> BackendChannels {
     let (storage_sender, storage_receiver) = mpsc::channel::<ClientMessage>();
     let (reader_sender, reader_receiver) = mpsc::channel::<ClientMessage>();
 
     //TODO: set max events and namespace and have some proper error handling
     let actor_id: ActorId = 1;
-    let (mut event_writer, mut event_reader) = TestStorageEngine::initialize(&storage_dir, "placeholder-namespace", 99999).unwrap();
+    let (mut event_writer, mut event_reader) = TestStorageEngine::initialize(storage_options).unwrap();
     let highest_event_id = event_reader.get_highest_event_id();
 
 

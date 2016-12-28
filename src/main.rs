@@ -47,16 +47,29 @@ fn main() {
                             .value_name("DIR")
                             .help("The directory to be used for storage")
                             .default_value("."))
+                   .arg(Arg::with_name("default-namespace")
+                            .long("default-namespace")
+                            .value_name("ns")
+                            .help("Name of the default namespace")
+                            .default_value("default"))
+                   .arg(Arg::with_name("max-events")
+                            .long("max-events")
+                            .value_name("max")
+                            .help("Maximum number of events to keep, if left unspecified, defaults to max u32 or u64 depending on architecture"))
                    .get_matches();
 
     let port = parse_arg_or_exit(&args, "port", 3000u16);
     let data_dir = PathBuf::from(args.value_of("data-dir").unwrap_or("."));
-
+    let max_events = parse_arg_or_exit(&args, "max-events", ::std::usize::MAX);
+    let default_ns = args.value_of("default-namespace").map(|value| value.to_owned()).expect("Must have a value for 'default-namespace' argument");
     let server_options = ServerOptions {
+        default_namespace: default_ns,
+        max_events: max_events,
         port: port,
         data_dir: data_dir,
+
     };
-    server::run(&server_options);
+    server::run(server_options);
     info!("Shutdown server");
 }
 

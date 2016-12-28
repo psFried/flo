@@ -17,21 +17,29 @@ use server::flo_io::{ClientMessageStream, ServerMessageStream};
 use server::engine::BackendChannels;
 use std::path::PathBuf;
 use std::net::{SocketAddr, Ipv4Addr, SocketAddrV4};
+use event_store::StorageEngineOptions;
 
 
 pub struct ServerOptions {
     pub port: u16,
     pub data_dir: PathBuf,
+    pub default_namespace: String,
+    pub max_events: usize,
 }
 
-pub fn run(options: &ServerOptions) {
+pub fn run(options: ServerOptions) {
     let mut reactor = Core::new().unwrap();
     let address: SocketAddr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), options.port));
     let loop_handle = reactor.handle();
     let listener = TcpListener::bind(&address, &loop_handle).unwrap();
 
+    let storage_options = StorageEngineOptions {
+        storage_dir: options.data_dir.clone(),
+        root_namespace: "/".to_owned(), //TODO: figure out how to set namespace and max events
+        max_events: 99999,
+    };
 
-    let BackendChannels{producer_manager, consumer_manager} = engine::run(options.data_dir.clone());
+    let BackendChannels{producer_manager, consumer_manager} = engine::run(storage_options);
 
     info!("Started listening on port: {}", options.port);
 

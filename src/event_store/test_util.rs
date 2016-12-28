@@ -1,4 +1,4 @@
-use event_store::{StorageEngine, EventWriter, EventReader};
+use event_store::{StorageEngine, EventWriter, EventReader, StorageEngineOptions};
 use flo_event::{FloEvent, FloEventId, OwnedFloEvent};
 
 use std::sync::{Arc, Mutex};
@@ -85,7 +85,7 @@ impl StorageEngine for TestStorageEngine {
     type Reader = TestEventReader;
     type Writer = TestEventWriter;
 
-    fn initialize(storage_dir: &Path, namespace: &str, max_num_events: usize) -> Result<(Self::Writer, Self::Reader), io::Error> {
+    fn initialize(_options: StorageEngineOptions) -> Result<(Self::Writer, Self::Reader), io::Error> {
         let storage = Arc::new(Mutex::new(Vec::new()));
         let writer = TestEventWriter {
             storage: storage.clone()

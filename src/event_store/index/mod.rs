@@ -67,6 +67,9 @@ impl EventIndex {
         self.entries.range(Bound::Excluded(&start_after), Bound::Unbounded).next().map(|(k, v)| v)
     }
 
+    pub fn contains(&self, event_id: FloEventId) -> bool {
+        self.entries.contains_key(&event_id)
+    }
 }
 
 
