@@ -16,7 +16,6 @@ enum Recipient {
 }
 
 fn do_send(channel_type: &'static str, channel: &Sender<ClientMessage>, message: ClientMessage) -> Result<(), String> {
-    trace!("Sending to channel: {}, message: {:?}", channel_type, message);
     channel.send(message).map_err(|err| {
         format!("Error sending to channel: {}, err: {:?}", channel_type, err)
     })

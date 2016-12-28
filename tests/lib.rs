@@ -86,10 +86,6 @@ integration_test!{persisted_event_are_consumed_after_they_are_written, server_po
     let nread = tcp_stream.read(&mut buffer[..]).unwrap();
     assert!(nread > 0);
 
-//    tcp_stream.write_all(b"FLO_CNS\n").unwrap();
-//    tcp_stream.write_all(&[0, 0, 0, 0, 0, 0, 0, 2]).unwrap();
-//    let results = read_events(&mut tcp_stream, 2);
-
     let mut consumer = connect(server_port);
     consumer.write_all(b"FLO_CNS\n").unwrap();
     consumer.write_all(&[0, 0, 0, 0, 0, 0, 0, 2]).unwrap();
@@ -135,28 +131,30 @@ fn read_events(tcp_stream: &mut TcpStream, mut nevents: usize) -> Vec<OwnedFloEv
 
     tcp_stream.set_read_timeout(Some(Duration::from_millis(1000)));
     let mut events = Vec::new();
-    let mut buffer = [0; 8 * 1024];
+    let mut buffer_array = [0; 8 * 1024];
+    let mut nread = tcp_stream.read(&mut buffer_array[..]).unwrap();
     let mut buffer_start = 0;
-    let mut nread = tcp_stream.read(&mut buffer[buffer_start..]).unwrap();
+    let mut buffer_end = nread;
     while nevents > 0 {
-        let shift_amt = match parse_event(&buffer[buffer_start..(buffer_start + nread)]) {
-            IResult::Done(remaining, event) => {
+        if buffer_start == buffer_end {
+            println!("reading again");
+            nread = tcp_stream.read(&mut buffer_array[..]).unwrap();
+            buffer_end = nread;
+            buffer_start = 0;
+        }
+        let mut buffer = &mut buffer_array[buffer_start..buffer_end];
+        println!("attempting to read event: {}, buffer: {:?}", nevents, buffer);
+        match parse_event(buffer) {
+            IResult::Done(mut remaining, event) => {
                 events.push(event);
-                remaining.len()
+                buffer_start += buffer.len() - remaining.len();
             }
             IResult::Error(err) => panic!("Error deserializing event: {:?}", err),
             IResult::Incomplete(need) => {
-                panic!("Incomplete data to read events: {:?}, buffer: {:?}", need, &buffer[buffer_start..(buffer_start + nread)])
+                panic!("Incomplete data to read events: {:?}, buffer: {:?}", need, buffer)
             }
         };
-
-        if shift_amt > 0 {
-            for i in 0..shift_amt {
-
-                buffer.swap(i, i + (nread - shift_amt));
-            }
-        }
-        buffer_start = nread - shift_amt;
+        nevents -= 1;
     }
     events
 }

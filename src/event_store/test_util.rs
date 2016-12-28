@@ -28,6 +28,7 @@ impl Iterator for TestEventIter {
         } else {
             storage.lock().unwrap().get(*current_idx).map(|evt| {
                 *remaining -= 1;
+                *current_idx += 1;
                 Ok(evt.clone())
             })
         }

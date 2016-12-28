@@ -12,7 +12,8 @@ pub trait ServerProtocol: Read + Sized {
 enum ReadState {
     Init,
     EventData {
-        position: usize
+        position: usize,
+        len: usize,
     },
     Done,
 }
@@ -36,10 +37,7 @@ static EVENT_HEADER: &'static [u8; 8] = b"FLO_EVT\n";
 
 impl Read for ServerProtocolImpl {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let ServerProtocolImpl {
-            ref message,
-            ref mut state,
-        } = *self;
+        let ServerProtocolImpl { ref message, ref mut state, } = *self;
 
         if *state == ReadState::Done {
             return Ok(0);
@@ -82,7 +80,7 @@ impl Read for ServerProtocolImpl {
                         BigEndian::write_u32(&mut buf[pos..], event.data_len());
                         (pos + 4, 0)
                     }
-                    ReadState::EventData{ref position} => (0, *position),
+                    ReadState::EventData{ref position, ..} => (0, *position),
                     ReadState::Done => {
                         return Ok(0);
                     }
@@ -93,7 +91,13 @@ impl Read for ServerProtocolImpl {
                 let copy_amount = ::std::cmp::min(event.data_len() as usize - data_pos, buffer_space);
                 &buf[buffer_pos..(buffer_pos + copy_amount)].copy_from_slice(&event.data()[data_pos..(data_pos + copy_amount)]);
 
-                *state = ReadState::EventData{position: copy_amount + data_pos};
+                let data_len = event.data_len() as usize;
+                let new_position = copy_amount + data_pos;
+                if data_len == new_position {
+                    *state = ReadState::Done;
+                } else {
+                    *state = ReadState::EventData{position: new_position, len: data_len};
+                }
 
                 Ok(buffer_pos + copy_amount)
             }
