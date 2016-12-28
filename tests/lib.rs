@@ -96,6 +96,21 @@ integration_test!{persisted_event_are_consumed_after_they_are_written, server_po
     assert_eq!(event2_data, results[1].data());
 }}
 
+integration_test!{events_are_consumed_by_another_connection_as_they_are_written, server_port, tcp_stream, {
+    let mut consumer = connect(server_port);
+    consumer.write_all(b"FLO_CNS\n").unwrap();
+    consumer.write_all(&[0, 0, 0, 0, 0, 0, 0, 2]).unwrap();
+
+    let event1_data = b"first event data";
+    produce_event(&mut tcp_stream, &event1_data[..]);
+
+    let event2_data = b"second event data";
+    produce_event(&mut tcp_stream, &event2_data[..]);
+
+    let results = read_events(&mut consumer, 2);
+    assert_eq!(event1_data, results[0].data());
+    assert_eq!(event2_data, results[1].data());
+}}
 
 ///////////////////////////////////////////////////////////////////////////
 ///////  Test Utils            ////////////////////////////////////////////
