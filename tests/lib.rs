@@ -92,6 +92,8 @@ integration_test!{persisted_event_are_consumed_after_they_are_written, server_po
     thread::sleep(Duration::from_millis(250));
 
     let results = read_events(&mut consumer, 2);
+    assert_eq!(event1_data, results[0].data());
+    assert_eq!(event2_data, results[1].data());
 }}
 
 

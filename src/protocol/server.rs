@@ -6,6 +6,7 @@ use byteorder::{ByteOrder, BigEndian};
 
 pub trait ServerProtocol: Read + Sized {
     fn new(server_message: ServerMessage) -> Self;
+    fn is_done(&self) -> bool;
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -29,6 +30,10 @@ impl ServerProtocol for ServerProtocolImpl {
             message: server_message,
             state: ReadState::Init,
         }
+    }
+
+    fn is_done(&self) -> bool {
+        self.state == ReadState::Done
     }
 }
 
@@ -135,6 +140,8 @@ mod test {
         let expected_data = vec![9; 64];
         assert_eq!(&expected_data[..], &buffer[36..100]);
 
+        assert!(subject.is_done());
+
         let result = subject.read(&mut buffer[..]).unwrap();
         assert_eq!(0, result);
     }
@@ -167,6 +174,7 @@ mod test {
         let result = subject.read(&mut buffer[..]).unwrap();
         assert_eq!(4, result);
 
+        assert!(subject.is_done());
         let result = subject.read(&mut buffer[..]).unwrap();
         assert_eq!(0, result);
         let result = subject.read(&mut buffer[..]).unwrap();
@@ -190,6 +198,7 @@ mod test {
 
         assert_eq!(22, result);
 
+        assert!(subject.is_done());
         let result = subject.read(&mut buffer[..]).unwrap();
         assert_eq!(0, result);
     }

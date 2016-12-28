@@ -32,7 +32,12 @@ impl <P: ServerProtocol> Read for ServerMessageStream<P> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let mut message = self.current_message.take();
 
-        if message.is_none() {
+        let next_message_needed = match &message {
+            &Some(ref msg) => msg.is_done(),
+            _ => true
+        };
+
+        if next_message_needed {
             // we don't currently have a message to read, so try to get one
             match self.server_receiver.poll() {
                 Ok(Async::NotReady) => {
