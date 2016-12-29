@@ -3,6 +3,7 @@ mod file_reader;
 mod serialization;
 
 pub mod test_util;
+pub mod fs;
 
 use event::{EventId, Event};
 use std::fs::File;

@@ -11,8 +11,8 @@ use std::collections::{BTreeMap, Bound};
 
 #[derive(PartialEq, Debug, Clone)]
 pub struct IndexEntry {
-    id: FloEventId,
-    offset: u64,
+    pub id: FloEventId,
+    pub offset: u64,
 }
 
 impl IndexEntry {
