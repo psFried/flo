@@ -70,6 +70,10 @@ impl EventIndex {
     pub fn contains(&self, event_id: FloEventId) -> bool {
         self.entries.contains_key(&event_id)
     }
+
+    pub fn get_greatest_event_id(&self) -> FloEventId {
+        self.greatest_entry
+    }
 }
 
 
