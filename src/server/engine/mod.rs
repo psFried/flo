@@ -7,8 +7,8 @@ mod client_map;
 use self::api::ClientMessage;
 use self::producer::ProducerManager;
 use self::consumer::ConsumerManager;
-use event_store::test_util::{TestStorageEngine, TestEventWriter};
 use event_store::{StorageEngine, EventWriter, EventReader, StorageEngineOptions};
+use event_store::fs::{FSStorageEngine, FSEventWriter, FSEventReader};
 use flo_event::ActorId;
 
 use futures::sync::mpsc::UnboundedSender;
@@ -31,7 +31,7 @@ pub fn run(storage_options: StorageEngineOptions) -> BackendChannels {
 
     //TODO: set max events and namespace and have some proper error handling
     let actor_id: ActorId = 1;
-    let (mut event_writer, mut event_reader) = TestStorageEngine::initialize(storage_options).unwrap();
+    let (mut event_writer, mut event_reader) = FSStorageEngine::initialize(storage_options).expect("Failed to initialize storage engine");
     let highest_event_id = event_reader.get_highest_event_id();
 
 

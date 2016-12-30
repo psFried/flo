@@ -35,8 +35,8 @@ pub fn run(options: ServerOptions) {
 
     let storage_options = StorageEngineOptions {
         storage_dir: options.data_dir.clone(),
-        root_namespace: "/".to_owned(), //TODO: figure out how to set namespace and max events
-        max_events: 99999,
+        root_namespace: options.default_namespace, //TODO: figure out how to set namespace and max events
+        max_events: options.max_events,
     };
 
     let BackendChannels{producer_manager, consumer_manager} = engine::run(storage_options);

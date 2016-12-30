@@ -35,24 +35,35 @@ fn events_file(storage_opts: &StorageEngineOptions) -> PathBuf {
 
 fn initialize_index(storage_opts: &StorageEngineOptions) -> Result<EventIndex, io::Error> {
     let events_file = events_file(storage_opts);
-    FSEventIter::initialize(0, ::std::usize::MAX, &events_file).and_then(|mut event_iter| {
-        build_index(storage_opts.max_events, event_iter)
-    })
+
+    if events_file.exists() && events_file.is_file() {
+        debug!("initializing index from file: {:?}", events_file);
+        FSEventIter::initialize(0, ::std::usize::MAX, &events_file).and_then(|mut event_iter| {
+            build_index(storage_opts.max_events, event_iter)
+        })
+    } else {
+        debug!("No existing events at {:?}, creating new index", events_file);
+        Ok(EventIndex::new(storage_opts.max_events))
+    }
+
 }
 
 fn build_index(max_events: usize, iter: FSEventIter) -> Result<EventIndex, io::Error> {
     let mut index = EventIndex::new(max_events);
     let mut offset = 0;
+    let mut event_count = 0;
 
     for result in iter {
         match result {
             Ok(event) => {
                 index.add(IndexEntry::new(*event.id(), offset)); //don't care about possible evictions here
                 offset += total_size_on_disk(&event);
+                event_count += 1;
             },
             Err(err) => return Err(err)
         }
     }
+    debug!("Finished building index, iterated {} events and {} bytes", event_count, offset);
     Ok(index)
 }
 

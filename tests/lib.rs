@@ -17,9 +17,10 @@ use std::time::Duration;
 use std::sync::{Once, ONCE_INIT};
 use std::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
 use std::path::Path;
-use std::net::{TcpStream, SocketAddr, SocketAddrV4, IpAddr, Ipv4Addr};
+use std::net::{TcpStream, Shutdown, SocketAddr, SocketAddrV4, IpAddr, Ipv4Addr};
 use std::io::{Write, Read};
 use byteorder::{ByteOrder, BigEndian};
+use tempdir::TempDir;
 
 //TODO: get integration tests building again
 
@@ -43,7 +44,7 @@ macro_rules! integration_test {
             if port_var.is_none() {
                 // if env variable is not defined, then we need to start the server process ourselves
                 let data_dir = tempdir::TempDir::new("flo-integration-test").unwrap();
-                flo_proc = Some(FloServerProcess::new(port, data_dir.path()));
+                flo_proc = Some(FloServerProcess::new(port, data_dir));
                 // To give the external process time to start
                 thread::sleep(Duration::from_millis(250));
             }
@@ -56,6 +57,8 @@ macro_rules! integration_test {
             let $p = port;
 
             $t
+
+            $s.shutdown(Shutdown::Both).unwrap();
         }
     )
 }
@@ -215,15 +218,15 @@ fn init_logger() {
 pub struct FloServerProcess {
     child_proc: Option<Child>,
 	port: u16,
-	data_dir: String,
+	data_dir: TempDir,
 }
 
 impl FloServerProcess {
-    pub fn new(port: u16, data_dir: &Path) -> FloServerProcess {
+    pub fn new(port: u16, data_dir: TempDir) -> FloServerProcess {
         let mut server_proc = FloServerProcess {
             child_proc: None,
             port: port,
-            data_dir: data_dir.to_str().unwrap().to_string()
+            data_dir: data_dir
         };
         server_proc.start();
         server_proc
@@ -243,7 +246,7 @@ impl FloServerProcess {
                 .arg("--port")
                 .arg(format!("{}", self.port))
                 .arg("--data-dir")
-                .arg(&self.data_dir)
+                .arg(self.data_dir.path().to_str().unwrap())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .spawn().unwrap();

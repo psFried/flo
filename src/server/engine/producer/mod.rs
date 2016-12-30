@@ -50,7 +50,7 @@ impl <S: EventWriter> ProducerManager<S> {
     fn produce_event(&mut self, event: ProduceEvent) -> Result<(), String> {
         let producer_id = event.connection_id;
         let op_id = event.op_id;
-        let event_id = FloEventId::new(self.actor_id, self.highest_event_id);
+        let event_id = FloEventId::new(self.actor_id, self.highest_event_id + 1);
         let owned_event = OwnedFloEvent {
             id: event_id,
             namespace: "whatever".to_owned(),
