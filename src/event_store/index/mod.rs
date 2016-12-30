@@ -43,7 +43,8 @@ impl EventIndex {
 
     pub fn add(&mut self, new_entry: IndexEntry) -> Option<IndexEntry> {
         let mut to_return = None;
-        println!("entries: {}, max: {}", self.entries.len(), self.max_entries);
+
+        trace!("adding index entry: {:?}", new_entry);
 
         if self.least_entry.is_zero() {
             self.least_entry = new_entry.id;

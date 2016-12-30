@@ -14,7 +14,6 @@ enum EventIterInner {
     NonEmpty{
         file_reader: BufReader<File>,
         remaining: usize,
-        header_string: String,
     },
     Error(Option<io::Error>)
 }
@@ -23,12 +22,12 @@ pub struct FSEventIter(EventIterInner);
 
 impl FSEventIter {
     pub fn initialize(offset: u64, limit: usize, path: &Path) -> Result<FSEventIter, io::Error> {
-        OpenOptions::new().create(true).read(true).write(false).open(path).and_then(|mut file| {
+        trace!("opening file at path: {:?}", path);
+        OpenOptions::new().read(true).open(path).and_then(|mut file| {
             file.seek(SeekFrom::Start(offset)).map(|_| {
                 let inner = EventIterInner::NonEmpty {
                     file_reader: BufReader::new(file),
                     remaining: limit,
-                    header_string: String::with_capacity(8),
                 };
                 FSEventIter(inner)
             })
@@ -55,19 +54,35 @@ impl Iterator for FSEventIter {
                     Err(e)
                 })
             }
-            EventIterInner::NonEmpty {ref mut file_reader, ref mut remaining, ref mut header_string} => {
+            EventIterInner::NonEmpty {ref mut file_reader, ref mut remaining} => {
                 if *remaining == 0 {
                     None
                 } else {
                     *remaining -= 1;
-                    Some(read_event(file_reader, header_string))
+                    match has_next_event(file_reader) {
+                        Ok(true) => {
+                            Some(read_event(file_reader))
+                        }
+                        Ok(false) => {
+                            None
+                        }
+                        Err(err) => {
+                            Some(Err(err))
+                        }
+                    }
                 }
             }
         }
     }
 }
 
-fn read_event<R: BufRead>(reader: &mut R, delimeter_buf: &mut String) -> Result<OwnedFloEvent, io::Error> {
+fn has_next_event<R: BufRead>(reader: &mut R) -> Result<bool, io::Error> {
+    reader.fill_buf().map(|buffer| {
+        buffer.len() >= 8 && &buffer[..8] == super::FLO_EVT.as_bytes()
+    })
+}
+
+pub fn read_event<R: Read>(reader: &mut R) -> Result<OwnedFloEvent, io::Error> {
     let mut buffer = [0; 26];
 
     reader.read_exact(&mut buffer[..]).and_then(|nread| {
@@ -77,11 +92,11 @@ fn read_event<R: BufRead>(reader: &mut R, delimeter_buf: &mut String) -> Result<
             let actor_id = BigEndian::read_u16(&buffer[20..22]);
             let namespace_length = BigEndian::read_u32(&buffer[22..26]);
 
-            // - 10 for the event id, -4 for the namespace length field, then minus the namespace, then the data length size;
+            // -4 for the total data length field,  - 10 for the event id, -4 for the namespace length field, then minus the namespace, then the data length size;
             // used to validate data length for now while (de-)serialization still sucks
-            let computed_data_length = total_size - 10 - 4 - namespace_length - 4;
+            let computed_data_length = total_size - 4 - 10 - 4 - namespace_length - 4;
 
-            let mut namespace_buffer = Vec::with_capacity(namespace_length as usize);
+            let mut namespace_buffer = vec![0; namespace_length as usize];
             reader.read_exact(&mut namespace_buffer).and_then(move |ns_read| {
                 String::from_utf8(namespace_buffer).map_err(|err| {
                     io::Error::new(io::ErrorKind::InvalidData, "namespace contained invalid utf8 character")
@@ -91,7 +106,7 @@ fn read_event<R: BufRead>(reader: &mut R, delimeter_buf: &mut String) -> Result<
                 reader.read_exact(&mut data_len_buffer).and_then(|()| {
                     let data_length = BigEndian::read_u32(&data_len_buffer);
                     debug_assert_eq!(data_length, computed_data_length);
-                    let mut data_buffer = Vec::with_capacity(data_length as usize);
+                    let mut data_buffer = vec![0; data_length as usize];
                     reader.read_exact(&mut data_buffer).map(|()| {
                         OwnedFloEvent::new(FloEventId::new(actor_id, event_counter), namespace, data_buffer)
                     })
@@ -137,6 +152,7 @@ impl EventReader for FSEventReader {
 
         index.get_next_entry(range_start).map(|entry| {
             let event_file = self.get_events_file(&entry);
+            trace!("range_start: {:?}, next_entry: {:?}, file: {:?}", range_start, entry, event_file);
             FSEventIter::initialize(entry.offset, limit, &event_file).unwrap_or_else(|err| {
                 error!("Unable to create event iterator: {:?}", err);
                 FSEventIter::error(err)

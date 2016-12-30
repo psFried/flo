@@ -2,7 +2,7 @@
 use std::sync::{Arc, RwLock};
 use std::path::PathBuf;
 use std::io::{self, Seek, Write, BufWriter};
-use std::fs::{File, OpenOptions};
+use std::fs::{File, OpenOptions, create_dir_all};
 
 use event_store::{EventWriter, StorageEngineOptions};
 use event_store::index::EventIndex;
@@ -20,12 +20,14 @@ impl FSEventWriter {
     pub fn initialize(index: Arc<RwLock<EventIndex>>, storage_options: &StorageEngineOptions) -> Result<FSEventWriter, io::Error> {
         let mut storage_dir = storage_options.storage_dir.clone();
         storage_dir.push(&storage_options.root_namespace);
+        create_dir_all(&storage_dir)?;
 
         let events_file = storage_dir.as_path().join(super::DATA_FILE_NAME);
         let open_result = OpenOptions::new().write(true).truncate(false).create(true).append(true).open(&events_file);
 
         open_result.and_then(|mut file| {
             file.seek(io::SeekFrom::End(0)).map(|file_offset| {
+                trace!("initializing writer starting at offset: {}", file_offset);
                 let writer = BufWriter::new(file);
 
                 FSEventWriter {
@@ -45,11 +47,14 @@ impl EventWriter for FSEventWriter {
     fn store<E: FloEvent>(&mut self, event: &E) -> Result<(), Self::Error> {
         use event_store::index::IndexEntry;
 
-        write_event(&mut self.event_writer, event).map(|size_on_disk| {
-            trace!("Wrote event: {:?} to disk as: {} bytes", event.id(), size_on_disk);
-            self.index.write().map(|mut index| {
-                let index_entry = IndexEntry::new(*event.id(), size_on_disk);
-                let evicted = index.add(index_entry);
+        let FSEventWriter{ref mut offset, ref mut index, ref mut event_writer, ..} = *self;
+
+        write_event(event_writer, event).map(|size_on_disk| {
+            trace!("Wrote event: {:?} to disk as: {} bytes, starting at offset: {}", event.id(), size_on_disk, offset);
+            index.write().map(|mut idx| {
+                let index_entry = IndexEntry::new(*event.id(), *offset);
+                let evicted = idx.add(index_entry);
+                *offset += size_on_disk;
                 if let Some(removed_event) = evicted {
                     debug!("Evicted old event: {:?}", removed_event.id);
                 }
@@ -59,7 +64,7 @@ impl EventWriter for FSEventWriter {
     }
 }
 
-fn write_event<W: Write, E: FloEvent>(writer: &mut W, event: &E) -> Result<u64, io::Error> {
+pub fn write_event<W: Write, E: FloEvent>(writer: &mut W, event: &E) -> Result<u64, io::Error> {
     use byteorder::{ByteOrder, BigEndian};
 
     //initialize buffer with FLO_EVT\n as first 8 characters and leave enough room to write event id, data length
@@ -69,8 +74,11 @@ fn write_event<W: Write, E: FloEvent>(writer: &mut W, event: &E) -> Result<u64, 
             0,0,0,0,                                  //namespace length (4 bytes for u32)
     ];
 
-    //includes the FLO_EVT\n header
-    let size_on_disk = (buffer.len() + event.namespace().len() + event.data_len() as usize) as u64;
+    let size_on_disk = (buffer.len() + //includes the FLO_EVT\n header
+            event.namespace().len() +  // length of namespace
+            4 +                        // 4 bytes for event data length (u32)
+            event.data_len() as usize  // length of event data
+    ) as u64;
 
 
     BigEndian::write_u32(&mut buffer[8..12], size_on_disk as u32 - 8); //subtract 8 because the total size includes the FLO_EVT\n tag
