@@ -7,17 +7,53 @@ pub const FLO_EVT: &'static str = "FLO_EVT\n";
 pub use self::writer::FSEventWriter;
 pub use self::reader::{FSEventReader, FSEventIter};
 use super::{StorageEngine, StorageEngineOptions, EventWriter, EventReader};
-use event_store::index::EventIndex;
+use event_store::index::{EventIndex, IndexEntry};
+use flo_event::{FloEvent};
 
+use std::sync::{Arc, RwLock};
 use std::path::{Path, PathBuf};
 use std::fs::File;
-use std::io;
+use std::io::{self, Read};
 
 pub struct FSStorageEngine;
 
-fn initialize_index(storage_opts: &StorageEngineOptions) -> Result<EventIndex, io::Error> {
+pub fn total_size_on_disk<E: FloEvent>(event: &E) -> u64 {
+    8 +             // FLO_EVT\n
+            4 +     // total data length
+            10 +    // event id
+            4 +     // namespace length
+            event.namespace().len() as u64 + // length of the actual namespace
+            4 +     // data length field
+            event.data_len() as u64 //the actual event data
+}
 
-    unimplemented!()
+fn events_file(storage_opts: &StorageEngineOptions) -> PathBuf {
+    let mut dir = storage_opts.storage_dir.as_path().join(&storage_opts.root_namespace);
+    dir.push(DATA_FILE_NAME);
+    dir
+}
+
+fn initialize_index(storage_opts: &StorageEngineOptions) -> Result<EventIndex, io::Error> {
+    let events_file = events_file(storage_opts);
+    FSEventIter::initialize(0, ::std::usize::MAX, &events_file).and_then(|mut event_iter| {
+        build_index(storage_opts.max_events, event_iter)
+    })
+}
+
+fn build_index(max_events: usize, iter: FSEventIter) -> Result<EventIndex, io::Error> {
+    let mut index = EventIndex::new(max_events);
+    let mut offset = 0;
+
+    for result in iter {
+        match result {
+            Ok(event) => {
+                index.add(IndexEntry::new(*event.id(), offset)); //don't care about possible evictions here
+                offset += total_size_on_disk(&event);
+            },
+            Err(err) => return Err(err)
+        }
+    }
+    Ok(index)
 }
 
 impl StorageEngine for FSStorageEngine {
@@ -25,9 +61,18 @@ impl StorageEngine for FSStorageEngine {
     type Reader = FSEventReader;
 
     fn initialize(options: StorageEngineOptions) -> Result<(Self::Writer, Self::Reader), io::Error> {
-        unimplemented!()
+        initialize_index(&options).and_then(|index| {
+            let index = Arc::new(RwLock::new(index));
+
+            FSEventWriter::initialize(index.clone(), &options).and_then(|writer| {
+                FSEventReader::initialize(index, &options).map(|reader| {
+                    (writer, reader)
+                })
+            })
+        })
     }
 }
+
 
 #[cfg(test)]
 mod test {
@@ -36,6 +81,7 @@ mod test {
     use event_store::{EventReader, EventWriter, StorageEngineOptions};
     use event_store::index::EventIndex;
     use flo_event::{FloEventId, FloEvent, OwnedFloEvent};
+    use std::io::Cursor;
 
     use tempdir::TempDir;
 
@@ -61,8 +107,39 @@ mod test {
             writer.store(&event3).expect("Failed to store event 3");
         }
 
-        let result = initialize_index(&storage_opts).expect("failed to inialize event index");
+        let (mut writer, mut reader) = FSStorageEngine::initialize(storage_opts).expect("failed to initialize storage engine");
 
+        let event4 = OwnedFloEvent::new(FloEventId::new(1, 4), "/yolo".to_owned(), "fourth event data".as_bytes().to_owned());
+        writer.store(&event4).unwrap();
+
+        let mut event_iter = reader.load_range(FloEventId::new(1, 2), 55);
+        let result = event_iter.next().expect("expected result to be Some").expect("failed to read event 3");
+        assert_eq!(event3, result);
+
+        let result = event_iter.next().expect("expected result to be Some").expect("failed to read event 4");
+        assert_eq!(event4, result);
+
+        assert!(event_iter.next().is_none());
+    }
+
+    #[test]
+    fn event_size_on_disk_is_computed_correctly() {
+        let event = OwnedFloEvent::new(FloEventId::new(9, 44), "/foo/bar".to_owned(), "something happened".as_bytes().to_owned());
+        let mut buffer = Vec::new();
+        let size = super::writer::write_event(&mut buffer, &event).expect("Failed to write event");
+        assert_eq!(buffer.len() as u64, size);
+
+        let size = total_size_on_disk(&event);
+        assert_eq!(buffer.len() as u64, size);
+    }
+
+    #[test]
+    fn event_header_is_read() {
+        let event = OwnedFloEvent::new(FloEventId::new(9, 44), "/foo/bar".to_owned(), "something happened".as_bytes().to_owned());
+        let mut buffer = Vec::new();
+        super::writer::write_event(&mut buffer, &event).expect("Failed to write event");
+
+        let header = super::reader::read_header(&mut Cursor::new(buffer)).expect("Failed to read header");
     }
 
     #[test]

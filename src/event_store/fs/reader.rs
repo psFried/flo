@@ -90,9 +90,6 @@ pub struct EventHeader {
 }
 
 impl EventHeader {
-    pub fn size_on_disk() -> usize {
-        26
-    }
 
     pub fn compute_data_length(&self) -> usize {
         (self.total_size - 4 - 10 - 4 - self.namespace_length - 4) as usize
