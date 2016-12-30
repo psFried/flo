@@ -82,45 +82,66 @@ fn has_next_event<R: BufRead>(reader: &mut R) -> Result<bool, io::Error> {
     })
 }
 
-pub fn read_event<R: Read>(reader: &mut R) -> Result<OwnedFloEvent, io::Error> {
+pub struct EventHeader {
+    pub total_size: u32,
+    pub event_counter: u64,
+    pub actor_id: u16,
+    pub namespace_length: u32,
+}
+
+impl EventHeader {
+    pub fn size_on_disk() -> usize {
+        26
+    }
+
+    pub fn compute_data_length(&self) -> usize {
+        (self.total_size - 4 - 10 - 4 - self.namespace_length - 4) as usize
+    }
+
+    pub fn event_id(&self) -> FloEventId {
+        FloEventId::new(self.actor_id, self.event_counter)
+    }
+}
+
+pub fn read_header<R: Read>(reader: &mut R) -> Result<EventHeader, io::Error> {
     let mut buffer = [0; 26];
+    reader.read_exact(&mut buffer[..])?;
 
-    reader.read_exact(&mut buffer[..]).and_then(|nread| {
-        if &buffer[..8] == super::FLO_EVT.as_bytes() {
-            let total_size = BigEndian::read_u32(&buffer[8..12]);
-            let event_counter = BigEndian::read_u64(&buffer[12..20]);
-            let actor_id = BigEndian::read_u16(&buffer[20..22]);
-            let namespace_length = BigEndian::read_u32(&buffer[22..26]);
+    if &buffer[..8] == super::FLO_EVT.as_bytes() {
+        Ok(EventHeader{
+            total_size: BigEndian::read_u32(&buffer[8..12]),
+            event_counter: BigEndian::read_u64(&buffer[12..20]),
+            actor_id: BigEndian::read_u16(&buffer[20..22]),
+            namespace_length: BigEndian::read_u32(&buffer[22..26]),
+        })
+    } else {
+        Err(invalid_bytes_err(format!("expected {:?}, got: {:?}", super::FLO_EVT.as_bytes(), &buffer[..8])))
+    }
+}
 
-            // -4 for the total data length field,  - 10 for the event id, -4 for the namespace length field, then minus the namespace, then the data length size;
-            // used to validate data length for now while (de-)serialization still sucks
-            let computed_data_length = total_size - 4 - 10 - 4 - namespace_length - 4;
-
-            let mut namespace_buffer = vec![0; namespace_length as usize];
-            reader.read_exact(&mut namespace_buffer).and_then(move |ns_read| {
-                String::from_utf8(namespace_buffer).map_err(|err| {
-                    io::Error::new(io::ErrorKind::InvalidData, "namespace contained invalid utf8 character")
-                })
-            }).and_then(|namespace| {
-                let mut data_len_buffer = [0; 4];
-                reader.read_exact(&mut data_len_buffer).and_then(|()| {
-                    let data_length = BigEndian::read_u32(&data_len_buffer);
-                    debug_assert_eq!(data_length, computed_data_length);
-                    let mut data_buffer = vec![0; data_length as usize];
-                    reader.read_exact(&mut data_buffer).map(|()| {
-                        OwnedFloEvent::new(FloEventId::new(actor_id, event_counter), namespace, data_buffer)
-                    })
+pub fn read_event<R: Read>(reader: &mut R) -> Result<OwnedFloEvent, io::Error> {
+    read_header(reader).and_then(|header| {
+        let mut namespace_buffer = vec![0; header.namespace_length as usize];
+        reader.read_exact(&mut namespace_buffer).and_then(move |ns_read| {
+            String::from_utf8(namespace_buffer).map_err(|err| {
+                invalid_bytes_err(format!("namespace contained invalid utf8 character: {:?}", err))
+            })
+        }).and_then(|namespace| {
+            let mut data_len_buffer = [0; 4];
+            reader.read_exact(&mut data_len_buffer).and_then(|()| {
+                let data_length = BigEndian::read_u32(&data_len_buffer);
+                debug_assert_eq!(data_length as usize, header.compute_data_length());
+                let mut data_buffer = vec![0; data_length as usize];
+                reader.read_exact(&mut data_buffer).map(|()| {
+                    OwnedFloEvent::new(header.event_id(), namespace, data_buffer)
                 })
             })
-
-        } else {
-            invalid_bytes_err(format!("Expected {:?}, got: {:?}", super::FLO_EVT.as_bytes(), &buffer[..8]))
-        }
+        })
     })
 }
 
-fn invalid_bytes_err(error_desc: String) -> Result<OwnedFloEvent, io::Error> {
-    Err(io::Error::new(io::ErrorKind::InvalidData, error_desc))
+fn invalid_bytes_err(error_desc: String) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, error_desc)
 }
 
 pub struct FSEventReader {
