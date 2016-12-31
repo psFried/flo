@@ -15,15 +15,31 @@ pub fn next_connection_id() -> ConnectionId {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum ClientMessage {
+pub enum ConsumerMessage {
     ClientConnect(ClientConnect),
     ClientAuth(ClientAuth),
-    Produce(ProduceEvent),
     UpdateMarker(ConnectionId, FloEventId),
     StartConsuming(ConnectionId, i64),
     Disconnect(ConnectionId),
     EventPersisted(ConnectionId, OwnedFloEvent),
     EventLoaded(ConnectionId, OwnedFloEvent),
+}
+unsafe impl Send for ConsumerMessage {}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum ProducerMessage {
+    ClientConnect(ClientConnect),
+    ClientAuth(ClientAuth),
+    Produce(ProduceEvent),
+    Disconnect(ConnectionId),
+}
+unsafe impl Send for ProducerMessage {}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum ClientMessage {
+    Consumer(ConsumerMessage),
+    Producer(ProducerMessage),
+    Both(ConsumerMessage, ProducerMessage),
 }
 unsafe impl Send for ClientMessage {}
 

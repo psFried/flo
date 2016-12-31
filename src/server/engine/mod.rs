@@ -4,7 +4,7 @@ mod producer;
 mod consumer;
 mod client_map;
 
-use self::api::ClientMessage;
+use self::api::{ClientMessage, ConsumerMessage, ProducerMessage};
 use self::producer::ProducerManager;
 use self::consumer::ConsumerManager;
 use event_store::{StorageEngine, EventWriter, EventReader, StorageEngineOptions};
@@ -21,13 +21,13 @@ use std::path::PathBuf;
 use std::net::SocketAddr;
 
 pub struct BackendChannels {
-    pub producer_manager: mpsc::Sender<ClientMessage>,
-    pub consumer_manager: mpsc::Sender<ClientMessage>,
+    pub producer_manager: mpsc::Sender<ProducerMessage>,
+    pub consumer_manager: mpsc::Sender<ConsumerMessage>,
 }
 
 pub fn run(storage_options: StorageEngineOptions) -> BackendChannels {
-    let (storage_sender, storage_receiver) = mpsc::channel::<ClientMessage>();
-    let (reader_sender, reader_receiver) = mpsc::channel::<ClientMessage>();
+    let (producer_tx, producer_rx) = mpsc::channel::<ProducerMessage>();
+    let (consumer_tx, consumer_rx) = mpsc::channel::<ConsumerMessage>();
 
     //TODO: set max events and namespace and have some proper error handling
     let actor_id: ActorId = 1;
@@ -36,11 +36,11 @@ pub fn run(storage_options: StorageEngineOptions) -> BackendChannels {
 
 
     //TODO: write this whole fucking thing
-    let producer_manager_sender = reader_sender.clone();
+    let consumer_manager_sender = consumer_tx.clone();
     thread::spawn(move || {
-        let mut producer_manager = ProducerManager::new(event_writer, producer_manager_sender, actor_id, highest_event_id.event_counter);
+        let mut producer_manager = ProducerManager::new(event_writer, consumer_manager_sender, actor_id, highest_event_id.event_counter);
         loop {
-            match storage_receiver.recv() {
+            match producer_rx.recv() {
                 Ok(msg) => {
                     producer_manager.process(msg).unwrap();
                 }
@@ -52,12 +52,12 @@ pub fn run(storage_options: StorageEngineOptions) -> BackendChannels {
         }
     });
 
-    let consumer_manager_sender = reader_sender.clone();
+    let consumer_manager_sender = consumer_tx.clone();
     thread::spawn(move || {
         let mut consumer_manager = ConsumerManager::new(event_reader, consumer_manager_sender, highest_event_id);
 
         loop {
-            match reader_receiver.recv() {
+            match consumer_rx.recv() {
                 Ok(client_message) => {
                     consumer_manager.process(client_message).unwrap();
                 }
@@ -70,8 +70,8 @@ pub fn run(storage_options: StorageEngineOptions) -> BackendChannels {
     });
 
     BackendChannels {
-        producer_manager: storage_sender,
-        consumer_manager: reader_sender.clone(),
+        producer_manager: producer_tx,
+        consumer_manager: consumer_tx.clone(),
     }
 }
 

@@ -1,5 +1,5 @@
 
-use server::engine::api::{ConnectionId, ClientConnect, ProduceEvent, EventAck, ClientMessage, ServerMessage};
+use server::engine::api::{ConnectionId, ClientConnect, ProduceEvent, EventAck, ClientMessage, ConsumerMessage, ProducerMessage, ServerMessage};
 use server::engine::client_map::ClientMap;
 use event_store::EventWriter;
 use event_store::test_util::TestEventWriter;
@@ -19,12 +19,12 @@ pub struct ProducerManager<S: EventWriter> {
     actor_id: ActorId,
     event_store: S,
     highest_event_id: EventCounter,
-    consumer_manager_channel: Sender<ClientMessage>,
+    consumer_manager_channel: Sender<ConsumerMessage>,
     clients: ClientMap,
 }
 
 impl <S: EventWriter> ProducerManager<S> {
-    pub fn new(storage: S, consumer_manager_channel: Sender<ClientMessage>, actor_id: ActorId, highest_event_id: EventCounter) -> ProducerManager<S> {
+    pub fn new(storage: S, consumer_manager_channel: Sender<ConsumerMessage>, actor_id: ActorId, highest_event_id: EventCounter) -> ProducerManager<S> {
         ProducerManager {
             actor_id: actor_id,
             event_store: storage,
@@ -34,13 +34,13 @@ impl <S: EventWriter> ProducerManager<S> {
         }
     }
 
-    pub fn process(&mut self, client_message: ClientMessage) -> Result<(), String> {
+    pub fn process(&mut self, client_message: ProducerMessage) -> Result<(), String> {
         match client_message {
-            ClientMessage::ClientConnect(client_connect) => {
+            ProducerMessage::ClientConnect(client_connect) => {
                 self.clients.add(client_connect);
                 Ok(())
             }
-            ClientMessage::Produce(produce_event) => {
+            ProducerMessage::Produce(produce_event) => {
                 self.produce_event(produce_event)
             }
             msg @ _ => Err(format!("No ProducerManager handling for client message: {:?}", msg))

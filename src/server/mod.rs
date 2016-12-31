@@ -12,7 +12,7 @@ use tokio_core::io::Io;
 
 use self::channel_sender::ChannelSender;
 use protocol::{ClientProtocolImpl, ServerProtocolImpl};
-use server::engine::api::{self, ClientMessage, ServerMessage, ClientConnect};
+use server::engine::api::{self, ClientMessage, ServerMessage, ProducerMessage, ConsumerMessage, ClientConnect};
 use server::flo_io::{ClientMessageStream, ServerMessageStream};
 use server::engine::BackendChannels;
 use std::path::PathBuf;
@@ -64,7 +64,10 @@ pub fn run(options: ServerOptions) {
             message_sender: server_tx.clone(),
         };
 
-        channel_sender.send(ClientMessage::ClientConnect(client_connect));
+        channel_sender.send(ClientMessage::Both(
+            ConsumerMessage::ClientConnect(client_connect.clone()),
+            ProducerMessage::ClientConnect(client_connect)
+        ));
 
         let client_stream = ClientMessageStream::new(connection_id, tcp_reader, ClientProtocolImpl);
         let client_to_server = client_stream.map_err(|err| {

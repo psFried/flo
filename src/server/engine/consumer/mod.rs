@@ -2,7 +2,7 @@ mod client;
 
 pub use self::client::{Client, ClientState, ClientSendError};
 
-use server::engine::api::{ConnectionId, ServerMessage, ClientMessage, ClientConnect};
+use server::engine::api::{ConnectionId, ServerMessage, ClientMessage, ConsumerMessage, ProducerMessage, ClientConnect};
 use flo_event::{FloEvent, OwnedFloEvent, FloEventId};
 
 use futures::sync::mpsc::UnboundedSender;
@@ -20,13 +20,13 @@ const MAX_CACHED_EVENTS: usize = 1024;
 
 pub struct ConsumerManager<R: EventReader + 'static> {
     event_reader: R,
-    my_sender: mpsc::Sender<ClientMessage>,
+    my_sender: mpsc::Sender<ConsumerMessage>,
     consumers: ConsumerMap,
     greatest_event_id: FloEventId,
 }
 
 impl <R: EventReader + 'static> ConsumerManager<R> {
-    pub fn new(reader: R, sender: mpsc::Sender<ClientMessage>, greatest_event_id: FloEventId) -> Self {
+    pub fn new(reader: R, sender: mpsc::Sender<ConsumerMessage>, greatest_event_id: FloEventId) -> Self {
         ConsumerManager {
             my_sender: sender,
             event_reader: reader,
@@ -35,21 +35,21 @@ impl <R: EventReader + 'static> ConsumerManager<R> {
         }
     }
 
-    pub fn process(&mut self, message: ClientMessage) -> Result<(), String> {
+    pub fn process(&mut self, message: ConsumerMessage) -> Result<(), String> {
         trace!("Got message: {:?}", message);
         match message {
-            ClientMessage::ClientConnect(connect) => {
+            ConsumerMessage::ClientConnect(connect) => {
                 self.consumers.add(connect);
                 Ok(())
             }
-            ClientMessage::StartConsuming(connection_id, limit) => {
+            ConsumerMessage::StartConsuming(connection_id, limit) => {
                 self.start_consuming(connection_id, limit)
             }
-            ClientMessage::EventLoaded(connection_id, event) => {
+            ConsumerMessage::EventLoaded(connection_id, event) => {
                 self.update_greatest_event(event.id);
                 self.consumers.send_event(connection_id, Arc::new(event))
             }
-            ClientMessage::EventPersisted(connection_id, event) => {
+            ConsumerMessage::EventPersisted(connection_id, event) => {
                 self.update_greatest_event(event.id);
                 warn!("EventPersisted not yet implemented! ConnectionId: {}, Event: {:?}", connection_id, event);
                 Ok(())
@@ -78,7 +78,7 @@ impl <R: EventReader + 'static> ConsumerManager<R> {
                         Ok(owned_event) => {
                             trace!("Reader thread sending event: {:?} to consumer manager", owned_event.id());
                             //TODO: is unwrap the right thing here?
-                            event_sender.send(ClientMessage::EventLoaded(connection_id, owned_event)).unwrap();
+                            event_sender.send(ConsumerMessage::EventLoaded(connection_id, owned_event)).unwrap();
                         }
                         Err(err) => {
                             error!("Error reading event: {:?}", err);

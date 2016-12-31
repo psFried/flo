@@ -2,7 +2,7 @@ use futures::{Poll, Async};
 use futures::stream::Stream;
 use std::io::Read;
 
-use server::engine::api::{self, ClientMessage, ConnectionId};
+use server::engine::api::{self, ClientMessage, ProducerMessage, ConsumerMessage, ConnectionId};
 use protocol::{ClientProtocol, ProtocolMessage, EventHeader};
 use nom::IResult;
 
@@ -190,7 +190,7 @@ impl <R: Read, P: ClientProtocol> ClientMessageStream<R, P> {
         if in_progress_event.remaining() == 0 {
             // we were able to read all of the data required for the event
             *state = MessageStreamState::Parsing;
-            Ok(Async::Ready(Some(ClientMessage::Produce(in_progress_event.event))))
+            Ok(Async::Ready(Some(ClientMessage::Producer(ProducerMessage::Produce(in_progress_event.event)))))
         } else {
             //need to wait for more data that is part of this event
             *state = MessageStreamState::ReadEvent(in_progress_event);
@@ -241,16 +241,21 @@ impl <R: Read, P: ClientProtocol> Stream for ClientMessageStream<R, P> {
 
 fn to_engine_api_message(protocol_message: ProtocolMessage, connection_id: ConnectionId) -> ClientMessage {
     match protocol_message {
-        ProtocolMessage::StartConsuming(count) => ClientMessage::StartConsuming(connection_id, count),
+        ProtocolMessage::StartConsuming(count) => {
+            ClientMessage::Consumer(ConsumerMessage::StartConsuming(connection_id, count))
+        },
         ProtocolMessage::ClientAuth {namespace, username, password} => {
-            ClientMessage::ClientAuth(api::ClientAuth{
+            let auth = api::ClientAuth {
                 connection_id: connection_id,
                 namespace: namespace,
                 username: username,
                 password: password,
-            })
+            };
+            ClientMessage::Both(ConsumerMessage::ClientAuth(auth.clone()), ProducerMessage::ClientAuth(auth))
         }
-        ProtocolMessage::UpdateMarker(event_id) => ClientMessage::UpdateMarker(connection_id, event_id),
+        ProtocolMessage::UpdateMarker(event_id) => {
+            ClientMessage::Consumer(ConsumerMessage::UpdateMarker(connection_id, event_id))
+        },
         m @ _ => {
             panic!("Unexpected protocol message: {:?}", m)
         }
@@ -264,7 +269,7 @@ mod test {
     use futures::stream::Stream;
     use std::io::{self, Read, Cursor};
 
-    use server::engine::api::{ClientMessage, ClientAuth, ProduceEvent};
+    use server::engine::api::{ClientMessage, ConsumerMessage, ProducerMessage, ClientAuth, ProduceEvent};
     use protocol::{ClientProtocol, ClientProtocolImpl, ProtocolMessage, EventHeader};
     use nom::{IResult, Needed, ErrorKind, Err};
 
@@ -288,28 +293,32 @@ mod test {
         let mut subject = ClientMessageStream::new(123, reader, ClientProtocolImpl);
 
         let result = subject.poll();
-        let expected = Ok(Async::Ready(Some(ClientMessage::Produce(ProduceEvent{
+        let expected = Ok(Async::Ready(Some(ClientMessage::Producer(ProducerMessage::Produce(ProduceEvent{
             op_id: 4,
             connection_id: 123,
             event_data: "evt_one".to_owned().into_bytes()
-        }))));
+        })))));
         assert_eq!(expected, result);
         
         let result = subject.poll();
-        let expected = Ok(Async::Ready(Some(ClientMessage::ClientAuth(ClientAuth{
+        let expected_auth = ClientAuth {
             connection_id: 123,
             namespace: "the namespace".to_owned(),
             username: "the username".to_owned(),
             password: "the password".to_owned()
-        }))));
+        };
+        let expected = Ok(Async::Ready(Some(ClientMessage::Both(
+                ConsumerMessage::ClientAuth(expected_auth.clone()),
+                ProducerMessage::ClientAuth(expected_auth.clone())
+        ))));
         assert_eq!(expected, result);
 
         let result = subject.poll();
-        let expected = Ok(Async::Ready(Some(ClientMessage::Produce(ProduceEvent{
+        let expected = Ok(Async::Ready(Some(ClientMessage::Producer(ProducerMessage::Produce(ProduceEvent{
             op_id: 5,
             connection_id: 123,
             event_data: "evt_two".to_owned().into_bytes()
-        }))));
+        })))));
         assert_eq!(expected, result);
         
         let result = subject.poll();
@@ -398,7 +407,7 @@ mod test {
 
         let result = subject.poll().expect("Expected Ok, got Err");
         match result {
-            Async::Ready(Some(ClientMessage::Produce(event))) => {
+            Async::Ready(Some(ClientMessage::Producer(ProducerMessage::Produce(event)))) => {
                 let expected_data = (&input_bytes[8..48]).to_vec();
                 assert_eq!(expected_data, event.event_data);
             }
@@ -424,7 +433,7 @@ mod test {
         let result = subject.poll().expect("Expected Ok, got Err");
 
         match result {
-            Async::Ready(Some(ClientMessage::Produce(event))) => {
+            Async::Ready(Some(ClientMessage::Producer(ProducerMessage::Produce(event)))) => {
                 let expected_bytes: Vec<u8> = "the event data".into();
                 assert_eq!(expected_bytes, event.event_data);
                 assert_eq!(999, event.op_id);
@@ -458,13 +467,19 @@ mod test {
 
         let result = subject.poll().expect("Expected Ok, got Err");
 
+        let expected_auth = ClientAuth{
+            connection_id: 123,
+            namespace: "theNamespace".to_owned(),
+            username: "theUsername".to_owned(),
+            password: "thePassword".to_owned(),
+        };
+
         match result {
             Async::Ready(message) => {
                 match message {
-                    Some(ClientMessage::ClientAuth(connect)) => {
-                        assert_eq!("theUsername", &connect.username);
-                        assert_eq!("thePassword", &connect.password);
-                        assert_eq!("theNamespace", &connect.namespace);
+                    Some(ClientMessage::Both(consumer_msg, producer_msg)) => {
+                        assert_eq!(ConsumerMessage::ClientAuth(expected_auth.clone()), consumer_msg);
+                        assert_eq!(ProducerMessage::ClientAuth(expected_auth.clone()), producer_msg);
                     }
                     other @ _ => {
                         panic!("Expected ClientConnnect, got: {:?}", other);
