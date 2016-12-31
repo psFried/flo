@@ -22,14 +22,16 @@ pub struct ConsumerManager<R: EventReader + 'static> {
     event_reader: R,
     my_sender: mpsc::Sender<ClientMessage>,
     consumers: ConsumerMap,
+    greatest_event_id: FloEventId,
 }
 
 impl <R: EventReader + 'static> ConsumerManager<R> {
-    pub fn new(reader: R, sender: mpsc::Sender<ClientMessage>) -> Self {
+    pub fn new(reader: R, sender: mpsc::Sender<ClientMessage>, greatest_event_id: FloEventId) -> Self {
         ConsumerManager {
             my_sender: sender,
             event_reader: reader,
             consumers: ConsumerMap::new(),
+            greatest_event_id: greatest_event_id,
         }
     }
 
@@ -44,10 +46,11 @@ impl <R: EventReader + 'static> ConsumerManager<R> {
                 self.start_consuming(connection_id, limit)
             }
             ClientMessage::EventLoaded(connection_id, event) => {
+                self.update_greatest_event(event.id);
                 self.consumers.send_event(connection_id, Arc::new(event))
             }
             ClientMessage::EventPersisted(connection_id, event) => {
-
+                self.update_greatest_event(event.id);
                 warn!("EventPersisted not yet implemented! ConnectionId: {}, Event: {:?}", connection_id, event);
                 Ok(())
             }
@@ -57,8 +60,14 @@ impl <R: EventReader + 'static> ConsumerManager<R> {
         }
     }
 
+    fn update_greatest_event(&mut self, id: FloEventId) {
+        if id > self.greatest_event_id {
+            self.greatest_event_id = id;
+        }
+    }
+
     fn start_consuming(&mut self, connection_id: ConnectionId, limit: i64) -> Result<(), String> {
-        let ConsumerManager{ref mut event_reader, ref my_sender, ref consumers} = *self;
+        let ConsumerManager{ref mut event_reader, ref my_sender, ref consumers, ref greatest_event_id} = *self;
         consumers.get_consumer_position(connection_id).map(|start_id| {
             let event_iter = event_reader.load_range(start_id, limit as usize);
 

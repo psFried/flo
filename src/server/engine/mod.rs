@@ -36,9 +36,9 @@ pub fn run(storage_options: StorageEngineOptions) -> BackendChannels {
 
 
     //TODO: write this whole fucking thing
-    let consumer_manager_sender = reader_sender.clone();
+    let producer_manager_sender = reader_sender.clone();
     thread::spawn(move || {
-        let mut producer_manager = ProducerManager::new(event_writer, consumer_manager_sender, actor_id, highest_event_id.event_counter);
+        let mut producer_manager = ProducerManager::new(event_writer, producer_manager_sender, actor_id, highest_event_id.event_counter);
         loop {
             match storage_receiver.recv() {
                 Ok(msg) => {
@@ -54,7 +54,7 @@ pub fn run(storage_options: StorageEngineOptions) -> BackendChannels {
 
     let consumer_manager_sender = reader_sender.clone();
     thread::spawn(move || {
-        let mut consumer_manager = ConsumerManager::new(event_reader, consumer_manager_sender);
+        let mut consumer_manager = ConsumerManager::new(event_reader, consumer_manager_sender, highest_event_id);
 
         loop {
             match reader_receiver.recv() {
