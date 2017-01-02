@@ -66,6 +66,7 @@ impl <S: EventWriter> ProducerManager<S> {
                 event_id: event_id,
             });
             self.clients.send(producer_id, event_ack);
+            self.consumer_manager_channel.send(ConsumerMessage::EventPersisted(producer_id, owned_event))
         });
         Ok(())
     }

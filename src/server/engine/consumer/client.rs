@@ -29,6 +29,7 @@ impl ::std::fmt::Display for ClientSendError {
     }
 }
 
+#[derive(Debug, PartialEq)]
 pub enum ConsumeType {
     File,
     Memory,
@@ -93,6 +94,15 @@ impl Client {
         &self.addr
     }
 
+    pub fn start_consuming(&mut self, state: ConsumingState) {
+        self.consumer_state = ClientState::Consuming(state);
+    }
+
+    pub fn stop_consuming(&mut self) {
+        let event_id = self.get_current_position();
+        self.consumer_state = ClientState::NotConsuming(event_id);
+    }
+
     pub fn send(&mut self, message: ServerMessage) -> Result<(), ClientSendError> {
         let conn_id = self.connection_id;
         trace!("Sending message to client: {} : {:?}", conn_id, message);
@@ -105,6 +115,13 @@ impl Client {
         self.sender.send(message).map_err(|send_err| {
             ClientSendError(send_err.into_inner())
         })
+    }
+
+    pub fn is_awaiting_new_event(&self) -> bool {
+        match self.consumer_state {
+            ClientState::Consuming(ref state) if state.consume_type == ConsumeType::Memory => true,
+            _ => false
+        }
     }
 
     pub fn get_current_position(&self) -> FloEventId {
