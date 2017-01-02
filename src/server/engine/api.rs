@@ -83,6 +83,7 @@ pub struct ClientAuth {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct ProduceEvent {
+    pub namespace: String,
     pub connection_id: ConnectionId,
     pub op_id: u32,
     pub event_data: Vec<u8>

@@ -160,11 +160,13 @@ impl <R: Read, P: ClientProtocol> ClientMessageStream<R, P> {
                 evt
             } else {
                 evt_header.map(|header| {
+                    let EventHeader{namespace, op_id, data_length} = header;
                     InProgressEvent{
                         event: api::ProduceEvent{
+                            namespace: namespace,
                             connection_id: *connection_id,
-                            op_id: header.op_id,
-                            event_data: vec![0; header.data_length as usize]
+                            op_id: op_id,
+                            event_data: vec![0; data_length as usize]
                         },
                         position: 0
                     }
@@ -277,14 +279,14 @@ mod test {
     fn multiple_events_are_read_in_sequence() {
         let reader = {
             let mut b = Vec::new();
-            b.extend_from_slice(b"FLO_PRO\n");
+            b.extend_from_slice(b"FLO_PRO\n/foo/bar\n");
             b.extend_from_slice(&[0, 0, 0, 4, 0, 0, 0, 7]);
             b.extend_from_slice(b"evt_one");
             b.extend_from_slice(b"FLO_AUT\n");
             b.extend_from_slice(b"the namespace\n");
             b.extend_from_slice(b"the username\n");
             b.extend_from_slice(b"the password\n");
-            b.extend_from_slice(b"FLO_PRO\n");
+            b.extend_from_slice(b"FLO_PRO\n/baz\n");
             b.extend_from_slice(&[0, 0, 0, 5, 0, 0, 0, 7]);
             b.extend_from_slice(b"evt_two");
             Cursor::new(b)
@@ -294,6 +296,7 @@ mod test {
 
         let result = subject.poll();
         let expected = Ok(Async::Ready(Some(ClientMessage::Producer(ProducerMessage::Produce(ProduceEvent{
+            namespace: "/foo/bar".to_owned(),
             op_id: 4,
             connection_id: 123,
             event_data: "evt_one".to_owned().into_bytes()
@@ -315,6 +318,7 @@ mod test {
 
         let result = subject.poll();
         let expected = Ok(Async::Ready(Some(ClientMessage::Producer(ProducerMessage::Produce(ProduceEvent{
+            namespace: "/baz".to_owned(),
             op_id: 5,
             connection_id: 123,
             event_data: "evt_two".to_owned().into_bytes()
@@ -379,7 +383,7 @@ mod test {
         struct Proto;
         impl ClientProtocol for Proto {
             fn parse_any<'a>(&'a self, buffer: &'a [u8]) -> IResult<&'a [u8], ProtocolMessage> {
-                IResult::Done(&buffer[8..], ProtocolMessage::ProduceEvent(EventHeader{op_id: 789, data_length: 40}))
+                IResult::Done(&buffer[8..], ProtocolMessage::ProduceEvent(EventHeader{namespace: "foo".to_owned(), op_id: 789, data_length: 40}))
             }
         }
 
@@ -424,7 +428,7 @@ mod test {
         impl ClientProtocol for Proto {
             fn parse_any<'a>(&'a self, buffer: &'a [u8]) -> IResult<&'a [u8], ProtocolMessage> {
                 //           remaining buffer excluded data length
-                IResult::Done(&buffer[16..], ProtocolMessage::ProduceEvent(EventHeader{op_id: 999, data_length: 14}))
+                IResult::Done(&buffer[16..], ProtocolMessage::ProduceEvent(EventHeader{namespace: "foo".to_owned(), op_id: 999, data_length: 14}))
             }
         }
 

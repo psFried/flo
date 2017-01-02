@@ -65,7 +65,7 @@ macro_rules! integration_test {
 
 integration_test!{event_is_written_and_ackgnowledged, _port, tcp_stream, {
     let event_data = b"ninechars";
-    let op_id = produce_event(&mut tcp_stream, &event_data[..]);
+    let op_id = produce_event(&mut tcp_stream, "/foo/bar", &event_data[..]);
 
     let mut buff = [0; 1024];
     let nread = tcp_stream.read(&mut buff).unwrap();
@@ -79,10 +79,12 @@ integration_test!{event_is_written_and_ackgnowledged, _port, tcp_stream, {
 
 integration_test!{persisted_event_are_consumed_after_they_are_written, server_port, tcp_stream, {
     let event1_data = b"first event data";
-    produce_event(&mut tcp_stream, &event1_data[..]);
+    let first_namespace = "/first".to_owned();
+    produce_event(&mut tcp_stream, &first_namespace, &event1_data[..]);
 
     let event2_data = b"second event data";
-    produce_event(&mut tcp_stream, &event2_data[..]);
+    let second_namespace = "/first".to_owned();
+    produce_event(&mut tcp_stream, &second_namespace, &event2_data[..]);
 
     thread::sleep(Duration::from_millis(250));
     let mut buffer = [0; 128];
@@ -96,7 +98,9 @@ integration_test!{persisted_event_are_consumed_after_they_are_written, server_po
 
     let results = read_events(&mut consumer, 2);
     assert_eq!(event1_data, results[0].data());
+    assert_eq!(first_namespace, results[0].namespace);
     assert_eq!(event2_data, results[1].data());
+    assert_eq!(second_namespace, results[1].namespace);
 }}
 
 integration_test!{events_are_consumed_by_another_connection_as_they_are_written, server_port, tcp_stream, {
@@ -105,10 +109,10 @@ integration_test!{events_are_consumed_by_another_connection_as_they_are_written,
     consumer.write_all(&[0, 0, 0, 0, 0, 0, 0, 2]).unwrap();
 
     let event1_data = b"first event data";
-    produce_event(&mut tcp_stream, &event1_data[..]);
+    produce_event(&mut tcp_stream, "/animal/pig", &event1_data[..]);
 
     let event2_data = b"second event data";
-    produce_event(&mut tcp_stream, &event2_data[..]);
+    produce_event(&mut tcp_stream, "/animal/donkey", &event2_data[..]);
 
     let results = read_events(&mut consumer, 2);
     assert_eq!(event1_data, results[0].data());
@@ -188,14 +192,16 @@ fn connect(port: u16) -> TcpStream {
 
 static mut OP_ID: AtomicUsize = ATOMIC_USIZE_INIT;
 
-fn produce_event(tcp_stream: &mut TcpStream, bytes: &[u8]) -> u32 {
+fn produce_event(tcp_stream: &mut TcpStream, namespace: &str, bytes: &[u8]) -> u32 {
 
     let op_id = unsafe {
         OP_ID.fetch_add(1, Ordering::SeqCst) as u32
     };
+    tcp_stream.write_all(b"FLO_PRO\n").unwrap();
+    tcp_stream.write_all(namespace.as_bytes()).unwrap();
+    tcp_stream.write_all(b"\n").unwrap();
     let mut buffer = [0; 4];
     BigEndian::write_u32(&mut buffer[..], op_id);
-    tcp_stream.write_all(b"FLO_PRO\n").unwrap();
     tcp_stream.write_all(&buffer).unwrap();
 
     BigEndian::write_u32(&mut buffer[..], bytes.len() as u32);

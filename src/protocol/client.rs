@@ -38,10 +38,12 @@ named!{pub parse_auth<ProtocolMessage>,
 named!{pub parse_producer_event<ProtocolMessage>,
     chain!(
         _tag: tag!(PRODUCE_EVENT) ~
+        namespace: parse_str ~
         op_id: be_u32 ~
         data_len: be_u32,
         || {
             ProtocolMessage::ProduceEvent(EventHeader{
+                namespace: namespace.to_owned(),
                 op_id: op_id,
                 data_length: data_len
             })
@@ -76,6 +78,7 @@ named!{pub parse_any<ProtocolMessage>, alt!( parse_producer_event | parse_update
 
 #[derive(Debug, PartialEq)]
 pub struct EventHeader {
+    pub namespace: String,
     pub op_id: u32,
     pub data_length: u32,
 }
@@ -148,14 +151,14 @@ mod test {
     #[test]
     fn parse_producer_event_parses_correct_event() {
         let mut input = Vec::new();
-        input.extend_from_slice(b"FLO_PRO\n");
+        input.extend_from_slice(b"FLO_PRO\n/the/namespace\n");
         input.extend_from_slice(&[0, 0, 0, 9]); // op id
         input.extend_from_slice(&[0, 0, 0, 5]); // hacky way to set the length as a u32
         input.extend_from_slice(&[6, 7, 8]);
 
         let (remaining, result) = parse_producer_event(&input).unwrap();
 
-        let expected = ProtocolMessage::ProduceEvent(EventHeader{op_id: 9, data_length: 5});
+        let expected = ProtocolMessage::ProduceEvent(EventHeader{namespace: "/the/namespace".to_owned(), op_id: 9, data_length: 5});
         assert_eq!(expected, result);
         assert_eq!(&[6, 7, 8], remaining);
     }
