@@ -1,5 +1,7 @@
 use nom::{be_u64, be_u32, be_u16, be_i64, IResult};
 use flo_event::FloEventId;
+use std::io::{self, Read, Write};
+use byteorder::{ByteOrder, BigEndian};
 
 pub mod headers {
     pub const CLIENT_AUTH: &'static str = "FLO_AUT\n";
@@ -83,6 +85,7 @@ pub struct EventHeader {
     pub data_length: u32,
 }
 
+
 #[derive(Debug, PartialEq)]
 pub enum ProtocolMessage {
     ProduceEvent(EventHeader),
@@ -92,6 +95,59 @@ pub enum ProtocolMessage {
         namespace: String,
         username: String,
         password: String,
+    }
+}
+
+fn set_header(buf: &mut [u8], header: &'static str) {
+    (&mut buf[..8]).copy_from_slice(header.as_bytes());
+}
+
+fn string_to_buffer(mut buf: &mut [u8], string: &String) -> Result<usize, io::Error> {
+    let str_len = string.len();
+    (&mut buf[..str_len]).copy_from_slice(string.as_bytes());
+    buf[str_len] = b'\n';
+    Ok(str_len + 1)
+}
+
+fn read_procude_header(header: &EventHeader, mut buf: &mut [u8]) -> Result<usize, io::Error> {
+    set_header(buf, PRODUCE_EVENT);
+    let mut pos = 8;
+    pos += string_to_buffer(&mut buf[pos..], &header.namespace)?;
+
+    BigEndian::write_u32(&mut buf[pos..(pos + 4)], header.op_id);
+    pos += 4;
+
+    BigEndian::write_u32(&mut buf[pos..(pos + 4)], header.data_length);
+    Ok(pos + 4)
+}
+
+impl Read for ProtocolMessage {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize, io::Error> {
+        let mut nread = 0;
+        match *self {
+            ProtocolMessage::ProduceEvent(ref header) => {
+                read_procude_header(header, buf)
+            }
+            ProtocolMessage::StartConsuming(limit) => {
+                set_header(buf, START_CONSUMING);
+                BigEndian::write_i64(&mut buf[8..16], limit);
+                Ok(16)
+            }
+            ProtocolMessage::UpdateMarker(id) => {
+                set_header(buf, UPDATE_MARKER);
+                BigEndian::write_u64(&mut buf[8..16], id.event_counter);
+                BigEndian::write_u16(&mut buf[16..18], id.actor);
+                Ok(18)
+            }
+            ProtocolMessage::ClientAuth {ref namespace, ref username, ref password} => {
+                set_header(buf, CLIENT_AUTH);
+                let mut pos = 8;
+                pos += string_to_buffer(&mut buf[pos..], namespace)?;
+                pos += string_to_buffer(&mut buf[pos..], username)?;
+                pos += string_to_buffer(&mut buf[pos..], password)?;
+                Ok(pos)
+            }
+        }
     }
 }
 
@@ -110,6 +166,7 @@ impl ClientProtocol for ClientProtocolImpl {
 #[cfg(test)]
 mod test {
     use super::*;
+    use std::io::Read;
     use nom::IResult;
     use server::engine::api::{ClientMessage, ClientAuth};
     use flo_event::FloEventId;
@@ -124,48 +181,50 @@ mod test {
         }
     }
 
+    fn test_serialize_then_deserialize(mut message: ProtocolMessage) {
+        let mut buffer = [0; 128];
+
+        let len = message.read(&mut buffer[..]).expect("failed to serialize message to buffer");
+        (&mut buffer[len..(len + 4)]).copy_from_slice(&[4, 3, 2, 1]); // extra bytes at the end of the buffer
+        println!("buffer: {:?}", &buffer[..(len + 4)]);
+
+        match parse_any(&buffer) {
+            IResult::Done(remaining, result) => {
+                assert_eq!(message, result);
+                assert!(remaining.starts_with(&[4, 3, 2, 1]));
+            }
+            IResult::Error(err) => {
+                panic!("Got parse error: {:?}", err)
+            }
+            IResult::Incomplete(need) => {
+                panic!("Got incomplete: {:?}", need)
+            }
+        }
+    }
+
     #[test]
     fn event_marker_update_is_parsed() {
-        let mut input = Vec::new();
-        input.extend_from_slice(b"FLO_UMK\n");
-        input.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, 255]); //event counter
-        input.extend_from_slice(&[0, 2]);  //actor id
-
-        let expected = ProtocolMessage::UpdateMarker(FloEventId::new(2, 255));
-
-        assert_parsed_eq(expected, parse_any(&input));
+        test_serialize_then_deserialize(ProtocolMessage::UpdateMarker(FloEventId::new(2, 255)));
     }
 
     #[test]
     fn start_consuming_message_is_parsed() {
-        let input = {
-            let mut b = Vec::new();
-            b.extend_from_slice(b"FLO_CNS\n");
-            b.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, 196]);
-            b
-        };
-        let expected = ProtocolMessage::StartConsuming(196);
-        assert_parsed_eq(expected, parse_any(&input));
+        test_serialize_then_deserialize(ProtocolMessage::StartConsuming(214567));
     }
 
     #[test]
     fn parse_producer_event_parses_correct_event() {
-        let mut input = Vec::new();
-        input.extend_from_slice(b"FLO_PRO\n/the/namespace\n");
-        input.extend_from_slice(&[0, 0, 0, 9]); // op id
-        input.extend_from_slice(&[0, 0, 0, 5]); // hacky way to set the length as a u32
-        input.extend_from_slice(&[6, 7, 8]);
-
-        let (remaining, result) = parse_producer_event(&input).unwrap();
-
-        let expected = ProtocolMessage::ProduceEvent(EventHeader{namespace: "/the/namespace".to_owned(), op_id: 9, data_length: 5});
-        assert_eq!(expected, result);
-        assert_eq!(&[6, 7, 8], remaining);
+        let input = ProtocolMessage::ProduceEvent(EventHeader {
+            namespace: "/the/namespace".to_owned(),
+            op_id: 9,
+            data_length: 5,
+        });
+        test_serialize_then_deserialize(input);
     }
 
 
     #[test]
-    fn parse_header_returns_incomplete_result_when_password_is_missing() {
+    fn parse_client_auth_returns_incomplete_result_when_password_is_missing() {
         let mut input = Vec::new();
         input.extend_from_slice(b"FLO_AUT\n");
         input.extend_from_slice(b"hello\n");
@@ -179,25 +238,16 @@ mod test {
     }
 
     #[test]
-    fn parse_header_parses_valid_header_with_no_remaining_bytes() {
-        let mut input = Vec::new();
-        input.extend_from_slice(b"FLO_AUT\n");
-        input.extend_from_slice(b"hello\n");
-        input.extend_from_slice(b"usr\n");
-        input.extend_from_slice(b"pass\n");
-        let (remaining, result) = parse_auth(&input).unwrap();
-
-        let expected_header = ProtocolMessage::ClientAuth {
+    fn parse_client_auth_parses_valid_header_with_no_remaining_bytes() {
+        test_serialize_then_deserialize(ProtocolMessage::ClientAuth {
             namespace: "hello".to_owned(),
             username: "usr".to_owned(),
             password: "pass".to_owned(),
-        };
-        assert_eq!(expected_header, result);
-        assert!(remaining.is_empty());
+        });
     }
 
     #[test]
-    fn parse_header_returns_error_result_when_namespace_contains_invalid_utf_characters() {
+    fn parse_client_auth_returns_error_result_when_namespace_contains_invalid_utf_characters() {
         let mut input = Vec::new();
         input.extend_from_slice(b"FLO_AUT\n");
         input.extend_from_slice(&vec![0, 0xC0, 0, 0, 2, 10]);
