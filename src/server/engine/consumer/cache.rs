@@ -2,35 +2,7 @@ use std::sync::Arc;
 use std::collections::{BTreeMap, Bound};
 
 use flo_event::{FloEventId, FloEvent, OwnedFloEvent};
-
-pub enum MemoryUnit {
-    Megabyte,
-    Kilobyte,
-    Byte
-}
-
-pub struct MemoryLimit {
-    amount: usize,
-    unit: MemoryUnit,
-}
-
-impl MemoryLimit {
-    pub fn new(amount: usize, unit: MemoryUnit) -> MemoryLimit {
-        MemoryLimit {
-            amount: amount,
-            unit: unit,
-        }
-    }
-
-    pub fn as_bytes(&self) -> usize {
-        let multiplier = match self.unit {
-            MemoryUnit::Byte => 1,
-            MemoryUnit::Kilobyte => 1024,
-            MemoryUnit::Megabyte => 1024 * 1024,
-        };
-        multiplier * self.amount
-    }
-}
+use server::MemoryLimit;
 
 pub struct Cache {
     entries: BTreeMap<FloEventId, Arc<OwnedFloEvent>>,

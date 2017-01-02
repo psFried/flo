@@ -19,29 +19,60 @@ use std::path::PathBuf;
 use std::net::{SocketAddr, Ipv4Addr, SocketAddrV4};
 use event_store::StorageEngineOptions;
 
+use std::str::FromStr;
 
+#[derive(Copy, Clone, PartialEq, Debug)]
+pub enum MemoryUnit {
+    Megabyte,
+    Kilobyte,
+    Byte
+}
+
+#[derive(Copy, Clone, PartialEq, Debug)]
+pub struct MemoryLimit {
+    amount: usize,
+    unit: MemoryUnit,
+}
+
+
+impl MemoryLimit {
+    pub fn new(amount: usize, unit: MemoryUnit) -> MemoryLimit {
+        MemoryLimit {
+            amount: amount,
+            unit: unit,
+        }
+    }
+
+    pub fn as_bytes(&self) -> usize {
+        let multiplier = match self.unit {
+            MemoryUnit::Byte => 1,
+            MemoryUnit::Kilobyte => 1024,
+            MemoryUnit::Megabyte => 1024 * 1024,
+        };
+        multiplier * self.amount
+    }
+}
+
+#[derive(PartialEq, Clone)]
 pub struct ServerOptions {
     pub port: u16,
     pub data_dir: PathBuf,
     pub default_namespace: String,
     pub max_events: usize,
+    pub max_cached_events: usize,
+    pub max_cache_memory: MemoryLimit,
 }
 
 pub fn run(options: ServerOptions) {
     let mut reactor = Core::new().unwrap();
-    let address: SocketAddr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), options.port));
+    let server_port = options.port;
+    let address: SocketAddr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), server_port));
     let loop_handle = reactor.handle();
     let listener = TcpListener::bind(&address, &loop_handle).unwrap();
 
-    let storage_options = StorageEngineOptions {
-        storage_dir: options.data_dir.clone(),
-        root_namespace: options.default_namespace, //TODO: figure out how to set namespace and max events
-        max_events: options.max_events,
-    };
+    let BackendChannels{producer_manager, consumer_manager} = engine::run(options);
 
-    let BackendChannels{producer_manager, consumer_manager} = engine::run(storage_options);
-
-    info!("Started listening on port: {}", options.port);
+    info!("Started listening on port: {}", server_port);
 
     let incoming = listener.incoming().map_err(|io_err| {
         format!("Error creating new connection: {:?}", io_err)

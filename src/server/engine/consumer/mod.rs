@@ -15,7 +15,8 @@ use std::marker::Send;
 use std::collections::HashMap;
 use std::io;
 
-use self::cache::{Cache, MemoryLimit, MemoryUnit};
+use self::cache::Cache;
+use server::MemoryLimit;
 use server::engine::client_map::ClientMap;
 use event_store::EventReader;
 
@@ -30,13 +31,13 @@ pub struct ConsumerManager<R: EventReader + 'static> {
 }
 
 impl <R: EventReader + 'static> ConsumerManager<R> {
-    pub fn new(reader: R, sender: mpsc::Sender<ConsumerMessage>, greatest_event_id: FloEventId) -> Self {
+    pub fn new(reader: R, sender: mpsc::Sender<ConsumerMessage>, greatest_event_id: FloEventId, max_cached_events: usize, max_cache_memory: MemoryLimit) -> Self {
         ConsumerManager {
             my_sender: sender,
             event_reader: reader,
             consumers: ConsumerMap::new(),
             greatest_event_id: greatest_event_id,
-            cache: Cache::new(100_000, MemoryLimit::new(64, MemoryUnit::Megabyte)) //TODO: pass in cache limits from program arguments
+            cache: Cache::new(max_cached_events, max_cache_memory),
         }
     }
 

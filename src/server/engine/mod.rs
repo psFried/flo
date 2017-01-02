@@ -7,6 +7,7 @@ mod client_map;
 use self::api::{ClientMessage, ConsumerMessage, ProducerMessage};
 use self::producer::ProducerManager;
 use self::consumer::ConsumerManager;
+use server::{ServerOptions, MemoryLimit};
 use event_store::{StorageEngine, EventWriter, EventReader, StorageEngineOptions};
 use event_store::fs::{FSStorageEngine, FSEventWriter, FSEventReader};
 use flo_event::ActorId;
@@ -25,9 +26,17 @@ pub struct BackendChannels {
     pub consumer_manager: mpsc::Sender<ConsumerMessage>,
 }
 
-pub fn run(storage_options: StorageEngineOptions) -> BackendChannels {
+pub fn run(options: ServerOptions) -> BackendChannels {
     let (producer_tx, producer_rx) = mpsc::channel::<ProducerMessage>();
     let (consumer_tx, consumer_rx) = mpsc::channel::<ConsumerMessage>();
+
+    let ServerOptions{data_dir, default_namespace, max_events, max_cached_events, max_cache_memory, ..} = options;
+
+    let storage_options = StorageEngineOptions {
+        storage_dir: data_dir,
+        root_namespace: default_namespace,
+        max_events: max_events,
+    };
 
     //TODO: set max events and namespace and have some proper error handling
     let actor_id: ActorId = 1;
@@ -54,7 +63,7 @@ pub fn run(storage_options: StorageEngineOptions) -> BackendChannels {
 
     let consumer_manager_sender = consumer_tx.clone();
     thread::spawn(move || {
-        let mut consumer_manager = ConsumerManager::new(event_reader, consumer_manager_sender, highest_event_id);
+        let mut consumer_manager = ConsumerManager::new(event_reader, consumer_manager_sender, highest_event_id, max_cached_events, max_cache_memory);
 
         loop {
             match consumer_rx.recv() {

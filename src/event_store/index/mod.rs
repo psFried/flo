@@ -9,6 +9,8 @@ use flo_event::FloEventId;
 
 use std::collections::{BTreeMap, Bound};
 
+//TODO: look into finite state transducers for index https://crates.io/crates/fst or something else to allow an index larger than what fits into memory
+
 #[derive(PartialEq, Debug, Clone)]
 pub struct IndexEntry {
     pub id: FloEventId,
