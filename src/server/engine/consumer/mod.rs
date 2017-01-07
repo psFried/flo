@@ -3,25 +3,17 @@ mod cache;
 
 pub use self::client::{Client, ClientState, ClientSendError, ConsumingState};
 
-use server::engine::api::{ConnectionId, ClientMessage, ConsumerMessage, ProducerMessage, ClientConnect};
+use server::engine::api::{ConnectionId, ConsumerMessage, ClientConnect};
 use protocol::ServerMessage;
 use flo_event::{FloEvent, OwnedFloEvent, FloEventId};
 
-use futures::sync::mpsc::UnboundedSender;
-use lru_time_cache::LruCache;
-
 use std::sync::{Arc, mpsc};
-use std::thread::{self, JoinHandle};
-use std::marker::Send;
+use std::thread;
 use std::collections::HashMap;
-use std::io;
 
 use self::cache::Cache;
 use server::MemoryLimit;
-use server::engine::client_map::ClientMap;
 use event_store::EventReader;
-
-const MAX_CACHED_EVENTS: usize = 1024;
 
 pub struct ConsumerManager<R: EventReader + 'static> {
     event_reader: R,
@@ -59,7 +51,7 @@ impl <R: EventReader + 'static> ConsumerManager<R> {
                 self.update_greatest_event(event.id);
                 self.consumers.send_event(connection_id, Arc::new(event))
             }
-            ConsumerMessage::EventPersisted(connection_id, event) => {
+            ConsumerMessage::EventPersisted(_connection_id, event) => {
                 self.update_greatest_event(event.id);
                 let event_rc = self.cache.insert(event);
                 self.consumers.send_event_to_all(event_rc)

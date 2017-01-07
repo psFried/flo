@@ -7,7 +7,7 @@ use byteorder::{ByteOrder, BigEndian};
 
 use event_store::index::{EventIndex, IndexEntry};
 use event_store::{EventReader, StorageEngineOptions};
-use flo_event::{FloEventId, ActorId, EventCounter, OwnedFloEvent, FloEvent};
+use flo_event::{FloEventId, OwnedFloEvent};
 
 enum EventIterInner {
     Empty,
@@ -119,7 +119,7 @@ pub fn read_header<R: Read>(reader: &mut R) -> Result<EventHeader, io::Error> {
 pub fn read_event<R: Read>(reader: &mut R) -> Result<OwnedFloEvent, io::Error> {
     read_header(reader).and_then(|header| {
         let mut namespace_buffer = vec![0; header.namespace_length as usize];
-        reader.read_exact(&mut namespace_buffer).and_then(move |ns_read| {
+        reader.read_exact(&mut namespace_buffer).and_then(move |_ns_read| {
             String::from_utf8(namespace_buffer).map_err(|err| {
                 invalid_bytes_err(format!("namespace contained invalid utf8 character: {:?}", err))
             })
@@ -156,7 +156,7 @@ impl FSEventReader {
     }
 
     /// A bit of future proofing here, since index entry really isn't needed yet
-    fn get_events_file(&self, entry: &IndexEntry) -> PathBuf {
+    fn get_events_file(&self, _entry: &IndexEntry) -> PathBuf {
         self.storage_dir.as_path().join(super::DATA_FILE_NAME)
     }
 }

@@ -74,7 +74,7 @@ integration_test!{event_is_written_and_ackgnowledged, _port, tcp_stream, {
     assert_eq!(&expected[..], &buff[..8]);      //header
     let result_op_id = BigEndian::read_u32(&buff[8..12]);
     assert_eq!(op_id, result_op_id);
-    assert_eq!(&[0, 1, 0, 0, 0, 0, 0, 0, 0, 1], &buff[12..22]);//event id (actor: u16, event_counter: u64)
+    assert_eq!(&[0, 0, 0, 0, 0, 0, 0, 1, 0, 1], &buff[12..22]);//event id (actor: u16, event_counter: u64)
 }}
 
 integration_test!{persisted_event_are_consumed_after_they_are_written, server_port, tcp_stream, {
@@ -185,8 +185,8 @@ fn read_events(tcp_stream: &mut TcpStream, mut nevents: usize) -> Vec<OwnedFloEv
 
 fn connect(port: u16) -> TcpStream {
     let address: SocketAddr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), port));
-    let mut stream = TcpStream::connect(address).unwrap();
-    stream.set_read_timeout(Some(Duration::from_millis(1_000)));
+    let stream = TcpStream::connect(address).unwrap();
+    stream.set_read_timeout(Some(Duration::from_millis(1_000))).unwrap();
     stream
 }
 

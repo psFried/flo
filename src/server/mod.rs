@@ -17,12 +17,10 @@ use server::engine::api::{self, ClientMessage, ProducerMessage, ConsumerMessage,
 use protocol::ServerMessage;
 use server::flo_io::{ClientMessageStream, ServerMessageStream};
 use server::engine::BackendChannels;
-use event_store::StorageEngineOptions;
 
 use std::path::PathBuf;
 use std::net::{SocketAddr, Ipv4Addr, SocketAddrV4};
 use std::sync::Arc;
-use std::str::FromStr;
 
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub enum MemoryUnit {
@@ -101,7 +99,7 @@ pub fn run(options: ServerOptions) {
         channel_sender.send(ClientMessage::Both(
             ConsumerMessage::ClientConnect(client_connect.clone()),
             ProducerMessage::ClientConnect(client_connect)
-        ));
+        )).unwrap(); //TODO: something better than unwrapping this result
 
         let client_stream = ClientMessageStream::new(connection_id, tcp_reader, ClientProtocolImpl);
         let client_to_server = client_stream.map_err(|err| {
@@ -121,7 +119,7 @@ pub fn run(options: ServerOptions) {
             Ok(())
         });
 
-        let server_to_client = nio::copy(ServerMessageStream::<ServerProtocolImpl>::new(connection_id, server_rx), tcp_writer).map_err(|err| {
+        let server_to_client = nio::copy(ServerMessageStream::<ServerProtocolImpl<Arc<OwnedFloEvent>>>::new(connection_id, server_rx), tcp_writer).map_err(|err| {
             format!("Error writing to client: {:?}", err)
         }).map(move |amount| {
             info!("Wrote: {} bytes to client: {:?}, connection_id: {}", amount, client_addr, connection_id);
@@ -130,7 +128,7 @@ pub fn run(options: ServerOptions) {
 
         let future = client_to_server.select(server_to_client).then(move |res| {
             match res {
-                Ok((compl, fut)) => {
+                Ok((compl, _fut)) => {
                     info!("Finished with connection: {}, value: {:?}", connection_id, compl);
                 }
                 Err((err, _)) => {

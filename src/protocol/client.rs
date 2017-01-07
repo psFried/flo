@@ -1,6 +1,6 @@
 use nom::{be_u64, be_u32, be_u16, be_i64, IResult};
 use flo_event::FloEventId;
-use std::io::{self, Read, Write};
+use std::io::{self, Read};
 use byteorder::{ByteOrder, BigEndian};
 
 pub mod headers {
@@ -167,7 +167,6 @@ mod test {
     use super::*;
     use std::io::Read;
     use nom::IResult;
-    use server::engine::api::{ClientMessage, ClientAuth};
     use flo_event::FloEventId;
 
     fn test_serialize_then_deserialize(mut message: ProtocolMessage) {

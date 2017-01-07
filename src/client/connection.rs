@@ -1,5 +1,8 @@
 use std::io::{self, Write, Read};
-use protocol::ProtocolMessage;
+use protocol::{ProtocolMessage, ServerMessage};
+
+use flo_event::{FloEvent, OwnedFloEvent};
+
 
 const BUFFER_LENGTH: usize = 8 * 1024;
 
@@ -15,10 +18,9 @@ impl <T: Write + Read> FloConnection<T> {
     }
 
 
-//    pub fn read(&mut self) -> io::Result<ProtocolMessage> {
+//    pub fn read(&mut self) -> io::Result<ServerMessage<OwnedFloEvent>> {
 //        let mut buffer = [0; BUFFER_LENGTH];
 //        let nread = self.writer.read(&mut buffer[..])?;
 //
 //    }
-
 }

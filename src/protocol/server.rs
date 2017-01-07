@@ -1,10 +1,13 @@
 use flo_event::{FloEventId, FloEvent, OwnedFloEvent};
-use std::io::{self, Read, Write};
-use std::sync::Arc;
+use std::io::{self, Read};
 
+use nom::{be_u16, be_u32, be_u64};
 use byteorder::{ByteOrder, BigEndian};
 
-#[derive(Debug, PartialEq)]
+static ACK_HEADER: &'static [u8; 8] = b"FLO_ACK\n";
+static EVENT_HEADER: &'static [u8; 8] = b"FLO_EVT\n";
+
+#[derive(Debug, PartialEq, Clone)]
 pub struct EventAck {
     pub op_id: u32,
     pub event_id: FloEventId,
@@ -18,8 +21,65 @@ pub enum ServerMessage<T: FloEvent> {
 }
 unsafe impl <T> Send for ServerMessage<T> where T: FloEvent + Send {}
 
-pub trait ServerProtocol: Read + Sized {
-    fn new(server_message: ServerMessage<Arc<OwnedFloEvent>>) -> Self;
+impl <T> Clone for ServerMessage<T> where T: FloEvent + Clone {
+    fn clone(&self) -> Self {
+        match self {
+            &ServerMessage::Event(ref evt) => ServerMessage::Event(evt.clone()),
+            &ServerMessage::EventPersisted(ref ack) => ServerMessage::EventPersisted(ack.clone())
+        }
+    }
+}
+
+named!{pub parse_str<String>,
+    map_res!(
+        take_until_and_consume!("\n"),
+        |res| {
+            ::std::str::from_utf8(res).map(|val| val.to_owned())
+        }
+    )
+}
+
+named!{parse_event<OwnedFloEvent>,
+    chain!(
+        _tag: tag!("FLO_EVT\n") ~
+        actor: be_u16 ~
+        counter: be_u64 ~
+        namespace: parse_str ~
+        data: length_bytes!(be_u32),
+        || {
+            OwnedFloEvent {
+                id: FloEventId::new(actor, counter),
+                namespace: namespace.to_owned(),
+                data: data.to_owned()
+            }
+        }
+    )
+}
+
+named!{parse_event_ack<EventAck>,
+    chain!(
+        _tag: tag!(ACK_HEADER) ~
+        op_id: be_u32 ~
+        counter: be_u64 ~
+        actor_id: be_u16,
+        || {
+            EventAck {
+                op_id: op_id,
+                event_id: FloEventId::new(actor_id, counter)
+            }
+        }
+    )
+}
+
+named!{pub read_server_message<ServerMessage<OwnedFloEvent>>,
+    alt!(
+        map!(parse_event, |event| ServerMessage::Event(event)) |
+        map!(parse_event_ack, |ack| ServerMessage::EventPersisted(ack))
+    )
+}
+
+pub trait ServerProtocol<E: FloEvent>: Read + Sized {
+    fn new(server_message: ServerMessage<E>) -> Self;
     fn is_done(&self) -> bool;
 }
 
@@ -33,13 +93,13 @@ enum ReadState {
     Done,
 }
 
-pub struct ServerProtocolImpl {
-    message: ServerMessage<Arc<OwnedFloEvent>>,
+pub struct ServerProtocolImpl<E: FloEvent> {
+    message: ServerMessage<E>,
     state: ReadState,
 }
 
-impl ServerProtocol for ServerProtocolImpl {
-    fn new(server_message: ServerMessage<Arc<OwnedFloEvent>>) -> ServerProtocolImpl {
+impl <E: FloEvent> ServerProtocol<E> for ServerProtocolImpl<E> {
+    fn new(server_message: ServerMessage<E>) -> ServerProtocolImpl<E> {
         ServerProtocolImpl {
             message: server_message,
             state: ReadState::Init,
@@ -51,10 +111,8 @@ impl ServerProtocol for ServerProtocolImpl {
     }
 }
 
-static ACK_HEADER: &'static [u8; 8] = b"FLO_ACK\n";
-static EVENT_HEADER: &'static [u8; 8] = b"FLO_EVT\n";
 
-impl Read for ServerProtocolImpl {
+impl <E: FloEvent> Read for ServerProtocolImpl<E> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let ServerProtocolImpl { ref message, ref mut state, } = *self;
 
@@ -70,10 +128,10 @@ impl Read for ServerProtocolImpl {
                 nread += 8;
                 BigEndian::write_u32(&mut buf[8..12], ack.op_id);
                 nread += 4;
-                BigEndian::write_u16(&mut buf[12..14], ack.event_id.actor);
-                nread += 2;
-                BigEndian::write_u64(&mut buf[14..22], ack.event_id.event_counter);
+                BigEndian::write_u64(&mut buf[12..20], ack.event_id.event_counter);
                 nread += 8;
+                BigEndian::write_u16(&mut buf[20..22], ack.event_id.actor);
+                nread += 2;
 
                 *state = ReadState::Done;
                 Ok(nread)
@@ -86,12 +144,12 @@ impl Read for ServerProtocolImpl {
                         //only write this stuff if we haven't already
                         &buf[..pos].copy_from_slice(&EVENT_HEADER[..]);
 
-                        BigEndian::write_u16(&mut buf[8..10], event.id.actor);
-                        BigEndian::write_u64(&mut buf[10..18], event.id.event_counter);
+                        BigEndian::write_u16(&mut buf[8..10], event.id().actor);
+                        BigEndian::write_u64(&mut buf[10..18], event.id().event_counter);
                         pos += 10;
 
-                        let ns_length = event.namespace.len();
-                        &buf[pos..(ns_length + pos)].copy_from_slice(event.namespace.as_bytes());
+                        let ns_length = event.namespace().len();
+                        &buf[pos..(ns_length + pos)].copy_from_slice(event.namespace().as_bytes());
                         pos += ns_length;
                         buf[pos] = 10u8;
                         pos += 1;
@@ -128,9 +186,41 @@ impl Read for ServerProtocolImpl {
 #[cfg(test)]
 mod test {
     use super::*;
+    use nom::IResult;
     use std::io::Read;
     use flo_event::{FloEventId, OwnedFloEvent};
     use std::sync::Arc;
+
+    fn assert_message_serializes_and_deserializes(message: ServerMessage<OwnedFloEvent>) {
+        let mut buffer = [0; 1024];
+        let mut serializer = ServerProtocolImpl::new(message.clone());
+        let nread = serializer.read(&mut buffer[..]).expect("failed to read message into buffer");
+        println!("Buffer: {:?}", &buffer[..nread]);
+
+        let result = read_server_message(&buffer[..nread]);
+        match result {
+            IResult::Done(rem, message_result) => {
+                assert_eq!(message, message_result);
+                assert!(rem.is_empty());
+            }
+            IResult::Incomplete(need) => {
+                panic!("expected Done, got Incomplete: {:?}", need)
+            }
+            IResult::Error(err) => {
+                panic!("Error deserializing event: {:?}", err)
+            }
+        }
+    }
+
+    #[test]
+    fn event_is_serialized_and_deserialized() {
+        let event = ServerMessage::Event(OwnedFloEvent{
+            id: FloEventId::new(1, 6),
+            namespace: "/the/event/namespace".to_owned(),
+            data: "the event data".as_bytes().to_owned(),
+        });
+        assert_message_serializes_and_deserializes(event);
+    }
 
     #[test]
     fn event_is_written_in_one_pass() {
@@ -195,25 +285,29 @@ mod test {
     }
 
     #[test]
-    fn event_ack_is_written_in_one_go() {
-        let mut subject = ServerProtocolImpl::new(ServerMessage::EventPersisted(
+    fn event_ack_is_serialized_and_deserialized() {
+//        let mut subject = ServerProtocolImpl::new(ServerMessage::EventPersisted(
+//            EventAck{op_id: 123, event_id: FloEventId::new(234, 5)}
+//        ));
+//
+//        let mut buffer = [0; 64];
+//        let result = subject.read(&mut buffer[..]).unwrap();
+//
+//        let expected_header = b"FLO_ACK\n";
+//        assert_eq!(&expected_header[..], &buffer[..8]);
+//        assert_eq!(&[0, 0, 0, 123], &buffer[8..12]); // op_id
+//        assert_eq!(&[0, 234], &buffer[12..14]);
+//        assert_eq!(&[0, 0, 0, 0, 0, 0, 0, 5], &buffer[14..22]);
+//
+//        assert_eq!(22, result);
+//
+//        assert!(subject.is_done());
+//        let result = subject.read(&mut buffer[..]).unwrap();
+//        assert_eq!(0, result);
+        let ack = ServerMessage::EventPersisted(
             EventAck{op_id: 123, event_id: FloEventId::new(234, 5)}
-        ));
-
-        let mut buffer = [0; 64];
-        let result = subject.read(&mut buffer[..]).unwrap();
-
-        let expected_header = b"FLO_ACK\n";
-        assert_eq!(&expected_header[..], &buffer[..8]);
-        assert_eq!(&[0, 0, 0, 123], &buffer[8..12]); // op_id
-        assert_eq!(&[0, 234], &buffer[12..14]);
-        assert_eq!(&[0, 0, 0, 0, 0, 0, 0, 5], &buffer[14..22]);
-
-        assert_eq!(22, result);
-
-        assert!(subject.is_done());
-        let result = subject.read(&mut buffer[..]).unwrap();
-        assert_eq!(0, result);
+        );
+        assert_message_serializes_and_deserializes(ack);
     }
 }
 

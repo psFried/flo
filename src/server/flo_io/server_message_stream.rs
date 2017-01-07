@@ -1,4 +1,4 @@
-use flo_event::OwnedFloEvent;
+use flo_event::{OwnedFloEvent};
 use server::engine::api::{ConnectionId};
 use protocol::{ServerProtocol, ServerMessage};
 
@@ -9,13 +9,13 @@ use futures::sync::mpsc::UnboundedReceiver;
 use std::sync::Arc;
 use std::io::{self, Read};
 
-pub struct ServerMessageStream<P: ServerProtocol> {
+pub struct ServerMessageStream<P: ServerProtocol<Arc<OwnedFloEvent>>> {
     _connection_id: ConnectionId,
     server_receiver: UnboundedReceiver<ServerMessage<Arc<OwnedFloEvent>>>,
     current_message: Option<P>,
 }
 
-impl <P: ServerProtocol> ServerMessageStream<P> {
+impl <P: ServerProtocol<Arc<OwnedFloEvent>>> ServerMessageStream<P> {
     pub fn new(connection_id: ConnectionId, server_rx: UnboundedReceiver<ServerMessage<Arc<OwnedFloEvent>>>) -> ServerMessageStream<P> {
         ServerMessageStream {
             _connection_id: connection_id,
@@ -30,7 +30,7 @@ fn not_ready() -> io::Error {
     io::Error::new(io::ErrorKind::WouldBlock, NOT_READY_MSG)
 }
 
-impl <P: ServerProtocol> Read for ServerMessageStream<P> {
+impl <P: ServerProtocol<Arc<OwnedFloEvent>>> Read for ServerMessageStream<P> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let mut message = self.current_message.take();
 

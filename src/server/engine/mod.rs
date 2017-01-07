@@ -4,22 +4,16 @@ mod producer;
 mod consumer;
 mod client_map;
 
-use self::api::{ClientMessage, ConsumerMessage, ProducerMessage};
+use self::api::{ConsumerMessage, ProducerMessage};
 use self::producer::ProducerManager;
 use self::consumer::ConsumerManager;
-use server::{ServerOptions, MemoryLimit};
-use event_store::{StorageEngine, EventWriter, EventReader, StorageEngineOptions};
-use event_store::fs::{FSStorageEngine, FSEventWriter, FSEventReader};
+use server::ServerOptions;
+use event_store::{StorageEngine, EventReader, StorageEngineOptions};
+use event_store::fs::{FSStorageEngine};
 use flo_event::ActorId;
 
-use futures::sync::mpsc::UnboundedSender;
-
-use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
-use std::sync::mpsc::{self, Sender};
+use std::sync::mpsc;
 use std::thread;
-use std::path::PathBuf;
-use std::net::SocketAddr;
 
 pub struct BackendChannels {
     pub producer_manager: mpsc::Sender<ProducerMessage>,
@@ -40,7 +34,7 @@ pub fn run(options: ServerOptions) -> BackendChannels {
 
     //TODO: set max events and namespace and have some proper error handling
     let actor_id: ActorId = 1;
-    let (mut event_writer, mut event_reader) = FSStorageEngine::initialize(storage_options).expect("Failed to initialize storage engine");
+    let (event_writer, mut event_reader) = FSStorageEngine::initialize(storage_options).expect("Failed to initialize storage engine");
     let highest_event_id = event_reader.get_highest_event_id();
 
 

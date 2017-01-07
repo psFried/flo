@@ -19,9 +19,7 @@ const MAX_CACHED_EVENTS: usize = 150;
 
 pub type PersistenceResult = Result<EventId, io::Error>;
 
-//TODO: create concrete implementation of new StorageEngine
-use flo_event::{FloEvent, OwnedFloEvent, FloEventId, FloEventIdMap};
-use std::sync::Arc;
+use flo_event::{FloEvent, OwnedFloEvent, FloEventId};
 
 pub struct StorageEngineOptions {
     pub storage_dir: PathBuf,

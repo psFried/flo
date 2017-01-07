@@ -4,8 +4,6 @@ use std::io::{self, Seek, SeekFrom};
 
 use event::Event;
 
-pub type ReadResult = Result<Event, io::Error>;
-
 pub struct FileReader {
     storage_file_path: PathBuf,
 }

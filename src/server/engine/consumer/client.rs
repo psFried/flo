@@ -1,5 +1,5 @@
 use flo_event::{FloEvent, FloEventId, OwnedFloEvent};
-use server::engine::api::{ConnectionId, ClientMessage, ClientAuth, ClientConnect};
+use server::engine::api::{ConnectionId, ClientConnect};
 use protocol::ServerMessage;
 
 use futures::sync::mpsc::UnboundedSender;

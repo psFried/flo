@@ -3,8 +3,6 @@ use flo_event::{FloEvent, FloEventId, OwnedFloEvent};
 
 use std::sync::{Arc, Mutex};
 use std::io;
-use std::path::Path;
-
 
 pub struct TestEventReader {
     storage: Arc<Mutex<Vec<OwnedFloEvent>>>,

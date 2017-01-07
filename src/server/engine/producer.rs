@@ -1,19 +1,11 @@
 
-use server::engine::api::{ConnectionId, ClientConnect, ProduceEvent, ClientMessage, ConsumerMessage, ProducerMessage};
+use server::engine::api::{ProduceEvent, ConsumerMessage, ProducerMessage};
 use server::engine::client_map::ClientMap;
 use event_store::EventWriter;
-use event_store::test_util::TestEventWriter;
 use flo_event::{ActorId, OwnedFloEvent, EventCounter, FloEventId};
 use protocol::{ServerMessage, EventAck};
 
-use futures::sync::mpsc::UnboundedSender;
-
-use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
-use std::sync::mpsc::{self, Sender};
-use std::thread;
-use std::path::PathBuf;
-use std::net::SocketAddr;
+use std::sync::mpsc::Sender;
 
 pub struct ProducerManager<S: EventWriter> {
     actor_id: ActorId,
@@ -58,7 +50,9 @@ impl <S: EventWriter> ProducerManager<S> {
             data: event_data,
         };
 
-        self.event_store.store(&owned_event).map(|()| {
+        self.event_store.store(&owned_event).map_err(|err| {
+            format!("Error storing event: {:?}", err)
+        }).and_then(|()| {
             self.highest_event_id += 1;
             debug!("Stored event, new highest_event_id: {}", self.highest_event_id);
 
@@ -66,10 +60,14 @@ impl <S: EventWriter> ProducerManager<S> {
                 op_id: op_id,
                 event_id: event_id,
             });
-            self.clients.send(producer_id, event_ack);
-            self.consumer_manager_channel.send(ConsumerMessage::EventPersisted(producer_id, owned_event))
-        });
-        Ok(())
+            self.clients.send(producer_id, event_ack).map_err(|err| {
+                format!("Error sending event ack to client: {:?}", err)
+            }).and_then(|()| {
+                self.consumer_manager_channel.send(ConsumerMessage::EventPersisted(producer_id, owned_event)).map_err(|err| {
+                    format!("Error sending event ack to consumer manager: {:?}", err)
+                })
+            })
+        })
     }
 }
 

@@ -1,5 +1,5 @@
 use server::engine::api::{ConnectionId, ClientConnect};
-use flo_event::{FloEvent, OwnedFloEvent};
+use flo_event::{OwnedFloEvent};
 use protocol::ServerMessage;
 
 use std::sync::Arc;

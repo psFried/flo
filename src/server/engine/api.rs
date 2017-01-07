@@ -1,4 +1,3 @@
-
 use protocol::ServerMessage;
 use flo_event::{FloEventId, OwnedFloEvent};
 
@@ -45,8 +44,6 @@ pub enum ClientMessage {
 }
 unsafe impl Send for ClientMessage {}
 
-
-
 #[derive(Clone)]
 pub struct ClientConnect {
     pub connection_id: ConnectionId,
@@ -85,6 +82,4 @@ pub struct ProduceEvent {
     pub event_data: Vec<u8>
 }
 unsafe impl Send for ProduceEvent {}
-
-
 

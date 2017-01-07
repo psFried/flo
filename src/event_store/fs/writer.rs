@@ -7,8 +7,9 @@ use std::fs::{File, OpenOptions, create_dir_all};
 use event_store::{EventWriter, StorageEngineOptions};
 use event_store::index::EventIndex;
 
-use flo_event::{FloEventId, ActorId, EventCounter, FloEvent, OwnedFloEvent};
+use flo_event::FloEvent;
 
+#[allow(dead_code)]
 pub struct FSEventWriter {
     index: Arc<RwLock<EventIndex>>,
     storage_dir: PathBuf,
@@ -49,17 +50,18 @@ impl EventWriter for FSEventWriter {
 
         let FSEventWriter{ref mut offset, ref mut index, ref mut event_writer, ..} = *self;
 
-        write_event(event_writer, event).map(|size_on_disk| {
+        write_event(event_writer, event).and_then(|size_on_disk| {
             trace!("Wrote event: {:?} to disk as: {} bytes, starting at offset: {}", event.id(), size_on_disk, offset);
-            index.write().map(|mut idx| {
+            index.write().map_err(|err| {
+                io::Error::new(io::ErrorKind::Other, format!("Error acquiring write lock for index: {:?}", err))
+            }).map(|mut idx| {
                 let index_entry = IndexEntry::new(*event.id(), *offset);
                 let evicted = idx.add(index_entry);
                 *offset += size_on_disk;
                 if let Some(removed_event) = evicted {
                     debug!("Evicted old event: {:?}", removed_event.id);
                 }
-            });
-            ()
+            })
         })
     }
 }

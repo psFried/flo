@@ -118,7 +118,7 @@ impl <R: Read, P: ClientProtocol> ClientMessageStream<R, P> {
                     self.filled_bytes -= nused;
                     Ok(ProtoResult::Done(proto_message))
                 }
-                IResult::Incomplete(needed) => {
+                IResult::Incomplete(_needed) => {
                     //TODO: in case buffer position is > 0, shift buffer in preparation for next read.
                     Ok(ProtoResult::Incomplete)
                 }
@@ -334,7 +334,7 @@ mod test {
     fn poll_returns_ok_with_empty_option_when_protocol_returns_error() {
         struct Proto;
         impl ClientProtocol for Proto {
-            fn parse_any<'a>(&'a self, buffer: &'a [u8]) -> IResult<&'a [u8], ProtocolMessage> {
+            fn parse_any<'a>(&'a self, _buffer: &'a [u8]) -> IResult<&'a [u8], ProtocolMessage> {
                 IResult::Error(Err::Code(ErrorKind::Alpha))
             }
         }
@@ -358,7 +358,7 @@ mod test {
     fn poll_returns_none_if_0_bytes_are_read_and_buffer_is_empty() {
         struct Proto;
         impl ClientProtocol for Proto {
-            fn parse_any<'a>(&'a self, buffer: &'a [u8]) -> IResult<&'a [u8], ProtocolMessage> {
+            fn parse_any<'a>(&'a self, _buffer: &'a [u8]) -> IResult<&'a [u8], ProtocolMessage> {
                 IResult::Incomplete(Needed::Size(8))
             }
         }

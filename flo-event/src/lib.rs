@@ -1,5 +1,6 @@
 use std::cmp::{Ord, PartialOrd, Ordering};
 use std::collections::HashMap;
+use std::fmt::Debug;
 
 
 pub type ActorId = u16;
@@ -90,7 +91,7 @@ impl FloEventIdMap for HashMap<ActorId, EventCounter> {
 }
 
 
-pub trait FloEvent {
+pub trait FloEvent: Debug {
     fn id(&self) -> &FloEventId;
     fn namespace(&self) -> &str;
     fn data_len(&self) -> u32;
@@ -99,7 +100,7 @@ pub trait FloEvent {
     fn to_owned(&self) -> OwnedFloEvent;
 }
 
-impl <T> FloEvent for T where T: AsRef<OwnedFloEvent> {
+impl <T> FloEvent for T where T: AsRef<OwnedFloEvent> + Debug {
     fn id(&self) -> &FloEventId {
         self.as_ref().id()
     }

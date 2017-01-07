@@ -6,14 +6,13 @@ pub const FLO_EVT: &'static str = "FLO_EVT\n";
 
 pub use self::writer::FSEventWriter;
 pub use self::reader::{FSEventReader, FSEventIter};
-use super::{StorageEngine, StorageEngineOptions, EventWriter, EventReader};
+use super::{StorageEngine, StorageEngineOptions};
 use event_store::index::{EventIndex, IndexEntry};
 use flo_event::{FloEvent};
 
 use std::sync::{Arc, RwLock};
-use std::path::{Path, PathBuf};
-use std::fs::File;
-use std::io::{self, Read};
+use std::path::PathBuf;
+use std::io;
 
 pub struct FSStorageEngine;
 
@@ -38,7 +37,7 @@ fn initialize_index(storage_opts: &StorageEngineOptions) -> Result<EventIndex, i
 
     if events_file.exists() && events_file.is_file() {
         debug!("initializing index from file: {:?}", events_file);
-        FSEventIter::initialize(0, ::std::usize::MAX, &events_file).and_then(|mut event_iter| {
+        FSEventIter::initialize(0, ::std::usize::MAX, &events_file).and_then(|event_iter| {
             build_index(storage_opts.max_events, event_iter)
         })
     } else {
@@ -91,7 +90,7 @@ mod test {
     use super::*;
     use event_store::{EventReader, EventWriter, StorageEngineOptions};
     use event_store::index::EventIndex;
-    use flo_event::{FloEventId, FloEvent, OwnedFloEvent};
+    use flo_event::{FloEventId, OwnedFloEvent};
     use std::io::Cursor;
 
     use tempdir::TempDir;
