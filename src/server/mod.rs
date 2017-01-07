@@ -10,15 +10,18 @@ use tokio_core::net::{TcpStream, TcpListener};
 use tokio_core::io as nio;
 use tokio_core::io::Io;
 
+use flo_event::OwnedFloEvent;
 use self::channel_sender::ChannelSender;
 use protocol::{ClientProtocolImpl, ServerProtocolImpl};
-use server::engine::api::{self, ClientMessage, ServerMessage, ProducerMessage, ConsumerMessage, ClientConnect};
+use server::engine::api::{self, ClientMessage, ProducerMessage, ConsumerMessage, ClientConnect};
+use protocol::ServerMessage;
 use server::flo_io::{ClientMessageStream, ServerMessageStream};
 use server::engine::BackendChannels;
-use std::path::PathBuf;
-use std::net::{SocketAddr, Ipv4Addr, SocketAddrV4};
 use event_store::StorageEngineOptions;
 
+use std::path::PathBuf;
+use std::net::{SocketAddr, Ipv4Addr, SocketAddrV4};
+use std::sync::Arc;
 use std::str::FromStr;
 
 #[derive(Copy, Clone, PartialEq, Debug)]
@@ -79,7 +82,7 @@ pub fn run(options: ServerOptions) {
     }).for_each(move |(tcp_stream, client_addr): (TcpStream, SocketAddr)| {
         debug!("Got new connection from: {:?}", client_addr);
 
-        let (server_tx, server_rx): (UnboundedSender<ServerMessage>, UnboundedReceiver<ServerMessage>) = unbounded();
+        let (server_tx, server_rx): (UnboundedSender<ServerMessage<Arc<OwnedFloEvent>>>, UnboundedReceiver<ServerMessage<Arc<OwnedFloEvent>>>) = unbounded();
 
         let connection_id = api::next_connection_id();
         let (tcp_reader, tcp_writer) = tcp_stream.split();

@@ -99,6 +99,28 @@ pub trait FloEvent {
     fn to_owned(&self) -> OwnedFloEvent;
 }
 
+impl <T> FloEvent for T where T: AsRef<OwnedFloEvent> {
+    fn id(&self) -> &FloEventId {
+        self.as_ref().id()
+    }
+
+    fn namespace(&self) -> &str {
+        self.as_ref().namespace()
+    }
+
+    fn data_len(&self) -> u32 {
+        self.as_ref().data_len()
+    }
+
+    fn data(&self) -> &[u8] {
+        self.as_ref().data()
+    }
+
+    fn to_owned(&self) -> OwnedFloEvent {
+        self.as_ref().clone()
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub struct OwnedFloEvent {
     pub id: FloEventId,

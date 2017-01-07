@@ -1,18 +1,20 @@
-use flo_event::{FloEvent, FloEventId};
-use server::engine::api::{ConnectionId, ClientMessage, ClientAuth, ClientConnect, ServerMessage};
+use flo_event::{FloEvent, FloEventId, OwnedFloEvent};
+use server::engine::api::{ConnectionId, ClientMessage, ClientAuth, ClientConnect};
+use protocol::ServerMessage;
 
 use futures::sync::mpsc::UnboundedSender;
 
+use std::sync::Arc;
 use std::net::SocketAddr;
 
 
 static SEND_ERROR_DESC: &'static str = "Failed to send message through Client Channel";
 
 #[derive(Debug, PartialEq)]
-pub struct ClientSendError(pub ServerMessage);
+pub struct ClientSendError(pub ServerMessage<Arc<OwnedFloEvent>>);
 
 impl ClientSendError {
-    fn into_message(self) -> ServerMessage {
+    fn into_message(self) -> ServerMessage<Arc<OwnedFloEvent>> {
         self.0
     }
 }
@@ -72,7 +74,7 @@ pub enum ClientState {
 pub struct Client {
     connection_id: ConnectionId,
     addr: SocketAddr,
-    sender: UnboundedSender<ServerMessage>,
+    sender: UnboundedSender<ServerMessage<Arc<OwnedFloEvent>>>,
     consumer_state: ClientState,
 }
 
@@ -103,7 +105,7 @@ impl Client {
         self.consumer_state = ClientState::NotConsuming(event_id);
     }
 
-    pub fn send(&mut self, message: ServerMessage) -> Result<(), ClientSendError> {
+    pub fn send(&mut self, message: ServerMessage<Arc<OwnedFloEvent>>) -> Result<(), ClientSendError> {
         let conn_id = self.connection_id;
         trace!("Sending message to client: {} : {:?}", conn_id, message);
         if let &ServerMessage::Event(ref event) = &message {

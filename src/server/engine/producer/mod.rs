@@ -1,9 +1,10 @@
 
-use server::engine::api::{ConnectionId, ClientConnect, ProduceEvent, EventAck, ClientMessage, ConsumerMessage, ProducerMessage, ServerMessage};
+use server::engine::api::{ConnectionId, ClientConnect, ProduceEvent, ClientMessage, ConsumerMessage, ProducerMessage};
 use server::engine::client_map::ClientMap;
 use event_store::EventWriter;
 use event_store::test_util::TestEventWriter;
 use flo_event::{ActorId, OwnedFloEvent, EventCounter, FloEventId};
+use protocol::{ServerMessage, EventAck};
 
 use futures::sync::mpsc::UnboundedSender;
 
@@ -13,7 +14,6 @@ use std::sync::mpsc::{self, Sender};
 use std::thread;
 use std::path::PathBuf;
 use std::net::SocketAddr;
-
 
 pub struct ProducerManager<S: EventWriter> {
     actor_id: ActorId,

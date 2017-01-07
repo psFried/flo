@@ -109,7 +109,7 @@ fn string_to_buffer(mut buf: &mut [u8], string: &String) -> Result<usize, io::Er
     Ok(str_len + 1)
 }
 
-fn read_procude_header(header: &EventHeader, mut buf: &mut [u8]) -> Result<usize, io::Error> {
+fn read_produce_header(header: &EventHeader, mut buf: &mut [u8]) -> Result<usize, io::Error> {
     set_header(buf, PRODUCE_EVENT);
     let mut pos = 8;
     pos += string_to_buffer(&mut buf[pos..], &header.namespace)?;
@@ -123,10 +123,9 @@ fn read_procude_header(header: &EventHeader, mut buf: &mut [u8]) -> Result<usize
 
 impl Read for ProtocolMessage {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize, io::Error> {
-        let mut nread = 0;
         match *self {
             ProtocolMessage::ProduceEvent(ref header) => {
-                read_procude_header(header, buf)
+                read_produce_header(header, buf)
             }
             ProtocolMessage::StartConsuming(limit) => {
                 set_header(buf, START_CONSUMING);
@@ -170,16 +169,6 @@ mod test {
     use nom::IResult;
     use server::engine::api::{ClientMessage, ClientAuth};
     use flo_event::FloEventId;
-
-    fn assert_parsed_eq(expected: ProtocolMessage, result: IResult<&[u8], ProtocolMessage>) {
-        match result {
-            IResult::Done(_rem, msg) => {
-                assert_eq!(expected, msg);
-            }
-            IResult::Error(err) => panic!("Error parsing: {:?}", err),
-            IResult::Incomplete(_) => panic!("Got incomplete result")
-        }
-    }
 
     fn test_serialize_then_deserialize(mut message: ProtocolMessage) {
         let mut buffer = [0; 128];

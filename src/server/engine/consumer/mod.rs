@@ -3,7 +3,8 @@ mod cache;
 
 pub use self::client::{Client, ClientState, ClientSendError, ConsumingState};
 
-use server::engine::api::{ConnectionId, ServerMessage, ClientMessage, ConsumerMessage, ProducerMessage, ClientConnect};
+use server::engine::api::{ConnectionId, ClientMessage, ConsumerMessage, ProducerMessage, ClientConnect};
+use protocol::ServerMessage;
 use flo_event::{FloEvent, OwnedFloEvent, FloEventId};
 
 use futures::sync::mpsc::UnboundedSender;

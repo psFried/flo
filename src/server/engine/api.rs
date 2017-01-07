@@ -1,4 +1,5 @@
 
+use protocol::ServerMessage;
 use flo_event::{FloEventId, OwnedFloEvent};
 
 use futures::sync::mpsc::UnboundedSender;
@@ -44,18 +45,13 @@ pub enum ClientMessage {
 }
 unsafe impl Send for ClientMessage {}
 
-#[derive(Debug, PartialEq)]
-pub enum ServerMessage {
-    EventPersisted(EventAck),
-    Event(Arc<OwnedFloEvent>),
-}
-unsafe impl Send for ServerMessage {}
+
 
 #[derive(Clone)]
 pub struct ClientConnect {
     pub connection_id: ConnectionId,
     pub client_addr: ::std::net::SocketAddr,
-    pub message_sender: UnboundedSender<ServerMessage>,
+    pub message_sender: UnboundedSender<ServerMessage<Arc<OwnedFloEvent>>>,
 }
 unsafe impl Send for ClientConnect {}
 
@@ -69,7 +65,7 @@ impl PartialEq for ClientConnect {
     fn eq(&self, other: &ClientConnect) -> bool {
         self.connection_id == other.connection_id &&
                 self.client_addr == other.client_addr &&
-                &(self.message_sender) as * const UnboundedSender<ServerMessage> == &(other.message_sender) as * const UnboundedSender<ServerMessage>
+                &(self.message_sender) as * const UnboundedSender<ServerMessage<Arc<OwnedFloEvent>>> == &(other.message_sender) as * const UnboundedSender<ServerMessage<Arc<OwnedFloEvent>>>
     }
 }
 
@@ -90,10 +86,5 @@ pub struct ProduceEvent {
 }
 unsafe impl Send for ProduceEvent {}
 
-#[derive(Debug, PartialEq)]
-pub struct EventAck {
-    pub op_id: u32,
-    pub event_id: FloEventId,
-}
-unsafe impl Send for EventAck {}
+
 

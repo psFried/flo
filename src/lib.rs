@@ -27,6 +27,7 @@ extern crate env_logger;
 #[cfg(test)]
 extern crate tempdir;
 
+pub mod client;
 pub mod event_store;
 pub mod event;
 pub mod protocol;

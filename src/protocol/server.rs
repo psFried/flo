@@ -1,11 +1,25 @@
-use flo_event::FloEvent;
-use server::engine::api::{ServerMessage, EventAck};
+use flo_event::{FloEventId, FloEvent, OwnedFloEvent};
 use std::io::{self, Read, Write};
+use std::sync::Arc;
 
 use byteorder::{ByteOrder, BigEndian};
 
+#[derive(Debug, PartialEq)]
+pub struct EventAck {
+    pub op_id: u32,
+    pub event_id: FloEventId,
+}
+unsafe impl Send for EventAck {}
+
+#[derive(Debug, PartialEq)]
+pub enum ServerMessage<T: FloEvent> {
+    EventPersisted(EventAck),
+    Event(T),
+}
+unsafe impl <T> Send for ServerMessage<T> where T: FloEvent + Send {}
+
 pub trait ServerProtocol: Read + Sized {
-    fn new(server_message: ServerMessage) -> Self;
+    fn new(server_message: ServerMessage<Arc<OwnedFloEvent>>) -> Self;
     fn is_done(&self) -> bool;
 }
 
@@ -20,12 +34,12 @@ enum ReadState {
 }
 
 pub struct ServerProtocolImpl {
-    message: ServerMessage,
+    message: ServerMessage<Arc<OwnedFloEvent>>,
     state: ReadState,
 }
 
 impl ServerProtocol for ServerProtocolImpl {
-    fn new(server_message: ServerMessage) -> ServerProtocolImpl {
+    fn new(server_message: ServerMessage<Arc<OwnedFloEvent>>) -> ServerProtocolImpl {
         ServerProtocolImpl {
             message: server_message,
             state: ReadState::Init,
@@ -115,7 +129,6 @@ impl Read for ServerProtocolImpl {
 mod test {
     use super::*;
     use std::io::Read;
-    use server::engine::api::{ServerMessage, EventAck};
     use flo_event::{FloEventId, OwnedFloEvent};
     use std::sync::Arc;
 
