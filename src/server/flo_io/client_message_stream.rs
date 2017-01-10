@@ -113,16 +113,19 @@ impl <R: Read, P: ClientProtocol> ClientMessageStream<R, P> {
 
             match parse_result {
                 IResult::Done(remaining, proto_message) => {
+                    trace!("ClientMessageStream for connection: {} Got protocolMessage: {:?}", self.connection_id, proto_message);
                     let nused = self.filled_bytes - remaining.len();
                     self.buffer_pos += nused;
                     self.filled_bytes -= nused;
                     Ok(ProtoResult::Done(proto_message))
                 }
-                IResult::Incomplete(_needed) => {
+                IResult::Incomplete(needed) => {
                     //TODO: in case buffer position is > 0, shift buffer in preparation for next read.
+                    trace!("Connection: {} got incomplete message. Need: {:?}", self.connection_id, needed);
                     Ok(ProtoResult::Incomplete)
                 }
                 IResult::Error(err) => {
+                    warn!("Error parsing message from client: {:?}", err);
                     Err(format!("Error parsing: {:?}", err))
                 }
             }
@@ -230,6 +233,7 @@ impl <R: Read, P: ClientProtocol> Stream for ClientMessageStream<R, P> {
 
         match result {
             Ok(Async::NotReady) if self.read_complete => {
+                debug!("Last read was 0 bytes, so closing connection: {}", self.connection_id);
                 Ok(Async::Ready(None))
             }
             Err(err) => {

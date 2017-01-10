@@ -120,9 +120,10 @@ pub fn run(options: ServerOptions) {
         });
 
         let server_to_client = nio::copy(ServerMessageStream::<ServerProtocolImpl<Arc<OwnedFloEvent>>>::new(connection_id, server_rx), tcp_writer).map_err(|err| {
+            error!("Error writing to client: {:?}", err);
             format!("Error writing to client: {:?}", err)
         }).map(move |amount| {
-            info!("Wrote: {} bytes to client: {:?}, connection_id: {}", amount, client_addr, connection_id);
+            info!("Wrote: {} bytes to client: {:?}, connection_id: {}, dropping connection", amount, client_addr, connection_id);
             ()
         });
 

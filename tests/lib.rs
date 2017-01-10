@@ -8,8 +8,7 @@ extern crate byteorder;
 #[macro_use]
 extern crate nom;
 
-use nom::{be_u64, be_u32, be_u16};
-use url::Url;
+use flo::client::{SyncConnection};
 use flo_event::{FloEventId, OwnedFloEvent, FloEvent};
 use std::process::{Child, Command};
 use std::thread;
@@ -19,10 +18,12 @@ use std::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
 use std::path::Path;
 use std::net::{TcpStream, Shutdown, SocketAddr, SocketAddrV4, IpAddr, Ipv4Addr};
 use std::io::{Write, Read};
+
 use byteorder::{ByteOrder, BigEndian};
 use tempdir::TempDir;
+use nom::{be_u64, be_u32, be_u16};
+use url::Url;
 
-//TODO: get integration tests building again
 
 macro_rules! integration_test {
     ($d:ident, $p:ident, $s:ident, $t:block) => (
@@ -52,16 +53,28 @@ macro_rules! integration_test {
 
             let address: SocketAddr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), port));
             let mut $s = TcpStream::connect(address).unwrap();
-            $s.set_read_timeout(Some(Duration::from_millis(1000)));
+            $s.set_read_timeout(Some(Duration::from_millis(10000)));
 
             let $p = port;
 
             $t
 
-            $s.shutdown(Shutdown::Both).unwrap();
         }
     )
 }
+
+fn localhost(port: u16) -> SocketAddrV4 {
+    SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), port)
+}
+
+integration_test!{event_is_written_using_sync_connection, port, tcp_stream, {
+//    let mut client = SyncConnection::connect(localhost(port)).expect("failed to connect");
+
+    let mut client = SyncConnection::from_stream(tcp_stream);
+    client.produce("/this/namespace/is/boss", b"this is the event data").unwrap();
+
+
+}}
 
 integration_test!{event_is_written_and_ackgnowledged, _port, tcp_stream, {
     let event_data = b"ninechars";

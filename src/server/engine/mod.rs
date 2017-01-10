@@ -40,12 +40,19 @@ pub fn run(options: ServerOptions) -> BackendChannels {
 
     //TODO: write this whole fucking thing
     let consumer_manager_sender = consumer_tx.clone();
-    thread::spawn(move || {
+    thread::Builder::new().name("Producer-Manager-thread".to_owned()).spawn(move || {
         let mut producer_manager = ProducerManager::new(event_writer, consumer_manager_sender, actor_id, highest_event_id.event_counter);
         loop {
             match producer_rx.recv() {
                 Ok(msg) => {
-                    producer_manager.process(msg).unwrap();
+                    match producer_manager.process(msg) {
+                        Ok(()) => {
+                            trace!("Producer Manager successfully processed message");
+                        }
+                        Err(err) => {
+                            error!("ProducerManager error processing message err: {:?}", err)
+                        }
+                    }
                 }
                 Err(recv_err) => {
                     error!("Receive Error: {:?}", recv_err);
@@ -56,13 +63,20 @@ pub fn run(options: ServerOptions) -> BackendChannels {
     });
 
     let consumer_manager_sender = consumer_tx.clone();
-    thread::spawn(move || {
+    thread::Builder::new().name("Consumer-Manager-thread".to_owned()).spawn(move || {
         let mut consumer_manager = ConsumerManager::new(event_reader, consumer_manager_sender, highest_event_id, max_cached_events, max_cache_memory);
 
         loop {
             match consumer_rx.recv() {
                 Ok(client_message) => {
-                    consumer_manager.process(client_message).unwrap();
+                    match consumer_manager.process(client_message) {
+                        Ok(()) => {
+                            trace!("Consumer manager succesfully processed message");
+                        }
+                        Err(err) => {
+                            error!("ConsumerManager error in processing message err: {:?}", err);
+                        }
+                    }
                 }
                 Err(err) => {
                     error!("Error reading for Consumer Manager: {:?}", err);

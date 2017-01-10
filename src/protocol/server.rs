@@ -286,24 +286,6 @@ mod test {
 
     #[test]
     fn event_ack_is_serialized_and_deserialized() {
-//        let mut subject = ServerProtocolImpl::new(ServerMessage::EventPersisted(
-//            EventAck{op_id: 123, event_id: FloEventId::new(234, 5)}
-//        ));
-//
-//        let mut buffer = [0; 64];
-//        let result = subject.read(&mut buffer[..]).unwrap();
-//
-//        let expected_header = b"FLO_ACK\n";
-//        assert_eq!(&expected_header[..], &buffer[..8]);
-//        assert_eq!(&[0, 0, 0, 123], &buffer[8..12]); // op_id
-//        assert_eq!(&[0, 234], &buffer[12..14]);
-//        assert_eq!(&[0, 0, 0, 0, 0, 0, 0, 5], &buffer[14..22]);
-//
-//        assert_eq!(22, result);
-//
-//        assert!(subject.is_done());
-//        let result = subject.read(&mut buffer[..]).unwrap();
-//        assert_eq!(0, result);
         let ack = ServerMessage::EventPersisted(
             EventAck{op_id: 123, event_id: FloEventId::new(234, 5)}
         );
