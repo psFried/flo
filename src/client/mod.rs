@@ -3,7 +3,7 @@ mod sync;
 use std::io;
 use protocol::{ProtocolMessage, ServerMessage, EventHeader};
 
-pub use self::sync::SyncConnection;
+pub use self::sync::SyncStream;
 
 #[derive(Debug)]
 pub enum ClientError {

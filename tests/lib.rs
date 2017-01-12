@@ -8,7 +8,7 @@ extern crate byteorder;
 #[macro_use]
 extern crate nom;
 
-use flo::client::{SyncConnection};
+use flo::client::{SyncStream};
 use flo_event::{FloEventId, OwnedFloEvent, FloEvent};
 use std::process::{Child, Command};
 use std::thread;
@@ -68,12 +68,8 @@ fn localhost(port: u16) -> SocketAddrV4 {
 }
 
 integration_test!{event_is_written_using_sync_connection, port, tcp_stream, {
-//    let mut client = SyncConnection::connect(localhost(port)).expect("failed to connect");
-
-    let mut client = SyncConnection::from_stream(tcp_stream);
+    let mut client = SyncStream::from_stream(tcp_stream);
     client.produce("/this/namespace/is/boss", b"this is the event data").unwrap();
-
-
 }}
 
 integration_test!{event_is_written_and_ackgnowledged, _port, tcp_stream, {
