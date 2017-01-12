@@ -6,7 +6,7 @@ use nom::IResult;
 
 use protocol::{ProtocolMessage, ServerMessage, EventHeader, read_server_message};
 use flo_event::{FloEventId, FloEvent, OwnedFloEvent};
-use super::{ClientError};
+use client::{ClientError};
 
 
 const BUFFER_LENGTH: usize = 8 * 1024;
@@ -53,7 +53,11 @@ impl ::std::ops::Deref for Buffer {
     }
 }
 
-pub struct ClientStream<T: Write + Read> {
+
+pub trait IoStream: Read + Write {}
+impl IoStream for TcpStream {}
+
+pub struct ClientStream<T: IoStream> {
     writer: T,
     read_buffer: Buffer,
     op_id: u32
@@ -79,13 +83,13 @@ impl SyncStream {
     }
 }
 
-impl <T: Write + Read> ClientStream<T> {
+impl <T: IoStream> ClientStream<T> {
+
     pub fn write(&mut self, message: &mut ProtocolMessage) -> io::Result<()> {
         let mut buffer = [0; BUFFER_LENGTH];
         let nread = message.read(&mut buffer[..])?;
         self.writer.write_all(&buffer[..nread])
     }
-
 
     pub fn read(&mut self) -> io::Result<ServerMessage<OwnedFloEvent>> {
         let ClientStream {ref mut writer, ref mut read_buffer, ..} = *self;
@@ -135,7 +139,7 @@ impl <T: Write + Read> ClientStream<T> {
             }
             Ok(other) => {
                 let debug_msg = format!("{:?}", other);
-                Err(ClientError::UnexpectedMessage(debug_msg))
+                Err(ClientError::UnexpectedMessage(other))
             }
             Err(io_err) => {
                 Err(io_err.into())
