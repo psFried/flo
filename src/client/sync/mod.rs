@@ -40,6 +40,12 @@ impl SyncConnection<TcpStream> {
             }
         })
     }
+
+    pub fn from_tcp_stream(tcp_stream: TcpStream) -> SyncConnection<TcpStream> {
+        SyncConnection {
+            stream: SyncStream::from_stream(tcp_stream)
+        }
+    }
 }
 
 impl <S: IoStream> SyncConnection<S> {
@@ -55,9 +61,13 @@ impl <S: IoStream> SyncConnection<S> {
     }
 
     pub fn run_consumer<C: FloConsumer>(&mut self, options: ConsumerOptions, consumer: &mut C) -> Result<(), ClientError> {
-        let ConsumerOptions{namespace, start_position, username, password} = options;
+        let ConsumerOptions{namespace, start_position, username, password, max_events} = options;
 
         self.authenticate(namespace, username, password)?;
+        if let Some(id) = start_position {
+            self.send_event_marker(id)?;
+        }
+        self.start_consuming(max_events)?;
 
         let mut context = ConsumerContext {
             current_event_id: None,
@@ -66,18 +76,20 @@ impl <S: IoStream> SyncConnection<S> {
 
         let mut error: Option<ClientError> = None;
 
-        loop {
+        while context.events_consumed < max_events {
 
             let consumer_action = {
                 let read_result = self.read_event();
 
                 let for_consumer = match read_result {
                     Ok(event) => {
+                        trace!("Client received event: {:?}", event.id);
                         context.current_event_id = Some(event.id);
                         context.events_consumed += 1;
                         Ok(event)
                     }
                     Err(err) => {
+                        error!("Error reading event: {:?}", err);
                         error = Some(err);
                         Err(error.as_ref().unwrap())
                     }
@@ -87,8 +99,9 @@ impl <S: IoStream> SyncConnection<S> {
 
             match consumer_action {
                 ConsumerAction::Continue => {
-                    context.events_consumed += 1;
-                    error = None;
+                    error.take().map(|err| {
+                        info!("Continuing after error: {:?}", err);
+                    });
                 }
                 ConsumerAction::Stop => {
                     debug!("Stopping consumer after error: {:?}", error);
@@ -106,12 +119,19 @@ impl <S: IoStream> SyncConnection<S> {
     fn read_event(&mut self) -> Result<OwnedFloEvent, ClientError> {
         match self.stream.read() {
             Ok(ServerMessage::Event(event)) => Ok(event),
-            Ok(other) => {
-                error!("unexpected message from server: {:?}", other);
-                Err(ClientError::UnexpectedMessage(other))
-            }
+            Ok(other) => Err(ClientError::UnexpectedMessage(other)),
             Err(io_err) => Err(io_err.into())
         }
+    }
+
+    fn start_consuming(&mut self, max: u64) -> Result<(), ClientError> {
+        let mut msg = ProtocolMessage::StartConsuming(max as i64);
+        self.stream.write(&mut msg).map_err(|e| e.into())
+    }
+
+    fn send_event_marker(&mut self, id: FloEventId) -> Result<(), ClientError> {
+        let mut msg = ProtocolMessage::UpdateMarker(id);
+        self.stream.write(&mut msg).map_err(|e| e.into())
     }
 
     fn authenticate(&mut self, namespace: String, username: String, password: String) -> Result<(), ClientError> {

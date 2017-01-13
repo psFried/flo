@@ -24,6 +24,7 @@ impl ClientMap {
         self.0.get_mut(&client).ok_or_else(|| {
             format!("Client: {} does not exist in producer map", client)
         }).and_then(|client_connect| {
+            trace!("Sending to client: {}, message: {:?}", client, message);
             client_connect.message_sender.send(message).map_err(|err| {
                 format!("Failed to send to client: {}, addr: {:?}, err: {:?}", client, client_connect.client_addr, err)
             })

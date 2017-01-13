@@ -1,10 +1,9 @@
-mod sync;
+pub mod sync;
 
 use std::io;
 use protocol::{ProtocolMessage, ServerMessage, EventHeader};
 use flo_event::{FloEventId, OwnedFloEvent};
 
-pub use self::sync::SyncConnection;
 
 #[derive(Debug)]
 pub enum ClientError {
@@ -23,7 +22,10 @@ impl From<io::Error> for ClientError {
 pub struct ConsumerOptions {
     pub namespace: String,
     pub start_position: Option<FloEventId>,
+    pub max_events: u64,
     pub username: String,
     pub password: String,
 }
+
+
 

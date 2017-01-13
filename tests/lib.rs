@@ -8,7 +8,8 @@ extern crate byteorder;
 #[macro_use]
 extern crate nom;
 
-use flo::client::{SyncConnection};
+use flo::client::sync::{SyncConnection, FloConsumer, ConsumerContext, ConsumerAction};
+use flo::client::{ConsumerOptions, ClientError};
 use flo_event::{FloEventId, OwnedFloEvent, FloEvent};
 use std::process::{Child, Command};
 use std::thread;
@@ -66,6 +67,84 @@ macro_rules! integration_test {
 fn localhost(port: u16) -> SocketAddrV4 {
     SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), port)
 }
+
+struct TestConsumer(Vec<OwnedFloEvent>);
+
+impl TestConsumer {
+    pub fn new() -> TestConsumer  {
+        TestConsumer(Vec::new())
+    }
+}
+
+impl FloConsumer for TestConsumer {
+    fn name(&self) -> &str {
+        "test consumer"
+    }
+
+    fn on_event(&mut self, event_result: Result<OwnedFloEvent, &ClientError>, context: &ConsumerContext) -> ConsumerAction {
+        match event_result {
+            Ok(event) => {
+                println!("Consumer received event: {:?}", event.id);
+                self.0.push(event);
+                ConsumerAction::Continue
+            },
+            Err(err) => {
+                println!("Error reading event #{}: {:?}", self.0.len() + 1, err);
+                ConsumerAction::Stop
+            }
+        }
+    }
+}
+
+
+integration_test!{many_events_are_produced_using_sync_client, port, tcp_stream, {
+
+    let mut client = SyncConnection::connect(localhost(port)).expect("failed to create client");
+
+    for i in 0..1000 {
+        match client.produce("/any/ns", b"some bytes") {
+            Ok(_) => {}
+            Err(err) => {
+                panic!("Failed to produce event: {}, err: {:?}", i, err);
+            }
+        }
+    }
+}}
+
+
+integration_test!{events_are_consumed_as_they_are_written, port, tcp_stream, {
+
+    let num_events = 1000;
+
+    let join_handle = thread::spawn(move || {
+        let mut client = SyncConnection::connect(localhost(port)).expect("Failed to create client");
+
+        (0..num_events).map(|i| {
+            let event_data = format!("Event: {} data", i);
+            client.produce("/the/test/namespace", event_data.as_bytes()).expect("Failed to produce event")
+        }).collect::<Vec<FloEventId>>()
+    });
+
+    let mut consumer = TestConsumer::new();
+    let mut client = SyncConnection::from_tcp_stream(tcp_stream);
+
+    let options = ConsumerOptions {
+        namespace: "/the/test/namespace".to_owned(),
+        start_position: None,
+        max_events: num_events as u64,
+        username: String::new(),
+        password: String::new(),
+    };
+
+    let result = client.run_consumer(options, &mut consumer);
+
+    let produced_ids = join_handle.join().expect("Producer thread panicked!");
+    assert_eq!(num_events, produced_ids.len(), "didn't produce correct number of events");
+
+    assert_eq!(num_events, consumer.0.len(), "didn't consume enough events");
+
+    result.expect("Error running consumer");
+}}
 
 integration_test!{event_is_written_using_sync_connection, port, tcp_stream, {
     let mut client = SyncConnection::connect(localhost(port)).expect("failed to connect");
@@ -258,6 +337,7 @@ impl FloServerProcess {
 
         println!("Starting flo server");
         let child = Command::new(flo_path)
+                .env("RUST_BACKTRACE", "1")
                 .arg("--port")
                 .arg(format!("{}", self.port))
                 .arg("--data-dir")

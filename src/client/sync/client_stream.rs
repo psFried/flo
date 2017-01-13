@@ -30,14 +30,29 @@ impl Buffer {
         if self.pos >= self.len {
             let nread = {
                 let mut buf = &mut self.bytes[..];
-                reader.read(buf)?
+                let mut nread = 0;
+                loop {
+                    match reader.read(buf) {
+                        Ok(n) => {
+                            nread = n;
+                            break;
+                        }
+                        Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {
+                            trace!("Interrupted reading from socket, trying again");
+                        },
+                        Err(io_err) => {
+                            return Err(io_err);
+                        }
+                    }
+                }
+                nread
             };
             trace!("read {} bytes", nread);
             self.len = nread;
             self.pos = 0;
         }
         let buf = &self.bytes[self.pos..self.len];
-        debug!("Filled buffer: {:?}", buf);
+        debug!("Returning buffer: {:?}", buf);
         Ok(buf)
     }
 
@@ -68,8 +83,10 @@ pub type SyncStream = ClientStream<TcpStream>;
 impl SyncStream {
     pub fn connect<T: ToSocketAddrs>(addr: T) -> io::Result<SyncStream> {
         TcpStream::connect(addr).and_then(|stream| {
-            stream.set_read_timeout(Some(Duration::from_millis(1000))).map(|()| {
-                SyncStream::from_stream(stream)
+            stream.set_read_timeout(Some(Duration::from_millis(10_000))).and_then(|()| {
+                stream.set_nonblocking(false).map(|()| {
+                    SyncStream::from_stream(stream)
+                })
             })
         })
     }
@@ -133,12 +150,13 @@ impl <T: IoStream> ClientStream<T> {
             self.read()
         });
 
+        trace!("Produce Event response: {:?}", result);
+
         match result {
             Ok(ServerMessage::EventPersisted(ref ack)) if ack.op_id == self.op_id => {
                 Ok(ack.event_id)
             }
             Ok(other) => {
-                let debug_msg = format!("{:?}", other);
                 Err(ClientError::UnexpectedMessage(other))
             }
             Err(io_err) => {

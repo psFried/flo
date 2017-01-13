@@ -13,7 +13,7 @@ pub fn init_logging() {
     let appender = Appender::builder().build(STD_OUT_APPENDER.to_string(), Box::new(console_appender));
 
     let root = Root::builder().appender(STD_OUT_APPENDER.to_string()).build(LogLevelFilter::Info);
-    let flo_logger = Logger::builder().build("flo".to_string(), LogLevelFilter::Trace);
+    let flo_logger = Logger::builder().build("flo".to_string(), LogLevelFilter::Warn);
 
     let config = Config::builder()
                      .appender(appender)
