@@ -22,7 +22,8 @@ extern crate env_logger;
 
 mod logging;
 
-use logging::init_logging;
+use log::LogLevel;
+use logging::{init_logging, LogLevelOption};
 use clap::{App, Arg, ArgMatches};
 use std::str::FromStr;
 use std::path::PathBuf;
@@ -30,42 +31,52 @@ use flo::server::{self, ServerOptions, MemoryLimit, MemoryUnit};
 
 const FLO_VERSION: &'static str = env!("CARGO_PKG_VERSION");
 
-fn main() {
-    init_logging();
+fn app_args() -> App<'static, 'static> {
+    App::new("flo")
+            .version(FLO_VERSION)
+            .arg(Arg::with_name("log-level")
+                    .short("-L")
+                    .long("log")
+                    .multiple(true)
+                    .help("Sets the log level for a module. Argument should be in the format module::sub-module=<level> where level is one of trace, debug, info, warn"))
+            .arg(Arg::with_name("port")
+                    .short("p")
+                    .long("port")
+                    .value_name("PORT")
+                    .help("port that the server should listen on")
+                    .default_value("3000"))
+            .arg(Arg::with_name("data-dir")
+                    .short("d")
+                    .long("data-dir")
+                    .value_name("DIR")
+                    .help("The directory to be used for storage")
+                    .default_value("."))
+            .arg(Arg::with_name("default-namespace")
+                    .long("default-namespace")
+                    .value_name("ns")
+                    .help("Name of the default namespace")
+                    .default_value("default"))
+            .arg(Arg::with_name("max-events")
+                    .long("max-events")
+                    .value_name("max")
+                    .help("Maximum number of events to keep, if left unspecified, defaults to max u32 or u64 depending on architecture"))
+            .arg(Arg::with_name("max-cached-events")
+                    .long("max-cached-events")
+                    .value_name("max")
+                    .help("Maximum number of events to cache in memory, if left unspecified, defaults to max u32 or u64 depending on architecture"))
+            .arg(Arg::with_name("max-cache-memory")
+                    .short("M")
+                    .long("max-cache-memory")
+                    .value_name("megabytes")
+                    .default_value("512")
+                    .help("Maximum amount of memory in megabytes to use for the event cache"))
+}
 
-    let args = App::new("flo")
-                   .version(FLO_VERSION)
-                   .arg(Arg::with_name("port")
-                            .short("p")
-                            .long("port")
-                            .value_name("PORT")
-                            .help("port that the server should listen on")
-                            .default_value("3000"))
-                   .arg(Arg::with_name("data-dir")
-                            .short("d")
-                            .long("data-dir")
-                            .value_name("DIR")
-                            .help("The directory to be used for storage")
-                            .default_value("."))
-                   .arg(Arg::with_name("default-namespace")
-                            .long("default-namespace")
-                            .value_name("ns")
-                            .help("Name of the default namespace")
-                            .default_value("default"))
-                   .arg(Arg::with_name("max-events")
-                            .long("max-events")
-                            .value_name("max")
-                            .help("Maximum number of events to keep, if left unspecified, defaults to max u32 or u64 depending on architecture"))
-                    .arg(Arg::with_name("max-cached-events")
-                            .long("max-cached-events")
-                            .value_name("max")
-                            .help("Maximum number of events to cache in memory, if left unspecified, defaults to max u32 or u64 depending on architecture"))
-                .arg(Arg::with_name("max-cache-memory")
-                        .short("M")
-                        .long("max-cache-memory")
-                        .value_name("megabytes")
-                        .help("Maximum amount of memory in megabytes to use for the event cache"))
-                   .get_matches();
+fn main() {
+    let args = app_args().get_matches();
+
+    let log_options = get_log_options(&args);
+    init_logging(log_options);
 
     let port = parse_arg_or_exit(&args, "port", 3000u16);
     let data_dir = PathBuf::from(args.value_of("data-dir").unwrap_or("."));
@@ -85,6 +96,14 @@ fn main() {
     info!("Shutdown server");
 }
 
+fn get_log_options(args: &ArgMatches) -> Vec<LogLevelOption> {
+    args.values_of("log-level").map(|level_strs| {
+        level_strs.map(|arg_value| {
+            LogLevelOption::from_str(arg_value).or_bail()
+        }).collect()
+    }).unwrap_or(Vec::new())
+}
+
 fn get_max_cache_mem_amount(args: &ArgMatches) -> MemoryLimit {
     let mb = parse_arg_or_exit(args, "max-cache-memory", 512usize);
     MemoryLimit::new(mb, MemoryUnit::Megabyte)
@@ -93,12 +112,25 @@ fn get_max_cache_mem_amount(args: &ArgMatches) -> MemoryLimit {
 fn parse_arg_or_exit<T: FromStr + Default>(args: &ArgMatches, arg_name: &str, default: T) -> T {
     args.value_of(arg_name)
         .map(|value| {
-            match value.parse() {
-                Ok(parsed) => parsed,
-                Err(_) => {
-                    panic!("Argument: {} is invalid", arg_name);
-                }
-            }
+            value.parse::<T>().map_err(|err| {
+                format!("argument {} invalid value: {}", arg_name, value)
+            }).or_bail()
         })
         .unwrap_or(default)
+}
+
+trait ParseArg<T> {
+    fn or_bail(self) -> T;
+}
+
+impl <T> ParseArg<T> for Result<T, String> {
+    fn or_bail(self) -> T {
+        match self {
+            Ok(value) => value,
+            Err(err) => {
+                app_args().print_help().expect("failed to print help message");
+                panic!("{}", err);
+            }
+        }
+    }
 }
