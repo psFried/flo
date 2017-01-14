@@ -154,4 +154,14 @@ impl Client {
             ClientState::Consuming(ref state) => state.last_event_id
         }
     }
+
+    pub fn set_position(&mut self, new_position: FloEventId) {
+        match self.consumer_state {
+            ClientState::NotConsuming(ref mut id) => *id = new_position,
+            ClientState::Consuming(ref mut state) => {
+                debug!("Client: {} moving position from {:?} to {:?} while in consuming state", self.connection_id, state.last_event_id, new_position);
+                state.last_event_id = new_position;
+            }
+        }
+    }
 }

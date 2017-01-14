@@ -68,28 +68,34 @@ fn localhost(port: u16) -> SocketAddrV4 {
     SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), port)
 }
 
-struct TestConsumer(Vec<OwnedFloEvent>);
+struct TestConsumer{
+    name: String,
+    events: Vec<OwnedFloEvent>,
+}
 
 impl TestConsumer {
-    pub fn new() -> TestConsumer  {
-        TestConsumer(Vec::new())
+    pub fn new(name: &str) -> TestConsumer  {
+        TestConsumer{
+            name: name.to_owned(),
+            events: Vec::new()
+        }
     }
 }
 
 impl FloConsumer for TestConsumer {
     fn name(&self) -> &str {
-        "test consumer"
+        &self.name
     }
 
     fn on_event(&mut self, event_result: Result<OwnedFloEvent, &ClientError>, context: &ConsumerContext) -> ConsumerAction {
         match event_result {
             Ok(event) => {
-                println!("Consumer received event: {:?}", event.id);
-                self.0.push(event);
+                println!("Consumer {} received event: {:?}", &self.name, event.id);
+                self.events.push(event);
                 ConsumerAction::Continue
             },
             Err(err) => {
-                println!("Error reading event #{}: {:?}", self.0.len() + 1, err);
+                println!("Consumer: {} - Error reading event #{}: {:?}", &self.name, self.events.len() + 1, err);
                 ConsumerAction::Stop
             }
         }
@@ -116,9 +122,9 @@ integration_test!{clients_can_connect_and_disconnect_multiple_times_without_maki
 
     {
         let mut client = SyncConnection::connect(localhost(port)).expect("failed to create first consumer");
-        let mut consumer = TestConsumer::new();
+        let mut consumer = TestConsumer::new("consumer one");
         client.run_consumer(opts(None, 1), &mut consumer).expect("failed to run first consumer");
-        assert_eq!(1, consumer.0.len());
+        assert_eq!(1, consumer.events.len());
     }
 
     let second_event_id = {
@@ -128,9 +134,9 @@ integration_test!{clients_can_connect_and_disconnect_multiple_times_without_maki
 
     {
         let mut client = SyncConnection::connect(localhost(port)).expect("failed to create second consumer");
-        let mut consumer = TestConsumer::new();
+        let mut consumer = TestConsumer::new("consumer two");
         client.run_consumer(opts(None, 2), &mut consumer).expect("failed to run second consumer");
-        assert_eq!(2, consumer.0.len());
+        assert_eq!(2, consumer.events.len());
     }
 
     {
@@ -140,9 +146,9 @@ integration_test!{clients_can_connect_and_disconnect_multiple_times_without_maki
 
     {
         let mut client = SyncConnection::connect(localhost(port)).expect("failed to create third consumer");
-        let mut consumer = TestConsumer::new();
-        client.run_consumer(opts(Some(second_event_id), 2), &mut consumer).expect("failed to run third consumer");
-        assert_eq!(2, consumer.0.len());
+        let mut consumer = TestConsumer::new("consumer three");
+        client.run_consumer(opts(Some(second_event_id), 1), &mut consumer).expect("failed to run third consumer");
+        assert_eq!(1, consumer.events.len());
     }
 }}
 
@@ -174,7 +180,7 @@ integration_test!{events_are_consumed_as_they_are_written, port, tcp_stream, {
         }).collect::<Vec<FloEventId>>()
     });
 
-    let mut consumer = TestConsumer::new();
+    let mut consumer = TestConsumer::new("events are consumed after they are written");
     let mut client = SyncConnection::from_tcp_stream(tcp_stream);
 
     let options = ConsumerOptions {
@@ -190,7 +196,7 @@ integration_test!{events_are_consumed_as_they_are_written, port, tcp_stream, {
     let produced_ids = join_handle.join().expect("Producer thread panicked!");
     assert_eq!(num_events, produced_ids.len(), "didn't produce correct number of events");
 
-    assert_eq!(num_events, consumer.0.len(), "didn't consume enough events");
+    assert_eq!(num_events, consumer.events.len(), "didn't consume enough events");
 
     result.expect("Error running consumer");
 }}

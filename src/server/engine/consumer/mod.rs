@@ -56,6 +56,9 @@ impl <R: EventReader + 'static> ConsumerManager<R> {
                 let event_rc = self.cache.insert(event);
                 self.consumers.send_event_to_all(event_rc)
             }
+            ConsumerMessage::UpdateMarker(connection_id, event_id) => {
+                self.consumers.update_consumer_position(connection_id, event_id)
+            }
             m @ _ => {
                 error!("Got unhandled message: {:?}", m);
                 panic!("Got unhandled message: {:?}", m);
@@ -147,6 +150,14 @@ impl ConsumerMap {
             format!("Consumer: {} does not exist", connection_id)
         }).map(|consumer| {
             consumer.get_current_position()
+        })
+    }
+
+    pub fn update_consumer_position(&mut self, connection_id: ConnectionId, new_position: FloEventId) -> Result<(), String> {
+        self.0.get_mut(&connection_id).ok_or_else(|| {
+            format!("Consumer: {} does not exist. Cannot update position", connection_id)
+        }).map(|consumer| {
+            consumer.set_position(new_position);
         })
     }
 

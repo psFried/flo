@@ -83,13 +83,13 @@ impl <S: IoStream> SyncConnection<S> {
 
                 let for_consumer = match read_result {
                     Ok(event) => {
-                        trace!("Client received event: {:?}", event.id);
+                        trace!("Client '{}' received event: {:?}", consumer.name(), event.id);
                         context.current_event_id = Some(event.id);
                         context.events_consumed += 1;
                         Ok(event)
                     }
                     Err(err) => {
-                        error!("Error reading event: {:?}", err);
+                        error!("Consumer: '{}' - Error reading event: {:?}", consumer.name(), err);
                         error = Some(err);
                         Err(error.as_ref().unwrap())
                     }
@@ -100,11 +100,11 @@ impl <S: IoStream> SyncConnection<S> {
             match consumer_action {
                 ConsumerAction::Continue => {
                     error.take().map(|err| {
-                        info!("Continuing after error: {:?}", err);
+                        info!("Consumer: '{}' - Continuing after error: {:?}", consumer.name(), err);
                     });
                 }
                 ConsumerAction::Stop => {
-                    debug!("Stopping consumer after error: {:?}", error);
+                    debug!("Stopping consumer '{}' after error: {:?}", consumer.name(), error);
                     break;
                 }
             }
