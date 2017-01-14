@@ -23,10 +23,10 @@ extern crate env_logger;
 mod logging;
 
 use log::LogLevel;
-use logging::{init_logging, LogLevelOption};
+use logging::{init_logging, LogLevelOption, LogFileOption};
 use clap::{App, Arg, ArgMatches};
 use std::str::FromStr;
-use std::path::PathBuf;
+use std::path::{PathBuf, Path};
 use flo::server::{self, ServerOptions, MemoryLimit, MemoryUnit};
 
 const FLO_VERSION: &'static str = env!("CARGO_PKG_VERSION");
@@ -37,8 +37,14 @@ fn app_args() -> App<'static, 'static> {
             .arg(Arg::with_name("log-level")
                     .short("-L")
                     .long("log")
+                    .takes_value(true)
+                    .value_name("module=level")
                     .multiple(true)
                     .help("Sets the log level for a module. Argument should be in the format module::sub-module=<level> where level is one of trace, debug, info, warn"))
+            .arg(Arg::with_name("log-dest")
+                    .long("log-dest")
+                    .value_name("path")
+                    .help("Path of a file to write logs to. Default is to log to stdout if unspecified"))
             .arg(Arg::with_name("port")
                     .short("p")
                     .long("port")
@@ -75,8 +81,9 @@ fn app_args() -> App<'static, 'static> {
 fn main() {
     let args = app_args().get_matches();
 
-    let log_options = get_log_options(&args);
-    init_logging(log_options);
+    let log_levels = get_log_level_options(&args);
+    let log_dest = get_log_file_option(&args);
+    init_logging(log_dest, log_levels);
 
     let port = parse_arg_or_exit(&args, "port", 3000u16);
     let data_dir = PathBuf::from(args.value_of("data-dir").unwrap_or("."));
@@ -96,7 +103,13 @@ fn main() {
     info!("Shutdown server");
 }
 
-fn get_log_options(args: &ArgMatches) -> Vec<LogLevelOption> {
+fn get_log_file_option(args: &ArgMatches) -> LogFileOption {
+    args.value_of("log-dest").map(|path| {
+        LogFileOption::File(Path::new(path).to_path_buf())
+    }).unwrap_or(LogFileOption::Stdout)
+}
+
+fn get_log_level_options(args: &ArgMatches) -> Vec<LogLevelOption> {
     args.values_of("log-level").map(|level_strs| {
         level_strs.map(|arg_value| {
             LogLevelOption::from_str(arg_value).or_bail()

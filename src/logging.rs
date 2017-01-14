@@ -1,18 +1,21 @@
 use log4rs::config::{Config, Appender, Logger, Root};
 use log4rs::append::console::ConsoleAppender;
+use log4rs::append::file::FileAppender;
+use log4rs::append::Append;
 use log4rs::init_config;
 
 use log::{LogLevelFilter, LogLevel};
 
 use std::boxed::Box;
 use std::str::FromStr;
+use std::path::PathBuf;
 
-const STD_OUT_APPENDER: &'static str = "stdout";
+const LOG_APPENDER: &'static str = "log_appender";
 
-//pub enum LogFileOption {
-//    File(PathBuf),
-//    Stdout
-//}
+pub enum LogFileOption {
+    File(PathBuf),
+    Stdout
+}
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct LogLevelOption {
@@ -40,21 +43,24 @@ impl FromStr for LogLevelOption {
     }
 }
 
-pub fn init_logging(options: Vec<LogLevelOption>) {
-    let console_appender = ConsoleAppender::builder().build();
-    let appender = Appender::builder().build(STD_OUT_APPENDER.to_string(), Box::new(console_appender));
+pub fn init_logging(log_dest: LogFileOption, levels: Vec<LogLevelOption>) {
+    let appender = match log_dest {
+        LogFileOption::Stdout => {
+            Box::new(ConsoleAppender::builder().build()) as Box<Append>
+        }
+        LogFileOption::File(path_buf) => {
+            let appender = FileAppender::builder().build(path_buf).expect("Unable to open log file");
+            Box::new(appender) as Box<Append>
+        }
+    };
+    let appender = Appender::builder().build(LOG_APPENDER.to_string(), appender);
+    let mut config = Config::builder().appender(appender);
 
-    let root = Root::builder().appender(STD_OUT_APPENDER.to_string()).build(LogLevelFilter::Info);
-    let flo_logger = Logger::builder().build("flo".to_string(), LogLevelFilter::Error);
-
-    let mut config = Config::builder()
-            .appender(appender)
-            .logger(flo_logger);
-
-    for level_opt in options {
-        config = config.logger(Logger::builder().build(level_opt.module, level_opt.log_level.to_log_level_filter()));
+    for level_opt in levels {
+        config = config.logger(Logger::builder().additive(true).build(level_opt.module, level_opt.log_level.to_log_level_filter()));
     }
 
+    let root = Root::builder().appender(LOG_APPENDER.to_string()).build(LogLevelFilter::Error);
     let config = config.build(root).unwrap();
     init_config(config).unwrap();
 }
