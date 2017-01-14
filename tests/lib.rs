@@ -97,6 +97,55 @@ impl FloConsumer for TestConsumer {
 }
 
 
+integration_test!{clients_can_connect_and_disconnect_multiple_times_without_making_the_server_barf, port, tcp_stream, {
+
+    fn opts(start: Option<FloEventId>, max_events: u64) -> ConsumerOptions {
+        ConsumerOptions {
+           namespace: String::new(),
+           start_position: start,
+           max_events: max_events,
+           username: String::new(),
+           password: String::new(),
+        }
+    }
+
+    {
+        let mut client = SyncConnection::from_tcp_stream(tcp_stream);
+        client.produce("/any/old/name", b"whatever data").expect("failed to produce first event");
+    }
+
+    {
+        let mut client = SyncConnection::connect(localhost(port)).expect("failed to create first consumer");
+        let mut consumer = TestConsumer::new();
+        client.run_consumer(opts(None, 1), &mut consumer).expect("failed to run first consumer");
+        assert_eq!(1, consumer.0.len());
+    }
+
+    let second_event_id = {
+        let mut client = SyncConnection::connect(localhost(port)).expect("failed to create second producer");
+        client.produce("/some/other/name", b"whatever data").expect("failed to produce second event")
+    };
+
+    {
+        let mut client = SyncConnection::connect(localhost(port)).expect("failed to create second consumer");
+        let mut consumer = TestConsumer::new();
+        client.run_consumer(opts(None, 2), &mut consumer).expect("failed to run second consumer");
+        assert_eq!(2, consumer.0.len());
+    }
+
+    {
+        let mut client = SyncConnection::connect(localhost(port)).expect("failed to create third producer");
+        client.produce("/foo/bar/boo/far", b"whatever data").expect("failed to produce third event");
+    }
+
+    {
+        let mut client = SyncConnection::connect(localhost(port)).expect("failed to create third consumer");
+        let mut consumer = TestConsumer::new();
+        client.run_consumer(opts(Some(second_event_id), 2), &mut consumer).expect("failed to run third consumer");
+        assert_eq!(2, consumer.0.len());
+    }
+}}
+
 integration_test!{many_events_are_produced_using_sync_client, port, tcp_stream, {
 
     let mut client = SyncConnection::connect(localhost(port)).expect("failed to create client");

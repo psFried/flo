@@ -71,6 +71,31 @@ pub enum ClientState {
     Consuming(ConsumingState),
 }
 
+impl ClientState {
+    fn update_event_sent(&mut self, id: FloEventId, connection_id: ConnectionId) {
+        let mut new_state: Option<ClientState> = None;
+
+        match self {
+            &mut ClientState::Consuming(ref state) if state.remaining == 1 => {
+                // this is the last event, so transition to NotConsuming
+                new_state = Some(ClientState::NotConsuming(state.last_event_id));
+            }
+            &mut ClientState::Consuming(ref mut state) => {
+                trace!("updating connection_id: {}, last_event_id: {:?}, remaining: {}", connection_id, state.last_event_id, state.remaining);
+                state.last_event_id = id;
+                state.remaining -= 1;
+            }
+            &mut ClientState::NotConsuming(_) => {
+                unreachable!() //TODO: maybe redesign this to provide a better guarantee that no event will be sent while in NotConsuming state
+            }
+        }
+
+        if let Some(state) = new_state {
+            *self = state;
+        }
+    }
+}
+
 pub struct Client {
     connection_id: ConnectionId,
     addr: SocketAddr,
@@ -109,10 +134,7 @@ impl Client {
         let conn_id = self.connection_id;
         trace!("Sending message to client: {} : {:?}", conn_id, message);
         if let &ServerMessage::Event(ref event) = &message {
-            if let ClientState::Consuming(ref mut state) = self.consumer_state {
-                trace!("Client {} about to update marker to: {:?}, remaining_in_batch: {}", conn_id, event.id(), state.remaining);
-                state.event_sent(*event.id());
-            }
+            self.consumer_state.update_event_sent(*event.id(), self.connection_id);
         }
         self.sender.send(message).map_err(|send_err| {
             ClientSendError(send_err.into_inner())
