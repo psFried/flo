@@ -41,19 +41,22 @@ pub struct ConsumingState {
     pub last_event_id: FloEventId,
     pub consume_type: ConsumeType,
     pub remaining: u64,
+    pub namespace: String,
 }
 
 impl ConsumingState {
-    pub fn forward_from_file(id: FloEventId, limit: u64) -> ConsumingState {
+    pub fn forward_from_file(id: FloEventId, namespace: String, limit: u64) -> ConsumingState {
         ConsumingState {
             last_event_id: id,
             consume_type: ConsumeType::File,
             remaining: limit,
+            namespace: namespace
         }
     }
 
-    pub fn forward_from_memory(id: FloEventId, limit: u64) -> ConsumingState {
+    pub fn forward_from_memory(id: FloEventId, namespace: String, limit: u64) -> ConsumingState {
         ConsumingState {
+            namespace: namespace,
             last_event_id: id,
             consume_type: ConsumeType::Memory,
             remaining: limit,
@@ -119,6 +122,14 @@ impl Client {
 
     pub fn addr(&self) -> &SocketAddr {
         &self.addr
+    }
+
+    pub fn event_namespace_matches(&self, event_namespace: &str) -> bool {
+        if let ClientState::Consuming(ref state) = self.consumer_state {
+            event_namespace == &state.namespace
+        } else {
+            false
+        }
     }
 
     pub fn start_consuming(&mut self, state: ConsumingState) {

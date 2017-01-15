@@ -78,11 +78,12 @@ impl <R: EventReader + 'static> ConsumerManager<R> {
         consumers.get_mut(connection_id).map(|mut client| {
             let start_id = client.get_current_position();
 
+            debug!("Client: {} starting to consume starting at: {:?}", connection_id, start_id);
             if start_id < cache.last_evicted_id() {
                 // need to read event from disk since it isn't in the cache
                 let event_iter = event_reader.load_range(start_id, limit as usize);
                 let event_sender = my_sender.clone();
-                client.start_consuming(ConsumingState::forward_from_file(start_id, limit as u64));
+                client.start_consuming(ConsumingState::forward_from_file(start_id, namespace, limit as u64));
 
                 thread::spawn(move || {
                     let mut sent_events = 0;
@@ -113,10 +114,19 @@ impl <R: EventReader + 'static> ConsumerManager<R> {
 
             } else {
                 debug!("Sending events from cache for connection: {}", connection_id);
-                client.start_consuming(ConsumingState::forward_from_memory(start_id, limit as u64));
-                cache.do_with_range(start_id, limit as usize, |(id, event)| {
-                    trace!("Sending event from cache. connection_id: {}, event_id: {:?}", connection_id, id);
-                    client.send(ServerMessage::Event(event)).unwrap(); //TODO: something better than unwrap
+                client.start_consuming(ConsumingState::forward_from_memory(start_id, namespace, limit as u64));
+
+                let mut remaining = limit;
+                cache.do_with_range(start_id, |(id, event)| {
+                    if client.event_namespace_matches(event.namespace()) {
+                        trace!("Sending event from cache. connection_id: {}, event_id: {:?}", connection_id, id);
+                        remaining -= 1;
+                        client.send(ServerMessage::Event(event)).unwrap(); //TODO: something better than unwrap
+                        remaining > 0
+                    } else {
+                        trace!("Not sending event: {:?} to client: {} due to mismatched namespace", id, connection_id);
+                        true
+                    }
                 });
             }
         })

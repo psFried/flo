@@ -60,12 +60,42 @@ impl FloConsumer for TestConsumer {
     }
 }
 
+integration_test!{consumer_only_receives_events_with_exactly_matching_namespace, port, tcp_stream, {
+
+    let mut client = SyncConnection::connect(localhost(port)).expect("failed to create producer");
+
+    let namespace = "/test/namespace";
+
+    client.produce("/wrong/namespace", b"wrong data").expect("failed to produce event");
+    client.produce("/test/namespace/extra", b"wrong data").expect("failed to produce event");
+    client.produce(namespace, b"right data").expect("failed to produce event");
+    client.produce("/wrong/namespace", b"wrong data").expect("failed to produce event");
+    client.produce(namespace, b"right data").expect("failed to produce event");
+
+    let mut consumer = TestConsumer::new("consumer_only_receives_events_with_exactly_matching_namespace");
+    let options = ConsumerOptions {
+        namespace: namespace.to_owned(),
+        start_position: None,
+        max_events: 2,
+        username: String::new(),
+        password: String::new(),
+    };
+    client.run_consumer(options, &mut consumer).expect("failed to run consumer");
+
+    assert_eq!(2, consumer.events.len());
+
+    for event in consumer.events.iter() {
+        assert_eq!(namespace, &event.namespace);
+    }
+
+}}
 
 integration_test!{clients_can_connect_and_disconnect_multiple_times_without_making_the_server_barf, port, tcp_stream, {
 
+    let namespace = "/the/test/namespace";
     fn opts(start: Option<FloEventId>, max_events: u64) -> ConsumerOptions {
         ConsumerOptions {
-           namespace: String::new(),
+           namespace: "/the/test/namespace".to_owned(),
            start_position: start,
            max_events: max_events,
            username: String::new(),
@@ -73,9 +103,10 @@ integration_test!{clients_can_connect_and_disconnect_multiple_times_without_maki
         }
     }
 
+
     {
         let mut client = SyncConnection::from_tcp_stream(tcp_stream);
-        client.produce("/any/old/name", b"whatever data").expect("failed to produce first event");
+        client.produce(namespace, b"whatever data").expect("failed to produce first event");
     }
 
     {
@@ -87,7 +118,7 @@ integration_test!{clients_can_connect_and_disconnect_multiple_times_without_maki
 
     let second_event_id = {
         let mut client = SyncConnection::connect(localhost(port)).expect("failed to create second producer");
-        client.produce("/some/other/name", b"whatever data").expect("failed to produce second event")
+        client.produce(namespace, b"whatever data").expect("failed to produce second event")
     };
 
     {
@@ -99,7 +130,7 @@ integration_test!{clients_can_connect_and_disconnect_multiple_times_without_maki
 
     {
         let mut client = SyncConnection::connect(localhost(port)).expect("failed to create third producer");
-        client.produce("/foo/bar/boo/far", b"whatever data").expect("failed to produce third event");
+        client.produce(namespace, b"whatever data").expect("failed to produce third event");
     }
 
     {

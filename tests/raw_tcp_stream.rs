@@ -52,7 +52,7 @@ integration_test!{persisted_event_are_consumed_after_they_are_written, server_po
 
     let mut consumer = connect(server_port);
     consumer.write_all(b"FLO_CNS\n").unwrap();
-    consumer.write_all(b"/the/test/namespace\n").unwrap();
+    consumer.write_all(b"/first\n").unwrap();
     consumer.write_all(&[0, 0, 0, 0, 0, 0, 0, 2]).unwrap();
     thread::sleep(Duration::from_millis(250));
 
