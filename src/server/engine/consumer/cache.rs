@@ -27,10 +27,10 @@ impl Cache {
         }
     }
 
-    pub fn do_with_range<T>(&self, start_exclusive: FloEventId, mut fun: T) where T: FnMut((FloEventId, Arc<OwnedFloEvent>)) -> bool {
+    pub fn do_with_range<T>(&self, start_exclusive: FloEventId, mut fun: T) where T: FnMut(FloEventId, &Arc<OwnedFloEvent>) -> bool {
         let iter = self.entries.range(Bound::Excluded(&start_exclusive), Bound::Unbounded);
         for (k, v) in iter {
-            if !fun((*k, v.clone())) {
+            if !fun(*k, v) {
                 break;
             }
         }

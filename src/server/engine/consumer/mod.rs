@@ -117,11 +117,11 @@ impl <R: EventReader + 'static> ConsumerManager<R> {
                 client.start_consuming(ConsumingState::forward_from_memory(start_id, namespace, limit as u64));
 
                 let mut remaining = limit;
-                cache.do_with_range(start_id, |(id, event)| {
-                    if client.event_namespace_matches(event.namespace()) {
+                cache.do_with_range(start_id, |id, event| {
+                    if client.event_namespace_matches((*event).namespace()) {
                         trace!("Sending event from cache. connection_id: {}, event_id: {:?}", connection_id, id);
                         remaining -= 1;
-                        client.send(ServerMessage::Event(event)).unwrap(); //TODO: something better than unwrap
+                        client.send(ServerMessage::Event((*event).clone())).unwrap(); //TODO: something better than unwrap
                         remaining > 0
                     } else {
                         trace!("Not sending event: {:?} to client: {} due to mismatched namespace", id, connection_id);
