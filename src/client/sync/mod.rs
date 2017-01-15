@@ -6,7 +6,7 @@ use std::net::{TcpStream, SocketAddr, ToSocketAddrs};
 
 use nom::IResult;
 
-use protocol::{ProtocolMessage, ServerMessage, EventHeader, read_server_message};
+use protocol::{ProtocolMessage, ServerMessage, EventHeader, ConsumerStart, read_server_message};
 use flo_event::{FloEventId, FloEvent, OwnedFloEvent};
 use super::{ClientError, ConsumerOptions};
 
@@ -63,11 +63,11 @@ impl <S: IoStream> SyncConnection<S> {
     pub fn run_consumer<C: FloConsumer>(&mut self, options: ConsumerOptions, consumer: &mut C) -> Result<(), ClientError> {
         let ConsumerOptions{namespace, start_position, username, password, max_events} = options;
 
-        self.authenticate(namespace, username, password)?;
+        self.authenticate(namespace.clone(), username, password)?;
         if let Some(id) = start_position {
             self.send_event_marker(id)?;
         }
-        self.start_consuming(max_events)?;
+        self.start_consuming(namespace, max_events)?;
 
         let mut context = ConsumerContext {
             current_event_id: None,
@@ -124,8 +124,11 @@ impl <S: IoStream> SyncConnection<S> {
         }
     }
 
-    fn start_consuming(&mut self, max: u64) -> Result<(), ClientError> {
-        let mut msg = ProtocolMessage::StartConsuming(max as i64);
+    fn start_consuming(&mut self, namespace: String, max: u64) -> Result<(), ClientError> {
+        let mut msg = ProtocolMessage::StartConsuming(ConsumerStart {
+            namespace: namespace,
+            max_events: max as i64
+        });
         self.stream.write(&mut msg).map_err(|e| e.into())
     }
 

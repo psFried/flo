@@ -52,6 +52,7 @@ integration_test!{persisted_event_are_consumed_after_they_are_written, server_po
 
     let mut consumer = connect(server_port);
     consumer.write_all(b"FLO_CNS\n").unwrap();
+    consumer.write_all(b"/the/test/namespace\n").unwrap();
     consumer.write_all(&[0, 0, 0, 0, 0, 0, 0, 2]).unwrap();
     thread::sleep(Duration::from_millis(250));
 
@@ -65,6 +66,7 @@ integration_test!{persisted_event_are_consumed_after_they_are_written, server_po
 integration_test!{events_are_consumed_by_another_connection_as_they_are_written, server_port, tcp_stream, {
     let mut consumer = connect(server_port);
     consumer.write_all(b"FLO_CNS\n").unwrap();
+    consumer.write_all(b"/animal/*\n").unwrap();
     consumer.write_all(&[0, 0, 0, 0, 0, 0, 0, 2]).unwrap();
 
     let event1_data = b"first event data";

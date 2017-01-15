@@ -41,11 +41,11 @@ impl <R: EventReader + 'static> ConsumerManager<R> {
                 self.consumers.add(connect);
                 Ok(())
             }
-            ConsumerMessage::StartConsuming(connection_id, limit) => {
-                self.start_consuming(connection_id, limit)
+            ConsumerMessage::StartConsuming(connection_id, namespace, limit) => {
+                self.start_consuming(connection_id, namespace, limit)
             }
             ConsumerMessage::ContinueConsuming(connection_id, _event_id, limit) => {
-                self.start_consuming(connection_id, limit)
+                unimplemented!()
             }
             ConsumerMessage::EventLoaded(connection_id, event) => {
                 self.update_greatest_event(event.id);
@@ -72,7 +72,7 @@ impl <R: EventReader + 'static> ConsumerManager<R> {
         }
     }
 
-    fn start_consuming(&mut self, connection_id: ConnectionId, limit: i64) -> Result<(), String> {
+    fn start_consuming(&mut self, connection_id: ConnectionId, namespace: String, limit: i64) -> Result<(), String> {
         let ConsumerManager{ref mut consumers, ref mut event_reader, ref mut my_sender, ref cache, ..} = *self;
 
         consumers.get_mut(connection_id).map(|mut client| {

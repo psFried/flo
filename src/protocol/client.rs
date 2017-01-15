@@ -69,9 +69,13 @@ named!{parse_update_marker<ProtocolMessage>,
 named!{parse_start_consuming<ProtocolMessage>,
     chain!(
         _tag: tag!(START_CONSUMING) ~
+        namespace: parse_str ~
         count: be_i64,
         || {
-            ProtocolMessage::StartConsuming(count)
+            ProtocolMessage::StartConsuming(ConsumerStart {
+                namespace: namespace,
+                max_events: count,
+            })
         }
     )
 }
@@ -85,12 +89,18 @@ pub struct EventHeader {
     pub data_length: u32,
 }
 
+#[derive(Debug, PartialEq)]
+pub struct ConsumerStart {
+    pub max_events: i64,
+    pub namespace: String,
+}
+
 
 #[derive(Debug, PartialEq)]
 pub enum ProtocolMessage {
     ProduceEvent(EventHeader),
     UpdateMarker(FloEventId),
-    StartConsuming(i64),
+    StartConsuming(ConsumerStart),
     ClientAuth {
         namespace: String,
         username: String,
@@ -127,10 +137,13 @@ impl Read for ProtocolMessage {
             ProtocolMessage::ProduceEvent(ref header) => {
                 read_produce_header(header, buf)
             }
-            ProtocolMessage::StartConsuming(limit) => {
+            ProtocolMessage::StartConsuming(ConsumerStart{ref namespace, ref max_events}) => {
                 set_header(buf, START_CONSUMING);
-                BigEndian::write_i64(&mut buf[8..16], limit);
-                Ok(16)
+                string_to_buffer(&mut buf[8..], namespace).map(|ns_length| {
+                    let buffer_start = 8 + ns_length;
+                    BigEndian::write_i64(&mut buf[buffer_start..(buffer_start + 8)], *max_events);
+                    buffer_start + 8
+                })
             }
             ProtocolMessage::UpdateMarker(id) => {
                 set_header(buf, UPDATE_MARKER);
@@ -197,7 +210,10 @@ mod test {
 
     #[test]
     fn start_consuming_message_is_parsed() {
-        test_serialize_then_deserialize(ProtocolMessage::StartConsuming(214567));
+        test_serialize_then_deserialize(ProtocolMessage::StartConsuming(ConsumerStart{
+            namespace: "/test/ns".to_owned(),
+            max_events: 8766
+        }));
     }
 
     #[test]

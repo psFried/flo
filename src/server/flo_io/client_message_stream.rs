@@ -3,7 +3,7 @@ use futures::stream::Stream;
 use std::io::Read;
 
 use server::engine::api::{self, ClientMessage, ProducerMessage, ConsumerMessage, ConnectionId};
-use protocol::{ClientProtocol, ProtocolMessage, EventHeader};
+use protocol::{ClientProtocol, ProtocolMessage, EventHeader, ConsumerStart};
 use nom::IResult;
 
 const BUFFER_SIZE: usize = 8 * 1024;
@@ -247,8 +247,8 @@ impl <R: Read, P: ClientProtocol> Stream for ClientMessageStream<R, P> {
 
 fn to_engine_api_message(protocol_message: ProtocolMessage, connection_id: ConnectionId) -> ClientMessage {
     match protocol_message {
-        ProtocolMessage::StartConsuming(count) => {
-            ClientMessage::Consumer(ConsumerMessage::StartConsuming(connection_id, count))
+        ProtocolMessage::StartConsuming(ConsumerStart {namespace, max_events}) => {
+            ClientMessage::Consumer(ConsumerMessage::StartConsuming(connection_id, namespace, max_events))
         },
         ProtocolMessage::ClientAuth {namespace, username, password} => {
             let auth = api::ClientAuth {
