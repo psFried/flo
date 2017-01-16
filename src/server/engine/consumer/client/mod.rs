@@ -104,8 +104,8 @@ impl ClientState {
 }
 
 pub struct Client {
-    connection_id: ConnectionId,
-    addr: SocketAddr,
+    pub connection_id: ConnectionId,
+    pub addr: SocketAddr,
     sender: UnboundedSender<ServerMessage<Arc<OwnedFloEvent>>>,
     consumer_state: ClientState,
 }
