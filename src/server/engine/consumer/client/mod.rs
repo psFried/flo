@@ -1,3 +1,7 @@
+mod namespace;
+
+pub use self::namespace::NamespaceGlob;
+
 use flo_event::{FloEvent, FloEventId, OwnedFloEvent};
 use server::engine::api::{ConnectionId, ClientConnect};
 use protocol::ServerMessage;
@@ -41,11 +45,11 @@ pub struct ConsumingState {
     pub last_event_id: FloEventId,
     pub consume_type: ConsumeType,
     pub remaining: u64,
-    pub namespace: String,
+    pub namespace: NamespaceGlob,
 }
 
 impl ConsumingState {
-    pub fn forward_from_file(id: FloEventId, namespace: String, limit: u64) -> ConsumingState {
+    pub fn forward_from_file(id: FloEventId, namespace: NamespaceGlob, limit: u64) -> ConsumingState {
         ConsumingState {
             last_event_id: id,
             consume_type: ConsumeType::File,
@@ -54,7 +58,7 @@ impl ConsumingState {
         }
     }
 
-    pub fn forward_from_memory(id: FloEventId, namespace: String, limit: u64) -> ConsumingState {
+    pub fn forward_from_memory(id: FloEventId, namespace: NamespaceGlob, limit: u64) -> ConsumingState {
         ConsumingState {
             namespace: namespace,
             last_event_id: id,
@@ -126,7 +130,7 @@ impl Client {
 
     pub fn event_namespace_matches(&self, event_namespace: &str) -> bool {
         if let ClientState::Consuming(ref state) = self.consumer_state {
-            event_namespace == &state.namespace
+            state.namespace.matches(event_namespace)
         } else {
             false
         }

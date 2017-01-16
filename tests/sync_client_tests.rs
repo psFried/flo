@@ -60,6 +60,31 @@ impl FloConsumer for TestConsumer {
     }
 }
 
+integration_test!{consumer_reads_events_matching_glob_pattern, port, tcp_stream, {
+    let mut client = SyncConnection::connect(localhost(port)).expect("failed to create producer");
+
+    client.produce("/animal/mammal/koala", b"data").expect("failed to produce event");
+    client.produce("/animal/mammal/sorta/platypus", b"data").expect("failed to produce event");
+    client.produce("/animal/reptile/snake", b"data").expect("failed to produce event");
+    client.produce("/animal/mammal/mouse", b"data").expect("failed to produce event");
+    client.produce("/animal/bird/magpie", b"data").expect("failed to produce event");
+
+    let mut consumer = TestConsumer::new("consumer_reads_events_matching_glob_pattern");
+    let options = ConsumerOptions {
+        namespace: "/animal/mammal/*".to_owned(),
+        start_position: None,
+        max_events: 2,
+        username: String::new(),
+        password: String::new(),
+    };
+    client.run_consumer(options, &mut consumer).expect("failed to run consumer");
+
+    assert_eq!(2, consumer.events.len());
+
+    assert_eq!("/animal/mammal/koala", consumer.events[0].namespace);
+    assert_eq!("/animal/mammal/mouse", consumer.events[1].namespace);
+}}
+
 integration_test!{consumer_only_receives_events_with_exactly_matching_namespace, port, tcp_stream, {
 
     let mut client = SyncConnection::connect(localhost(port)).expect("failed to create producer");

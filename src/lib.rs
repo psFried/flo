@@ -21,6 +21,7 @@ extern crate byteorder;
 #[macro_use]
 extern crate tokio_core;
 extern crate futures;
+extern crate glob;
 
 #[cfg(test)]
 extern crate env_logger;
