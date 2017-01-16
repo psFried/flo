@@ -6,7 +6,11 @@ use byteorder::{ByteOrder, BigEndian};
 
 static ACK_HEADER: &'static [u8; 8] = b"FLO_ACK\n";
 static EVENT_HEADER: &'static [u8; 8] = b"FLO_EVT\n";
+static ERROR_HEADER: &'static [u8; 8] = b"FLO_ERR\n";
 
+pub const ERROR_INVALID_NAMESPACE: u8 = 15;
+
+// Event Acknowledged
 #[derive(Debug, PartialEq, Clone)]
 pub struct EventAck {
     pub op_id: u32,
@@ -14,10 +18,41 @@ pub struct EventAck {
 }
 unsafe impl Send for EventAck {}
 
+
+// Error message
+#[derive(Debug, PartialEq, Clone)]
+pub enum ErrorKind {
+    InvalidNamespaceGlob,
+}
+unsafe impl Send for ErrorKind {}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct ErrorMessage {
+    pub op_id: u32,
+    pub kind: ErrorKind,
+    pub description: String,
+}
+
+impl ErrorKind {
+    pub fn from_u8(byte: u8) -> Result<ErrorKind, u8> {
+        match byte {
+            ERROR_INVALID_NAMESPACE => Ok(ErrorKind::InvalidNamespaceGlob),
+            other => Err(other)
+        }
+    }
+
+    pub fn u8_value(&self) -> u8 {
+        match self {
+            &ErrorKind::InvalidNamespaceGlob => ERROR_INVALID_NAMESPACE,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub enum ServerMessage<T: FloEvent> {
     EventPersisted(EventAck),
     Event(T),
+    Error(ErrorMessage)
 }
 unsafe impl <T> Send for ServerMessage<T> where T: FloEvent + Send {}
 
@@ -25,7 +60,8 @@ impl <T> Clone for ServerMessage<T> where T: FloEvent + Clone {
     fn clone(&self) -> Self {
         match self {
             &ServerMessage::Event(ref evt) => ServerMessage::Event(evt.clone()),
-            &ServerMessage::EventPersisted(ref ack) => ServerMessage::EventPersisted(ack.clone())
+            &ServerMessage::EventPersisted(ref ack) => ServerMessage::EventPersisted(ack.clone()),
+            &ServerMessage::Error(ref kind) => ServerMessage::Error(kind.clone())
         }
     }
 }
@@ -71,10 +107,29 @@ named!{parse_event_ack<EventAck>,
     )
 }
 
+named!{parse_error_message<ErrorMessage>,
+    chain!(
+        _tag: tag!(ERROR_HEADER) ~
+        op_id: be_u32 ~
+        kind: map_res!(take!(1), |res: &[u8]| {
+            ErrorKind::from_u8(res[0])
+        }) ~
+        description: parse_str,
+        || {
+            ErrorMessage {
+                op_id: op_id,
+                kind: kind,
+                description: description,
+            }
+        }
+    )
+}
+
 named!{pub read_server_message<ServerMessage<OwnedFloEvent>>,
     alt!(
         map!(parse_event, |event| ServerMessage::Event(event)) |
-        map!(parse_event_ack, |ack| ServerMessage::EventPersisted(ack))
+        map!(parse_event_ack, |ack| ServerMessage::EventPersisted(ack)) |
+        map!(parse_error_message, |err| ServerMessage::Error(err))
     )
 }
 
@@ -121,6 +176,18 @@ impl <E: FloEvent> Read for ServerProtocolImpl<E> {
         }
 
         match message {
+            &ServerMessage::Error(ref err_message) => {
+                trace!("serializing error message: {:?}", err_message);
+                &buf[..8].copy_from_slice(&ERROR_HEADER[..]);
+                BigEndian::write_u32(&mut buf[8..12], err_message.op_id);
+                buf[12] = err_message.kind.u8_value();
+                let desc_end_idx = err_message.description.len() + 13;
+                &buf[13..desc_end_idx].copy_from_slice(err_message.description.as_bytes());
+                buf[desc_end_idx] = b'\n';
+
+                *state = ReadState::Done;
+                Ok(desc_end_idx + 1)
+            }
             &ServerMessage::EventPersisted(ref ack) => {
                 trace!("serializing event ack: {:?}", ack);
                 let mut nread = 0;
@@ -210,6 +277,16 @@ mod test {
                 panic!("Error deserializing event: {:?}", err)
             }
         }
+    }
+
+    #[test]
+    fn error_message_is_serialized_and_deserialized() {
+        let err = ServerMessage::Error(ErrorMessage{
+            op_id: 1234,
+            kind: ErrorKind::InvalidNamespaceGlob,
+            description: "Cannot have move than two '*' characters sequentially".to_owned(),
+        });
+        assert_message_serializes_and_deserializes(err);
     }
 
     #[test]
