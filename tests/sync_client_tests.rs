@@ -13,6 +13,7 @@ mod test_utils;
 
 use test_utils::*;
 use flo::client::sync::{SyncConnection, FloConsumer, ConsumerContext, ConsumerAction};
+use flo::protocol::{ErrorMessage, ErrorKind};
 use flo::client::{ConsumerOptions, ClientError};
 use flo_event::{FloEventId, OwnedFloEvent};
 use std::thread;
@@ -35,7 +36,7 @@ impl TestConsumer {
     pub fn new(name: &str) -> TestConsumer  {
         TestConsumer{
             name: name.to_owned(),
-            events: Vec::new()
+            events: Vec::new(),
         }
     }
 }
@@ -59,6 +60,32 @@ impl FloConsumer for TestConsumer {
         }
     }
 }
+
+integration_test!{consumer_receives_error_after_starting_to_consume_with_invalid_namespace, port, _tcp_stream, {
+    let mut client = SyncConnection::connect(localhost(port)).expect("failed to create producer");
+
+    let mut consumer = TestConsumer::new("consumer_receives_error_after_starting_to_consume_with_invalid_namespace");
+
+    let options = ConsumerOptions{
+        namespace: "/***".to_owned(),
+        start_position: None,
+        max_events: 2,
+        username: String::new(),
+        password: String::new(),
+    };
+    let result = client.run_consumer(options, &mut consumer);
+
+    assert!(result.is_err());
+
+    match result.unwrap_err() {
+        ClientError::FloError(err) => {
+            assert_eq!(ErrorKind::InvalidNamespaceGlob, err.kind);
+        }
+        other @ _ => {
+            panic!("Expected FloError, got: {:?}", other);
+        }
+    }
+}}
 
 integration_test!{consumer_reads_events_matching_glob_pattern, port, tcp_stream, {
     let mut client = SyncConnection::connect(localhost(port)).expect("failed to create producer");

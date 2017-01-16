@@ -75,7 +75,6 @@ impl IoStream for TcpStream {}
 pub struct ClientStream<T: IoStream> {
     writer: T,
     read_buffer: Buffer,
-    op_id: u32
 }
 
 pub type SyncStream = ClientStream<TcpStream>;
@@ -95,7 +94,6 @@ impl SyncStream {
         SyncStream {
             writer: stream,
             read_buffer: Buffer::new(),
-            op_id: 1,
         }
     }
 }
@@ -106,6 +104,12 @@ impl <T: IoStream> ClientStream<T> {
         let mut buffer = [0; BUFFER_LENGTH];
         let nread = message.read(&mut buffer[..])?;
         self.writer.write_all(&buffer[..nread])
+    }
+
+    pub fn write_event_data<D: AsRef<[u8]>>(&mut self, data: D) -> io::Result<()> {
+        self.writer.write_all(data.as_ref()).and_then(|()| {
+            self.writer.flush()
+        })
     }
 
     pub fn read(&mut self) -> io::Result<ServerMessage<OwnedFloEvent>> {
@@ -132,37 +136,4 @@ impl <T: IoStream> ClientStream<T> {
             message
         })
     }
-
-    pub fn produce<N: ToString, D: AsRef<[u8]>>(&mut self, namespace: N, data: D) -> Result<FloEventId, ClientError> {
-        self.op_id += 1;
-        let data = data.as_ref();
-        let mut send_msg = ProtocolMessage::ProduceEvent(EventHeader{
-            namespace: namespace.to_string(),
-            op_id: self.op_id,
-            data_length: data.len() as u32
-        });
-
-        let result = self.write(&mut send_msg).and_then(|()| {
-            self.writer.write_all(data).and_then(|()| {
-                self.writer.flush()
-            })
-        }).and_then(|()| {
-            self.read()
-        });
-
-        trace!("Produce Event response: {:?}", result);
-
-        match result {
-            Ok(ServerMessage::EventPersisted(ref ack)) if ack.op_id == self.op_id => {
-                Ok(ack.event_id)
-            }
-            Ok(other) => {
-                Err(ClientError::UnexpectedMessage(other))
-            }
-            Err(io_err) => {
-                Err(io_err.into())
-            }
-        }
-    }
-
 }

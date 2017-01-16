@@ -1,19 +1,26 @@
 pub mod sync;
 
 use std::io;
-use protocol::{ProtocolMessage, ServerMessage, EventHeader};
+use protocol::{ProtocolMessage, ServerMessage, ErrorMessage, EventHeader};
 use flo_event::{FloEventId, OwnedFloEvent};
 
 
 #[derive(Debug)]
 pub enum ClientError {
     Io(io::Error),
+    FloError(ErrorMessage),
     UnexpectedMessage(ServerMessage<OwnedFloEvent>),
 }
 
 impl From<io::Error> for ClientError {
     fn from(err: io::Error) -> Self {
         ClientError::Io(err)
+    }
+}
+
+impl From<ErrorMessage> for ClientError {
+    fn from(err: ErrorMessage) -> Self {
+        ClientError::FloError(err)
     }
 }
 

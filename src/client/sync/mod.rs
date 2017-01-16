@@ -30,20 +30,23 @@ pub trait FloConsumer: Sized {
 
 pub struct SyncConnection<S: IoStream> {
     stream: ClientStream<S>,
+    op_id: u32,
 }
 
 impl SyncConnection<TcpStream> {
     pub fn connect<T: ToSocketAddrs>(addr: T) -> io::Result<SyncConnection<TcpStream>> {
         SyncStream::connect(addr).map(|stream| {
             SyncConnection {
-                stream: stream
+                stream: stream,
+                op_id: 0,
             }
         })
     }
 
     pub fn from_tcp_stream(tcp_stream: TcpStream) -> SyncConnection<TcpStream> {
         SyncConnection {
-            stream: SyncStream::from_stream(tcp_stream)
+            stream: SyncStream::from_stream(tcp_stream),
+            op_id: 1
         }
     }
 }
@@ -52,12 +55,41 @@ impl <S: IoStream> SyncConnection<S> {
 
     pub fn new(stream: ClientStream<S>) -> SyncConnection<S> {
         SyncConnection {
-            stream: stream
+            stream: stream,
+            op_id: 1
         }
     }
 
     pub fn produce<N: ToString, D: AsRef<[u8]>>(&mut self, namespace: N, data: D) -> Result<FloEventId, ClientError> {
-        self.stream.produce(namespace, data)
+        self.op_id += 1;
+        let mut send_msg = ProtocolMessage::ProduceEvent(EventHeader{
+            namespace: namespace.to_string(),
+            op_id: self.op_id,
+            data_length: data.as_ref().len() as u32
+        });
+
+        let result = self.stream.write(&mut send_msg).and_then(|()| {
+            self.stream.write_event_data(data)
+        }).and_then(|()| {
+            self.stream.read()
+        });
+
+        trace!("Produce Event response: {:?}", result);
+
+        match result {
+            Ok(ServerMessage::EventPersisted(ref ack)) if ack.op_id == self.op_id => {
+                Ok(ack.event_id)
+            }
+            Ok(ServerMessage::Error(error_message)) => {
+                Err(ClientError::FloError(error_message))
+            }
+            Ok(other) => {
+                Err(ClientError::UnexpectedMessage(other))
+            }
+            Err(io_err) => {
+                Err(io_err.into())
+            }
+        }
     }
 
     pub fn run_consumer<C: FloConsumer>(&mut self, options: ConsumerOptions, consumer: &mut C) -> Result<(), ClientError> {
@@ -119,6 +151,7 @@ impl <S: IoStream> SyncConnection<S> {
     fn read_event(&mut self) -> Result<OwnedFloEvent, ClientError> {
         match self.stream.read() {
             Ok(ServerMessage::Event(event)) => Ok(event),
+            Ok(ServerMessage::Error(error_msg)) => Err(ClientError::FloError(error_msg)),
             Ok(other) => Err(ClientError::UnexpectedMessage(other)),
             Err(io_err) => Err(io_err.into())
         }
