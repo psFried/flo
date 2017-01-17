@@ -35,6 +35,11 @@ impl <S: EventWriter> ProducerManager<S> {
             ProducerMessage::Produce(produce_event) => {
                 self.produce_event(produce_event)
             }
+            ProducerMessage::Disconnect(connection_id) => {
+                debug!("removing producer: {}", connection_id);
+                self.clients.remove(connection_id);
+                Ok(())
+            }
             msg @ _ => Err(format!("No ProducerManager handling for client message: {:?}", msg))
         }
     }

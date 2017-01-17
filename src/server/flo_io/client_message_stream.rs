@@ -25,7 +25,8 @@ impl InProgressEvent {
 enum MessageStreamState {
     Reading,
     Parsing,
-    ReadEvent(InProgressEvent)
+    ReadEvent(InProgressEvent),
+    Disconnected,
 }
 
 impl MessageStreamState {
@@ -45,7 +46,6 @@ pub struct ClientMessageStream<R: Read, P: ClientProtocol> {
     buffer_pos: usize,
     filled_bytes: usize,
     state: MessageStreamState,
-    read_complete: bool,
 }
 
 impl <R: Read, P: ClientProtocol> ClientMessageStream<R, P> {
@@ -58,8 +58,11 @@ impl <R: Read, P: ClientProtocol> ClientMessageStream<R, P> {
             buffer_pos: 0,
             filled_bytes: 0,
             state: MessageStreamState::Reading,
-            read_complete: false,
         }
+    }
+
+    fn disconnect_message(&self) -> ClientMessage {
+        ClientMessage::Both(ConsumerMessage::Disconnect(self.connection_id), ProducerMessage::Disconnect(self.connection_id))
     }
 
     fn requires_read(&self) -> bool {
@@ -213,8 +216,13 @@ impl <R: Read, P: ClientProtocol> Stream for ClientMessageStream<R, P> {
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         if self.requires_read() {
             match self.try_read() {
-                Ok(Async::Ready(nread)) => {
-                    self.read_complete = nread == 0;
+                Ok(Async::Ready(nread)) if nread == 0 => {
+                    if self.state == MessageStreamState::Disconnected {
+                        return Ok(Async::Ready(None));
+                    } else {
+                        self.state = MessageStreamState::Disconnected;
+                        return Ok(Async::Ready(Some(self.disconnect_message())));
+                    }
                 }
                 Ok(Async::NotReady) => {
                     return Ok(Async::NotReady);
@@ -222,6 +230,7 @@ impl <R: Read, P: ClientProtocol> Stream for ClientMessageStream<R, P> {
                 Err(err) => {
                     return Err(err);
                 }
+                _ => {} //Ok and nread > 0
             }
         }
 
@@ -232,10 +241,6 @@ impl <R: Read, P: ClientProtocol> Stream for ClientMessageStream<R, P> {
         };
 
         match result {
-            Ok(Async::NotReady) if self.read_complete => {
-                debug!("Last read was 0 bytes, so closing connection: {}", self.connection_id);
-                Ok(Async::Ready(None))
-            }
             Err(err) => {
                 warn!("Error reading data from client. Closing connection: {:?}", err);
                 Ok(Async::Ready(None))
@@ -243,6 +248,7 @@ impl <R: Read, P: ClientProtocol> Stream for ClientMessageStream<R, P> {
             other @ _ => other
         }
     }
+
 }
 
 fn to_engine_api_message(protocol_message: ProtocolMessage, connection_id: ConnectionId) -> ClientMessage {
@@ -328,7 +334,11 @@ mod test {
             event_data: "evt_two".to_owned().into_bytes()
         })))));
         assert_eq!(expected, result);
-        
+
+        let result = subject.poll();
+        let expected = Ok(Async::Ready(Some(subject.disconnect_message())));
+        assert_eq!(expected, result);
+
         let result = subject.poll();
         let expected = Ok(Async::Ready(None));
         assert_eq!(expected, result);
@@ -359,7 +369,7 @@ mod test {
     }
 
     #[test]
-    fn poll_returns_none_if_0_bytes_are_read_and_buffer_is_empty() {
+    fn poll_returns_client_disconnect_and_then_none_if_0_bytes_are_read_and_buffer_is_empty() {
         struct Proto;
         impl ClientProtocol for Proto {
             fn parse_any<'a>(&'a self, _buffer: &'a [u8]) -> IResult<&'a [u8], ProtocolMessage> {
@@ -378,6 +388,11 @@ mod test {
 
         let result = subject.poll();
 
+        let disconnect = ClientMessage::Both(ConsumerMessage::Disconnect(123), ProducerMessage::Disconnect(123));
+        let expected = Ok(Async::Ready(Some(disconnect)));
+        assert_eq!(expected, result);
+
+        let result = subject.poll();
         let expected = Ok(Async::Ready(None));
         assert_eq!(expected, result);
     }
