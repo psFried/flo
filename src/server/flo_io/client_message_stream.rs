@@ -207,6 +207,15 @@ impl <R: Read, P: ClientProtocol> ClientMessageStream<R, P> {
 
     }
 
+    fn disconnect(&mut self) -> Poll<Option<ClientMessage>, String> {
+        if self.state == MessageStreamState::Disconnected {
+            Ok(Async::Ready(None))
+        } else {
+            self.state = MessageStreamState::Disconnected;
+            Ok(Async::Ready(Some(self.disconnect_message())))
+        }
+    }
+
 }
 
 impl <R: Read, P: ClientProtocol> Stream for ClientMessageStream<R, P> {
@@ -214,15 +223,16 @@ impl <R: Read, P: ClientProtocol> Stream for ClientMessageStream<R, P> {
     type Error = String;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+        // Extra guard in case previous poll returned an error and disconnected
+        // otherwise, we might try to read or parse again
+        if self.state == MessageStreamState::Disconnected {
+            return self.disconnect();
+        }
+
         if self.requires_read() {
             match self.try_read() {
                 Ok(Async::Ready(nread)) if nread == 0 => {
-                    if self.state == MessageStreamState::Disconnected {
-                        return Ok(Async::Ready(None));
-                    } else {
-                        self.state = MessageStreamState::Disconnected;
-                        return Ok(Async::Ready(Some(self.disconnect_message())));
-                    }
+                    return self.disconnect();
                 }
                 Ok(Async::NotReady) => {
                     return Ok(Async::NotReady);
@@ -234,16 +244,16 @@ impl <R: Read, P: ClientProtocol> Stream for ClientMessageStream<R, P> {
             }
         }
 
-        let result = if self.state.is_read_event() {
+        let parse_result = if self.state.is_read_event() {
             self.try_parse_event(None)
         } else {
             self.try_parse()
         };
 
-        match result {
+        match parse_result {
             Err(err) => {
-                warn!("Error reading data from client. Closing connection: {:?}", err);
-                Ok(Async::Ready(None))
+                warn!("Error parsing data from client. Closing connection: {:?}", err);
+                return self.disconnect();
             }
             other @ _ => other
         }
@@ -345,7 +355,7 @@ mod test {
     }
 
     #[test]
-    fn poll_returns_ok_with_empty_option_when_protocol_returns_error() {
+    fn poll_returns_disconnect_and_then_ok_with_empty_option_when_protocol_returns_error() {
         struct Proto;
         impl ClientProtocol for Proto {
             fn parse_any<'a>(&'a self, _buffer: &'a [u8]) -> IResult<&'a [u8], ProtocolMessage> {
@@ -362,8 +372,12 @@ mod test {
 
         let mut subject = ClientMessageStream::new(123, Reader, Proto);
 
+        let disconnect = ClientMessage::Both(ConsumerMessage::Disconnect(123), ProducerMessage::Disconnect(123));
+        let expected = Ok(Async::Ready(Some(disconnect)));
         let result = subject.poll();
+        assert_eq!(expected, result);
 
+        let result = subject.poll();
         let expected = Ok(Async::Ready(None));
         assert_eq!(expected, result);
     }
