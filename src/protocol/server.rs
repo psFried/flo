@@ -1,5 +1,6 @@
 use flo_event::{FloEventId, FloEvent, OwnedFloEvent};
 use std::io::{self, Read};
+use time;
 
 use nom::{be_u16, be_u32, be_u64};
 use byteorder::{ByteOrder, BigEndian};
@@ -96,12 +97,14 @@ named!{parse_event<OwnedFloEvent>,
         actor: be_u16 ~
         counter: be_u64 ~
         parent_id: parse_parent_id ~
+        timestamp: be_u64 ~
         namespace: parse_str ~
         data: length_bytes!(be_u32),
         || {
             OwnedFloEvent {
                 id: FloEventId::new(actor, counter),
                 namespace: namespace.to_owned(),
+                timestamp: time::from_millis_since_epoch(timestamp),
                 parent_id: parent_id,
                 data: data.to_owned()
             }
@@ -240,6 +243,9 @@ impl <E: FloEvent> Read for ServerProtocolImpl<E> {
                         BigEndian::write_u64(&mut buf[pos..(pos + 8)], parent_counter);
                         pos += 8;
 
+                        BigEndian::write_u64(&mut buf[pos..(pos + 8)], ::time::millis_since_epoch(event.timestamp()));
+                        pos += 8;
+
                         let ns_length = event.namespace().len();
                         &buf[pos..(ns_length + pos)].copy_from_slice(event.namespace().as_bytes());
                         pos += ns_length;
@@ -279,9 +285,12 @@ impl <E: FloEvent> Read for ServerProtocolImpl<E> {
 mod test {
     use super::*;
     use nom::IResult;
+    use std::time::SystemTime;
     use std::io::Read;
     use flo_event::{FloEventId, OwnedFloEvent};
     use std::sync::Arc;
+    use time;
+    use byteorder::{ByteOrder, BigEndian};
 
     fn assert_message_serializes_and_deserializes(message: ServerMessage<OwnedFloEvent>) {
         let mut buffer = [0; 1024];
@@ -319,6 +328,7 @@ mod test {
         let event = ServerMessage::Event(OwnedFloEvent{
             id: FloEventId::new(1, 6),
             parent_id: Some(FloEventId::new(123, 456)),
+            timestamp: ::time::from_millis_since_epoch(1), //time needs to be from milliseconds, otherwise we lose precision
             namespace: "/the/event/namespace".to_owned(),
             data: "the event data".as_bytes().to_owned(),
         });
@@ -328,24 +338,24 @@ mod test {
     #[test]
     fn event_is_written_in_one_pass() {
         let mut subject = ServerProtocolImpl::new(ServerMessage::Event(
-            Arc::new(OwnedFloEvent::new(FloEventId::new(12, 23), None, "the namespace".to_owned(), vec![9; 64]))
+            Arc::new(OwnedFloEvent::new(FloEventId::new(12, 23), None, ::time::from_millis_since_epoch(2), "the namespace".to_owned(), vec![9; 64]))
         ));
 
         let mut buffer = [0; 256];
 
         let result = subject.read(&mut buffer[..]).unwrap();
-        assert_eq!(110, result);
+        assert_eq!(118, result);
 
         let expected_header = b"FLO_EVT\n";
         assert_eq!(&expected_header[..], &buffer[..8]);                //starts with header
         assert_eq!(&[0, 12, 0, 0, 0, 0, 0, 0, 0, 23], &buffer[8..18]); //event id is actor id then event counter
         assert_eq!(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0], &buffer[18..28]);  //parent event id is actor id then event counter
         let expected_namespace = b"the namespace\n";
-        assert_eq!(&expected_namespace[..], &buffer[28..42]);   // namespace written with terminating newline
-        assert_eq!(&[0, 0, 0, 64], &buffer[42..46]);            //data length as big endian u32
+        assert_eq!(&expected_namespace[..], &buffer[36..50]);   // namespace written with terminating newline
+        assert_eq!(&[0, 0, 0, 64], &buffer[50..54]);            //data length as big endian u32
 
         let expected_data = vec![9; 64];
-        assert_eq!(&expected_data[..], &buffer[46..110]);
+        assert_eq!(&expected_data[..], &buffer[54..118]);
 
         assert!(subject.is_done());
 
@@ -355,34 +365,38 @@ mod test {
 
     #[test]
     fn event_is_written_in_multiple_passes() {
+        let timestamp_millis = 12345;
+        let timestamp = ::time::from_millis_since_epoch(timestamp_millis);
         let mut subject = ServerProtocolImpl::new(ServerMessage::Event(
-            Arc::new(OwnedFloEvent::new(FloEventId::new(12, 23), None, "the namespace".to_owned(), vec![9; 64]))
+            Arc::new(OwnedFloEvent::new(FloEventId::new(12, 23), None, timestamp, "the namespace".to_owned(), vec![9; 64]))
         ));
 
-        let mut buffer = [0; 48];
+        let mut buffer = [0; 64];
 
         let result = subject.read(&mut buffer[..]).unwrap();
-        assert_eq!(48, result);
+        assert_eq!(64, result);
 
         let expected_header = b"FLO_EVT\n";
         assert_eq!(&expected_header[..], &buffer[..8]);                //starts with header
         assert_eq!(&[0, 12, 0, 0, 0, 0, 0, 0, 0, 23], &buffer[8..18]); //event id is actor id then event counter
         assert_eq!(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0], &buffer[18..28]);  // parent event id is actor id then event counter
+
+        let mut expected_timestamp = [0; 8];
+        BigEndian::write_u64(&mut expected_timestamp[..], timestamp_millis);
+        assert_eq!(&expected_timestamp[..], &buffer[28..36]);
+        //TODO: assert timestamp is correct
         let expected_namespace = b"the namespace\n";
-        assert_eq!(&expected_namespace[..], &buffer[28..42]);   // namespace written with terminating newline
-        assert_eq!(&[0, 0, 0, 64], &buffer[42..46]);            //data length as big endian u32
-        assert_eq!(&[9; 2], &buffer[46..]);                    //partial event data
+        assert_eq!(&expected_namespace[..], &buffer[36..50]);   // namespace written with terminating newline
+        assert_eq!(&[0, 0, 0, 64], &buffer[50..54]);            //data length as big endian u32
+        assert_eq!(&[9; 10], &buffer[54..]);                    //partial event data
 
         let result = subject.read(&mut buffer[..]).unwrap();
-        assert_eq!(48, result);
+        assert_eq!(54, result);
 
-        let expected_data = vec![9; 48];
-        assert_eq!(&expected_data[..], &buffer[..]);
-
-        let result = subject.read(&mut buffer[..]).unwrap();
-        assert_eq!(14, result);
-
+        let expected_data = vec![9; 54];
+        assert_eq!(&expected_data[..], &buffer[..54]);
         assert!(subject.is_done());
+
         let result = subject.read(&mut buffer[..]).unwrap();
         assert_eq!(0, result);
         let result = subject.read(&mut buffer[..]).unwrap();

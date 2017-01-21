@@ -74,6 +74,7 @@ pub fn write_event<W: Write, E: FloEvent>(writer: &mut W, event: &E) -> Result<u
             0,0,0,0,                                  //total length (4 bytes for u32)
             0,0,0,0,0,0,0,0,0,0,                      //event id     (10 bytes for u64 and u16)
             0,0,0,0,0,0,0,0,0,0,                      //parent event id     (10 bytes for u64 and u16)
+            0,0,0,0,0,0,0,0,                          //timestamp       (8 bytes for u64 millis since unix epoch)
             0,0,0,0,                                  //namespace length (4 bytes for u32)
     ];
 
@@ -92,7 +93,8 @@ pub fn write_event<W: Write, E: FloEvent>(writer: &mut W, event: &E) -> Result<u
     BigEndian::write_u16(&mut buffer[20..22], event.id().actor);
     BigEndian::write_u64(&mut buffer[22..30], parent_counter);
     BigEndian::write_u16(&mut buffer[30..32], parent_actor);
-    BigEndian::write_u32(&mut buffer[32..36], event.namespace().len() as u32);
+    BigEndian::write_u64(&mut buffer[32..40], ::time::millis_since_epoch(event.timestamp()));
+    BigEndian::write_u32(&mut buffer[40..44], event.namespace().len() as u32);
 
     writer.write(&buffer).and_then(|_| {
         writer.write(event.namespace().as_bytes()).and_then(|_| {

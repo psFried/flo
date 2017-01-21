@@ -60,6 +60,7 @@ impl <S: EventWriter> ProducerManager<S> {
         let event_id = FloEventId::new(self.actor_id, self.highest_event_id + 1);
         let owned_event = OwnedFloEvent {
             id: event_id,
+            timestamp: SystemTime::now(),
             namespace: namespace,
             parent_id: event.parent_id,
             data: event_data,

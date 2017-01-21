@@ -1,4 +1,5 @@
 use std::sync::{Arc, RwLock};
+use std::time::SystemTime;
 use std::io::{self, Seek, SeekFrom, Read, BufRead, BufReader};
 use std::path::{PathBuf, Path};
 use std::fs::{OpenOptions, File};
@@ -88,13 +89,23 @@ pub struct EventHeader {
     pub actor_id: u16,
     pub parent_counter: u64,
     pub parent_actor_id: u16,
+    pub timestamp: u64,
     pub namespace_length: u32,
 }
 
 impl EventHeader {
 
     pub fn compute_data_length(&self) -> usize {
-        (self.total_size - 4 - 10 - 10 - 4 - self.namespace_length - 4) as usize
+        /*
+        -4 bytes for the total size field
+        -10 for event id
+        -10 for parent event id
+        -8 for timestamp
+        -4 for namespace length field
+        - the namespace itself
+        -4 for the data length field
+        */
+        (self.total_size - 4 - 10 - 10 - 8 - 4 - self.namespace_length - 4) as usize
     }
 
     pub fn event_id(&self) -> FloEventId {
@@ -108,10 +119,14 @@ impl EventHeader {
             None
         }
     }
+
+    pub fn timestamp(&self) -> SystemTime {
+        ::time::from_millis_since_epoch(self.timestamp)
+    }
 }
 
 pub fn read_header<R: Read>(reader: &mut R) -> Result<EventHeader, io::Error> {
-    let mut buffer = [0; 36];
+    let mut buffer = [0; 44];
     reader.read_exact(&mut buffer[..])?;
 
     if &buffer[..8] == super::FLO_EVT.as_bytes() {
@@ -121,7 +136,8 @@ pub fn read_header<R: Read>(reader: &mut R) -> Result<EventHeader, io::Error> {
             actor_id: BigEndian::read_u16(&buffer[20..22]),
             parent_counter: BigEndian::read_u64(&buffer[22..30]),
             parent_actor_id: BigEndian::read_u16(&buffer[30..32]),
-            namespace_length: BigEndian::read_u32(&buffer[32..36]),
+            timestamp: BigEndian::read_u64(&buffer[32..40]),
+            namespace_length: BigEndian::read_u32(&buffer[40..44]),
         })
     } else {
         Err(invalid_bytes_err(format!("expected {:?}, got: {:?}", super::FLO_EVT.as_bytes(), &buffer[..8])))
@@ -142,7 +158,7 @@ pub fn read_event<R: Read>(reader: &mut R) -> Result<OwnedFloEvent, io::Error> {
                 debug_assert_eq!(data_length as usize, header.compute_data_length());
                 let mut data_buffer = vec![0; data_length as usize];
                 reader.read_exact(&mut data_buffer).map(|()| {
-                    OwnedFloEvent::new(header.event_id(), header.parent_id(), namespace, data_buffer)
+                    OwnedFloEvent::new(header.event_id(), header.parent_id(), header.timestamp(), namespace, data_buffer)
                 })
             })
         })

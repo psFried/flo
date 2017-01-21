@@ -32,4 +32,4 @@ pub mod client;
 pub mod event_store;
 pub mod protocol;
 pub mod server;
-
+pub mod time;

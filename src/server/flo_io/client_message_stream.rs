@@ -1,7 +1,7 @@
 use futures::{Poll, Async};
 use futures::stream::Stream;
 use std::io::Read;
-use std::time::{Instant, SystemTime};
+use std::time::{Instant};
 
 use server::engine::api::{self, ClientMessage, ProducerMessage, ConsumerMessage, ConnectionId};
 use protocol::{ClientProtocol, ProtocolMessage, EventHeader, ConsumerStart};

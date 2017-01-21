@@ -1,6 +1,7 @@
 use std::cmp::{Ord, PartialOrd, Ordering};
 use std::collections::HashMap;
 use std::fmt::Debug;
+use std::time::SystemTime;
 
 
 pub type ActorId = u16;
@@ -93,6 +94,7 @@ impl FloEventIdMap for HashMap<ActorId, EventCounter> {
 
 pub trait FloEvent: Debug {
     fn id(&self) -> &FloEventId;
+    fn timestamp(&self) -> SystemTime;
     fn parent_id(&self) -> Option<FloEventId>;
     fn namespace(&self) -> &str;
     fn data_len(&self) -> u32;
@@ -125,20 +127,26 @@ impl <T> FloEvent for T where T: AsRef<OwnedFloEvent> + Debug {
     fn parent_id(&self) -> Option<FloEventId> {
         self.as_ref().parent_id()
     }
+
+    fn timestamp(&self) -> SystemTime {
+        self.as_ref().timestamp()
+    }
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct OwnedFloEvent {
     pub id: FloEventId,
+    pub timestamp: SystemTime,
     pub parent_id: Option<FloEventId>,
     pub namespace: String,
     pub data: Vec<u8>,
 }
 
 impl OwnedFloEvent {
-    pub fn new(id: FloEventId, parent_id: Option<FloEventId>, namespace: String, data: Vec<u8>) -> OwnedFloEvent {
+    pub fn new(id: FloEventId, parent_id: Option<FloEventId>, timestamp: SystemTime, namespace: String, data: Vec<u8>) -> OwnedFloEvent {
         OwnedFloEvent {
             id: id,
+            timestamp: timestamp,
             parent_id: parent_id,
             namespace: namespace,
             data: data,
@@ -169,6 +177,9 @@ impl FloEvent for OwnedFloEvent {
 
     fn parent_id(&self) -> Option<FloEventId> {
         self.parent_id
+    }
+    fn timestamp(&self) -> SystemTime {
+        self.timestamp
     }
 }
 
