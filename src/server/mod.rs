@@ -1,4 +1,5 @@
 pub mod engine;
+pub mod metrics;
 mod flo_io;
 mod channel_sender;
 

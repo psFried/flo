@@ -4,8 +4,10 @@ use server::engine::client_map::ClientMap;
 use event_store::EventWriter;
 use flo_event::{ActorId, OwnedFloEvent, EventCounter, FloEventId};
 use protocol::{ServerMessage, EventAck};
+use server::metrics::ProducerMetrics;
 
 use std::sync::mpsc::Sender;
+use std::time::{Instant, SystemTime};
 
 pub struct ProducerManager<S: EventWriter> {
     actor_id: ActorId,
@@ -13,6 +15,7 @@ pub struct ProducerManager<S: EventWriter> {
     highest_event_id: EventCounter,
     consumer_manager_channel: Sender<ConsumerMessage>,
     clients: ClientMap,
+    metrics: ProducerMetrics,
 }
 
 impl <S: EventWriter> ProducerManager<S> {
@@ -23,6 +26,7 @@ impl <S: EventWriter> ProducerManager<S> {
             highest_event_id: highest_event_id,
             consumer_manager_channel: consumer_manager_channel,
             clients: ClientMap::new(),
+            metrics: ProducerMetrics::new(),
         }
     }
 
@@ -45,7 +49,12 @@ impl <S: EventWriter> ProducerManager<S> {
     }
 
     fn produce_event(&mut self, event: ProduceEvent) -> Result<(), String> {
-        let ProduceEvent{namespace, connection_id, parent_id, op_id, event_data} = event;
+        let ProduceEvent{namespace, connection_id, parent_id, op_id, event_data, message_recv_start} = event;
+
+        let produce_start = Instant::now();
+        let time_in_channel = produce_start.duration_since(message_recv_start);
+
+
         let producer_id = connection_id;
         let op_id = op_id;
         let event_id = FloEventId::new(self.actor_id, self.highest_event_id + 1);
@@ -61,6 +70,9 @@ impl <S: EventWriter> ProducerManager<S> {
         }).and_then(|()| {
             self.highest_event_id += 1;
             debug!("Stored event, new highest_event_id: {}", self.highest_event_id);
+
+            let storage_time = produce_start.elapsed();
+            self.metrics.event_persisted(event_id, time_in_channel, storage_time);
 
             let event_ack = ServerMessage::EventPersisted(EventAck {
                 op_id: op_id,

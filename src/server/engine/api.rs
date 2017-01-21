@@ -2,6 +2,8 @@ use protocol::ServerMessage;
 use flo_event::{FloEventId, OwnedFloEvent};
 
 use futures::sync::mpsc::UnboundedSender;
+
+use std::time::{Instant, SystemTime};
 use std::sync::atomic;
 use std::sync::Arc;
 use std::fmt::{self, Debug};
@@ -76,6 +78,7 @@ pub struct ClientAuth {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct ProduceEvent {
+    pub message_recv_start: Instant,
     pub namespace: String,
     pub connection_id: ConnectionId,
     pub op_id: u32,

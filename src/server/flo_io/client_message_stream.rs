@@ -1,6 +1,7 @@
 use futures::{Poll, Async};
 use futures::stream::Stream;
 use std::io::Read;
+use std::time::{Instant, SystemTime};
 
 use server::engine::api::{self, ClientMessage, ProducerMessage, ConsumerMessage, ConnectionId};
 use protocol::{ClientProtocol, ProtocolMessage, EventHeader, ConsumerStart};
@@ -170,11 +171,12 @@ impl <R: Read, P: ClientProtocol> ClientMessageStream<R, P> {
                     let EventHeader{namespace, parent_id, op_id, data_length} = header;
                     InProgressEvent{
                         event: api::ProduceEvent{
+                            message_recv_start: Instant::now(),
                             namespace: namespace,
                             parent_id: parent_id,
                             connection_id: *connection_id,
                             op_id: op_id,
-                            event_data: vec![0; data_length as usize]
+                            event_data: vec![0; data_length as usize],
                         },
                         position: 0
                     }
@@ -323,15 +325,16 @@ mod test {
         let mut subject = ClientMessageStream::new(123, reader, ClientProtocolImpl);
 
         let result = subject.poll();
-        let expected = Ok(Async::Ready(Some(ClientMessage::Producer(ProducerMessage::Produce(ProduceEvent{
-            namespace: "/foo/bar".to_owned(),
-            op_id: 4,
-            parent_id: Some(FloEventId::new(5, 9)),
-            connection_id: 123,
-            event_data: "evt_one".to_owned().into_bytes()
-        })))));
-        assert_eq!(expected, result);
-        
+        if let Ok(Async::Ready(Some(ClientMessage::Producer(ProducerMessage::Produce(event))))) = result {
+            assert_eq!("/foo/bar", &event.namespace);
+            assert_eq!(4, event.op_id);
+            assert_eq!(Some(FloEventId::new(5, 9)), event.parent_id);
+            assert_eq!(123, event.connection_id);
+            assert_eq!("evt_one".as_bytes().to_owned(), event.event_data);
+        } else {
+            panic!("this result sucks: {:?}", result);
+        }
+
         let result = subject.poll();
         let expected_auth = ClientAuth {
             connection_id: 123,
@@ -346,14 +349,15 @@ mod test {
         assert_eq!(expected, result);
 
         let result = subject.poll();
-        let expected = Ok(Async::Ready(Some(ClientMessage::Producer(ProducerMessage::Produce(ProduceEvent{
-            namespace: "/baz".to_owned(),
-            op_id: 5,
-            parent_id: Some(FloEventId::new(5, 9)),
-            connection_id: 123,
-            event_data: "evt_two".to_owned().into_bytes()
-        })))));
-        assert_eq!(expected, result);
+        if let Ok(Async::Ready(Some(ClientMessage::Producer(ProducerMessage::Produce(event))))) = result {
+            assert_eq!("/baz", &event.namespace);
+            assert_eq!(5, event.op_id);
+            assert_eq!(Some(FloEventId::new(5, 9)), event.parent_id);
+            assert_eq!(123, event.connection_id);
+            assert_eq!("evt_two".as_bytes().to_owned(), event.event_data);
+        } else {
+            panic!("this result sucks: {:?}", result);
+        }
 
         let result = subject.poll();
         let expected = Ok(Async::Ready(Some(subject.disconnect_message())));

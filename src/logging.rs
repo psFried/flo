@@ -60,7 +60,7 @@ pub fn init_logging(log_dest: LogFileOption, levels: Vec<LogLevelOption>) {
         config = config.logger(Logger::builder().additive(true).build(level_opt.module, level_opt.log_level.to_log_level_filter()));
     }
 
-    let root = Root::builder().appender(LOG_APPENDER.to_string()).build(LogLevelFilter::Error);
+    let root = Root::builder().appender(LOG_APPENDER.to_string()).build(LogLevelFilter::Warn);
     let config = config.build(root).unwrap();
     init_config(config).unwrap();
 }
