@@ -75,17 +75,34 @@ named!{pub parse_str<String>,
     )
 }
 
+named!{pub parse_parent_id<Option<FloEventId>>,
+    chain!(
+        actor: be_u16 ~
+        counter: be_u64,
+        || {
+            if counter > 0 {
+                Some(FloEventId::new(actor, counter))
+            } else {
+                None
+            }
+        }
+    )
+}
+
+
 named!{parse_event<OwnedFloEvent>,
     chain!(
         _tag: tag!("FLO_EVT\n") ~
         actor: be_u16 ~
         counter: be_u64 ~
+        parent_id: parse_parent_id ~
         namespace: parse_str ~
         data: length_bytes!(be_u32),
         || {
             OwnedFloEvent {
                 id: FloEventId::new(actor, counter),
                 namespace: namespace.to_owned(),
+                parent_id: parent_id,
                 data: data.to_owned()
             }
         }
@@ -215,6 +232,14 @@ impl <E: FloEvent> Read for ServerProtocolImpl<E> {
                         BigEndian::write_u64(&mut buf[10..18], event.id().event_counter);
                         pos += 10;
 
+                        let (parent_counter, parent_actor) = event.parent_id().map(|id| {
+                            (id.event_counter, id.actor)
+                        }).unwrap_or((0, 0));
+                        BigEndian::write_u16(&mut buf[pos..(pos + 2)], parent_actor);
+                        pos += 2;
+                        BigEndian::write_u64(&mut buf[pos..(pos + 8)], parent_counter);
+                        pos += 8;
+
                         let ns_length = event.namespace().len();
                         &buf[pos..(ns_length + pos)].copy_from_slice(event.namespace().as_bytes());
                         pos += ns_length;
@@ -293,6 +318,7 @@ mod test {
     fn event_is_serialized_and_deserialized() {
         let event = ServerMessage::Event(OwnedFloEvent{
             id: FloEventId::new(1, 6),
+            parent_id: Some(FloEventId::new(123, 456)),
             namespace: "/the/event/namespace".to_owned(),
             data: "the event data".as_bytes().to_owned(),
         });
@@ -302,23 +328,24 @@ mod test {
     #[test]
     fn event_is_written_in_one_pass() {
         let mut subject = ServerProtocolImpl::new(ServerMessage::Event(
-            Arc::new(OwnedFloEvent::new(FloEventId::new(12, 23), "the namespace".to_owned(), vec![9; 64]))
+            Arc::new(OwnedFloEvent::new(FloEventId::new(12, 23), None, "the namespace".to_owned(), vec![9; 64]))
         ));
 
         let mut buffer = [0; 256];
 
         let result = subject.read(&mut buffer[..]).unwrap();
-        assert_eq!(100, result);
+        assert_eq!(110, result);
 
         let expected_header = b"FLO_EVT\n";
         assert_eq!(&expected_header[..], &buffer[..8]);                //starts with header
         assert_eq!(&[0, 12, 0, 0, 0, 0, 0, 0, 0, 23], &buffer[8..18]); //event id is actor id then event counter
+        assert_eq!(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0], &buffer[18..28]);  //parent event id is actor id then event counter
         let expected_namespace = b"the namespace\n";
-        assert_eq!(&expected_namespace[..], &buffer[18..32]);   // namespace written with terminating newline
-        assert_eq!(&[0, 0, 0, 64], &buffer[32..36]);            //data length as big endian u32
+        assert_eq!(&expected_namespace[..], &buffer[28..42]);   // namespace written with terminating newline
+        assert_eq!(&[0, 0, 0, 64], &buffer[42..46]);            //data length as big endian u32
 
         let expected_data = vec![9; 64];
-        assert_eq!(&expected_data[..], &buffer[36..100]);
+        assert_eq!(&expected_data[..], &buffer[46..110]);
 
         assert!(subject.is_done());
 
@@ -329,7 +356,7 @@ mod test {
     #[test]
     fn event_is_written_in_multiple_passes() {
         let mut subject = ServerProtocolImpl::new(ServerMessage::Event(
-            Arc::new(OwnedFloEvent::new(FloEventId::new(12, 23), "the namespace".to_owned(), vec![9; 64]))
+            Arc::new(OwnedFloEvent::new(FloEventId::new(12, 23), None, "the namespace".to_owned(), vec![9; 64]))
         ));
 
         let mut buffer = [0; 48];
@@ -340,10 +367,11 @@ mod test {
         let expected_header = b"FLO_EVT\n";
         assert_eq!(&expected_header[..], &buffer[..8]);                //starts with header
         assert_eq!(&[0, 12, 0, 0, 0, 0, 0, 0, 0, 23], &buffer[8..18]); //event id is actor id then event counter
+        assert_eq!(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0], &buffer[18..28]);  // parent event id is actor id then event counter
         let expected_namespace = b"the namespace\n";
-        assert_eq!(&expected_namespace[..], &buffer[18..32]);   // namespace written with terminating newline
-        assert_eq!(&[0, 0, 0, 64], &buffer[32..36]);            //data length as big endian u32
-        assert_eq!(&[9; 12], &buffer[36..]);                    //partial event data
+        assert_eq!(&expected_namespace[..], &buffer[28..42]);   // namespace written with terminating newline
+        assert_eq!(&[0, 0, 0, 64], &buffer[42..46]);            //data length as big endian u32
+        assert_eq!(&[9; 2], &buffer[46..]);                    //partial event data
 
         let result = subject.read(&mut buffer[..]).unwrap();
         assert_eq!(48, result);
@@ -352,7 +380,7 @@ mod test {
         assert_eq!(&expected_data[..], &buffer[..]);
 
         let result = subject.read(&mut buffer[..]).unwrap();
-        assert_eq!(4, result);
+        assert_eq!(14, result);
 
         assert!(subject.is_done());
         let result = subject.read(&mut buffer[..]).unwrap();

@@ -37,15 +37,31 @@ named!{pub parse_auth<ProtocolMessage>,
     )
 }
 
+named!{pub parse_event_id<Option<FloEventId>>,
+    chain!(
+        counter: be_u64 ~
+        actor: be_u16,
+        || {
+            if counter > 0 {
+                Some(FloEventId::new(actor, counter))
+            } else {
+                None
+            }
+        }
+    )
+}
+
 named!{pub parse_producer_event<ProtocolMessage>,
     chain!(
         _tag: tag!(PRODUCE_EVENT) ~
         namespace: parse_str ~
+        parent_id: parse_event_id ~
         op_id: be_u32 ~
         data_len: be_u32,
         || {
             ProtocolMessage::ProduceEvent(EventHeader{
                 namespace: namespace.to_owned(),
+                parent_id: parent_id,
                 op_id: op_id,
                 data_length: data_len
             })
@@ -84,8 +100,9 @@ named!{pub parse_any<ProtocolMessage>, alt!( parse_producer_event | parse_update
 
 #[derive(Debug, PartialEq)]
 pub struct EventHeader {
-    pub namespace: String,
     pub op_id: u32,
+    pub namespace: String,
+    pub parent_id: Option<FloEventId>,
     pub data_length: u32,
 }
 
@@ -123,6 +140,15 @@ fn read_produce_header(header: &EventHeader, mut buf: &mut [u8]) -> Result<usize
     set_header(buf, PRODUCE_EVENT);
     let mut pos = 8;
     pos += string_to_buffer(&mut buf[pos..], &header.namespace)?;
+
+    let (counter, actor) = header.parent_id.map(|id| {
+        (id.event_counter, id.actor)
+    }).unwrap_or((0, 0));
+    BigEndian::write_u64(&mut buf[pos..(pos + 8)], counter);
+    pos += 8;
+
+    BigEndian::write_u16(&mut buf[pos..(pos + 2)], actor);
+    pos += 2;
 
     BigEndian::write_u32(&mut buf[pos..(pos + 4)], header.op_id);
     pos += 4;
@@ -220,8 +246,16 @@ mod test {
     fn parse_producer_event_parses_correct_event() {
         let input = ProtocolMessage::ProduceEvent(EventHeader {
             namespace: "/the/namespace".to_owned(),
+            parent_id: Some(FloEventId::new(123, 456)),
             op_id: 9,
             data_length: 5,
+        });
+        test_serialize_then_deserialize(input);
+        let input = ProtocolMessage::ProduceEvent(EventHeader {
+            namespace: "/another/namespace".to_owned(),
+            parent_id: None,
+            op_id: 8,
+            data_length: 999,
         });
         test_serialize_then_deserialize(input);
     }

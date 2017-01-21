@@ -86,22 +86,32 @@ pub struct EventHeader {
     pub total_size: u32,
     pub event_counter: u64,
     pub actor_id: u16,
+    pub parent_counter: u64,
+    pub parent_actor_id: u16,
     pub namespace_length: u32,
 }
 
 impl EventHeader {
 
     pub fn compute_data_length(&self) -> usize {
-        (self.total_size - 4 - 10 - 4 - self.namespace_length - 4) as usize
+        (self.total_size - 4 - 10 - 10 - 4 - self.namespace_length - 4) as usize
     }
 
     pub fn event_id(&self) -> FloEventId {
         FloEventId::new(self.actor_id, self.event_counter)
     }
+
+    pub fn parent_id(&self) -> Option<FloEventId> {
+        if self.parent_counter > 0 {
+            Some(FloEventId::new(self.parent_actor_id, self.parent_counter))
+        } else {
+            None
+        }
+    }
 }
 
 pub fn read_header<R: Read>(reader: &mut R) -> Result<EventHeader, io::Error> {
-    let mut buffer = [0; 26];
+    let mut buffer = [0; 36];
     reader.read_exact(&mut buffer[..])?;
 
     if &buffer[..8] == super::FLO_EVT.as_bytes() {
@@ -109,7 +119,9 @@ pub fn read_header<R: Read>(reader: &mut R) -> Result<EventHeader, io::Error> {
             total_size: BigEndian::read_u32(&buffer[8..12]),
             event_counter: BigEndian::read_u64(&buffer[12..20]),
             actor_id: BigEndian::read_u16(&buffer[20..22]),
-            namespace_length: BigEndian::read_u32(&buffer[22..26]),
+            parent_counter: BigEndian::read_u64(&buffer[22..30]),
+            parent_actor_id: BigEndian::read_u16(&buffer[30..32]),
+            namespace_length: BigEndian::read_u32(&buffer[32..36]),
         })
     } else {
         Err(invalid_bytes_err(format!("expected {:?}, got: {:?}", super::FLO_EVT.as_bytes(), &buffer[..8])))
@@ -130,7 +142,7 @@ pub fn read_event<R: Read>(reader: &mut R) -> Result<OwnedFloEvent, io::Error> {
                 debug_assert_eq!(data_length as usize, header.compute_data_length());
                 let mut data_buffer = vec![0; data_length as usize];
                 reader.read_exact(&mut data_buffer).map(|()| {
-                    OwnedFloEvent::new(header.event_id(), namespace, data_buffer)
+                    OwnedFloEvent::new(header.event_id(), header.parent_id(), namespace, data_buffer)
                 })
             })
         })

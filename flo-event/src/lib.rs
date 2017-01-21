@@ -93,6 +93,7 @@ impl FloEventIdMap for HashMap<ActorId, EventCounter> {
 
 pub trait FloEvent: Debug {
     fn id(&self) -> &FloEventId;
+    fn parent_id(&self) -> Option<FloEventId>;
     fn namespace(&self) -> &str;
     fn data_len(&self) -> u32;
     fn data(&self) -> &[u8];
@@ -120,19 +121,25 @@ impl <T> FloEvent for T where T: AsRef<OwnedFloEvent> + Debug {
     fn to_owned(&self) -> OwnedFloEvent {
         self.as_ref().clone()
     }
+
+    fn parent_id(&self) -> Option<FloEventId> {
+        self.as_ref().parent_id()
+    }
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct OwnedFloEvent {
     pub id: FloEventId,
+    pub parent_id: Option<FloEventId>,
     pub namespace: String,
     pub data: Vec<u8>,
 }
 
 impl OwnedFloEvent {
-    pub fn new(id: FloEventId, namespace: String, data: Vec<u8>) -> OwnedFloEvent {
+    pub fn new(id: FloEventId, parent_id: Option<FloEventId>, namespace: String, data: Vec<u8>) -> OwnedFloEvent {
         OwnedFloEvent {
             id: id,
+            parent_id: parent_id,
             namespace: namespace,
             data: data,
         }
@@ -158,6 +165,10 @@ impl FloEvent for OwnedFloEvent {
 
     fn to_owned(&self) -> OwnedFloEvent {
         self.clone()
+    }
+
+    fn parent_id(&self) -> Option<FloEventId> {
+        self.parent_id
     }
 }
 

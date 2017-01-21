@@ -45,13 +45,14 @@ impl <S: EventWriter> ProducerManager<S> {
     }
 
     fn produce_event(&mut self, event: ProduceEvent) -> Result<(), String> {
-        let ProduceEvent{namespace, connection_id, op_id, event_data} = event;
+        let ProduceEvent{namespace, connection_id, parent_id, op_id, event_data} = event;
         let producer_id = connection_id;
         let op_id = op_id;
         let event_id = FloEventId::new(self.actor_id, self.highest_event_id + 1);
         let owned_event = OwnedFloEvent {
             id: event_id,
             namespace: namespace,
+            parent_id: None,
             data: event_data,
         };
 

@@ -79,6 +79,7 @@ pub struct ProduceEvent {
     pub namespace: String,
     pub connection_id: ConnectionId,
     pub op_id: u32,
+    pub parent_id: Option<FloEventId>,
     pub event_data: Vec<u8>
 }
 unsafe impl Send for ProduceEvent {}

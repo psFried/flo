@@ -99,11 +99,19 @@ named!{parse_event<OwnedFloEvent>,
         _tag: tag!("FLO_EVT\n") ~
         actor: be_u16 ~
         counter: be_u64 ~
+        parent_counter: be_u64 ~
+        parent_actor_id: be_u16 ~
         namespace: parse_str ~
         data: length_bytes!(be_u32),
         || {
+            let parent = if parent_counter > 0 {
+                Some(FloEventId::new(parent_actor_id, parent_counter))
+            } else {
+                None
+            };
             OwnedFloEvent {
                 id: FloEventId::new(actor, counter),
+                parent_id: parent,
                 namespace: namespace.to_owned(),
                 data: data.to_owned()
             }
@@ -161,6 +169,8 @@ fn produce_event(tcp_stream: &mut TcpStream, namespace: &str, bytes: &[u8]) -> u
     tcp_stream.write_all(b"FLO_PRO\n").unwrap();
     tcp_stream.write_all(namespace.as_bytes()).unwrap();
     tcp_stream.write_all(b"\n").unwrap();
+    let parent_id = [0; 10];
+    tcp_stream.write_all(&parent_id).unwrap();
     let mut buffer = [0; 4];
     BigEndian::write_u32(&mut buffer[..], op_id);
     tcp_stream.write_all(&buffer).unwrap();

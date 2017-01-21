@@ -46,7 +46,7 @@ impl FloConsumer for TestConsumer {
         &self.name
     }
 
-    fn on_event(&mut self, event_result: Result<OwnedFloEvent, &ClientError>, _context: &ConsumerContext) -> ConsumerAction {
+    fn on_event<C: ConsumerContext>(&mut self, event_result: Result<OwnedFloEvent, &ClientError>, _context: &mut C) -> ConsumerAction {
         match event_result {
             Ok(event) => {
                 println!("Consumer {} received event: {:?}", &self.name, event.id);
@@ -60,6 +60,52 @@ impl FloConsumer for TestConsumer {
         }
     }
 }
+
+integration_test!{consumer_responds_to_event, port, _tcp_stream, {
+    let mut client = SyncConnection::connect(localhost(port)).expect("failed to create producer");
+
+    struct RespondingConsumer;
+    impl FloConsumer for RespondingConsumer {
+        fn name(&self) -> &str {
+            "consumer responds to event"
+        }
+        fn on_event<C: ConsumerContext>(&mut self, event_result: Result<OwnedFloEvent, &ClientError>, context: &mut C) -> ConsumerAction {
+            println!("respondingConsumer got event: {:?}", event_result);
+            if let Ok(event) = event_result {
+                context.respond("/responses", event.data).into()
+            } else {
+                ConsumerAction::Stop
+            }
+        }
+    }
+
+    client.produce("/events", b"data").unwrap();
+    client.produce("/events", b"data 2").unwrap();
+    let mut consumer = RespondingConsumer;
+    let options = ConsumerOptions {
+        namespace: "/events".to_owned(),
+        start_position: None,
+        max_events: 2,
+        username: String::new(),
+        password: String::new(),
+    };
+    client.run_consumer(options, &mut consumer).expect("failed to run consumer");
+
+    let mut consumer = TestConsumer::new("verify that response events exist");
+    let options = ConsumerOptions {
+        namespace: "/responses".to_owned(),
+        start_position: None,
+        max_events: 2,
+        username: String::new(),
+        password: String::new(),
+    };
+    client.run_consumer(options, &mut consumer).expect("failed to run second consumer");
+
+    assert_eq!(2, consumer.events.len());
+    for event in consumer.events.iter() {
+        assert_eq!("/responses", event.namespace);
+    }
+}}
 
 integration_test!{consumer_receives_error_after_starting_to_consume_with_invalid_namespace, port, _tcp_stream, {
     let mut client = SyncConnection::connect(localhost(port)).expect("failed to create producer");
@@ -210,7 +256,7 @@ integration_test!{many_events_are_produced_using_sync_client, port, tcp_stream, 
 
 integration_test!{events_are_consumed_as_they_are_written, port, tcp_stream, {
 
-    let num_events = 1000;
+    let num_events = 3;
 
     let join_handle = thread::spawn(move || {
         let mut client = SyncConnection::connect(localhost(port)).expect("Failed to create client");
