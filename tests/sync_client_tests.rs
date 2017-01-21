@@ -49,7 +49,7 @@ impl FloConsumer for TestConsumer {
     fn on_event<C: ConsumerContext>(&mut self, event_result: Result<OwnedFloEvent, &ClientError>, _context: &mut C) -> ConsumerAction {
         match event_result {
             Ok(event) => {
-                println!("Consumer {} received event: {:?}", &self.name, event.id);
+                println!("Consumer {} received event: {:?}", &self.name, event);
                 self.events.push(event);
                 ConsumerAction::Continue
             },
@@ -102,11 +102,11 @@ integration_test!{consumer_responds_to_event, port, _tcp_stream, {
     client.run_consumer(options, &mut consumer).expect("failed to run second consumer");
 
     assert_eq!(2, consumer.events.len());
-    let response_1 = consumer.events.remove(1);
+    let response_1 = consumer.events.remove(0);
     assert_eq!("/responses", &response_1.namespace);
     assert_eq!(Some(event_1_id), response_1.parent_id);
 
-    let response_2 = consumer.events.remove(2);
+    let response_2 = consumer.events.remove(0);
     assert_eq!("/responses", &response_2.namespace);
     assert_eq!(Some(event_2_id), response_2.parent_id);
 }}

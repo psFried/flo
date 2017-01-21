@@ -52,7 +52,7 @@ impl <S: EventWriter> ProducerManager<S> {
         let owned_event = OwnedFloEvent {
             id: event_id,
             namespace: namespace,
-            parent_id: None,
+            parent_id: event.parent_id,
             data: event_data,
         };
 

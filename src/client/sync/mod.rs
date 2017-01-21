@@ -106,7 +106,7 @@ impl <S: IoStream> SyncConnection<S> {
         self.op_id += 1;
         let mut send_msg = ProtocolMessage::ProduceEvent(EventHeader{
             namespace: namespace.to_string(),
-            parent_id: None, //TODO: set parent id
+            parent_id: parent_id,
             op_id: self.op_id,
             data_length: data.as_ref().len() as u32
         });
