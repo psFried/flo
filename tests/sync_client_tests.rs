@@ -79,8 +79,8 @@ integration_test!{consumer_responds_to_event, port, _tcp_stream, {
         }
     }
 
-    client.produce("/events", b"data").unwrap();
-    client.produce("/events", b"data 2").unwrap();
+    let event_1_id = client.produce("/events", b"data").unwrap();
+    let event_2_id = client.produce("/events", b"data 2").unwrap();
     let mut consumer = RespondingConsumer;
     let options = ConsumerOptions {
         namespace: "/events".to_owned(),
@@ -102,9 +102,13 @@ integration_test!{consumer_responds_to_event, port, _tcp_stream, {
     client.run_consumer(options, &mut consumer).expect("failed to run second consumer");
 
     assert_eq!(2, consumer.events.len());
-    for event in consumer.events.iter() {
-        assert_eq!("/responses", event.namespace);
-    }
+    let response_1 = consumer.events.remove(1);
+    assert_eq!("/responses", &response_1.namespace);
+    assert_eq!(Some(event_1_id), response_1.parent_id);
+
+    let response_2 = consumer.events.remove(2);
+    assert_eq!("/responses", &response_2.namespace);
+    assert_eq!(Some(event_2_id), response_2.parent_id);
 }}
 
 integration_test!{consumer_receives_error_after_starting_to_consume_with_invalid_namespace, port, _tcp_stream, {
