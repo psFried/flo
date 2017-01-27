@@ -9,7 +9,7 @@ log = "0.3"
 log4rs = "0.4"
 url = "1.1"
 clap = "2.5"
-nom = "1.2"
+nom = "2.0"
 byteorder = "0.5"
 flo-event = { path = "./flo-event" }
 tokio-core = "0.1.1"

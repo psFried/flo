@@ -373,7 +373,7 @@ mod test {
         struct Proto;
         impl ClientProtocol for Proto {
             fn parse_any<'a>(&'a self, _buffer: &'a [u8]) -> IResult<&'a [u8], ProtocolMessage> {
-                IResult::Error(Err::Code(ErrorKind::Alpha))
+                IResult::Error(ErrorKind::Alpha)
             }
         }
 
