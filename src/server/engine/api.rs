@@ -1,5 +1,5 @@
 use protocol::ServerMessage;
-use flo_event::{FloEventId, OwnedFloEvent};
+use flo_event::{FloEventId, ActorId, EventCounter, OwnedFloEvent};
 
 use futures::sync::mpsc::UnboundedSender;
 
@@ -7,6 +7,8 @@ use std::time::{Instant, SystemTime};
 use std::sync::atomic;
 use std::sync::Arc;
 use std::fmt::{self, Debug};
+use std::collections::HashMap;
+use std::net::SocketAddr;
 
 pub type ConnectionId = usize;
 
@@ -15,6 +17,32 @@ static CURRENT_CONNECTION_ID: atomic::AtomicUsize = atomic::ATOMIC_USIZE_INIT;
 pub fn next_connection_id() -> ConnectionId {
     CURRENT_CONNECTION_ID.fetch_add(1, atomic::Ordering::SeqCst)
 }
+
+pub type VersionMap = HashMap<ActorId, EventCounter>;
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct StateDeltaHeader {
+    connection_id: ConnectionId,
+    from_actor: ActorId,
+    actor_versions: VersionMap,
+    event_count: u32,
+}
+unsafe impl Send for StateDeltaHeader {}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct PeerUpdate {
+    connection_id: ConnectionId,
+    actor_id: ActorId,
+    version_map: VersionMap,
+}
+unsafe impl Send for PeerUpdate {}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct PeerAnnounce {
+    connection_id: ConnectionId,
+    actor_id: ActorId,
+}
+unsafe impl Send for PeerAnnounce {}
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum ConsumerMessage {
@@ -35,6 +63,7 @@ pub enum ProducerMessage {
     ClientAuth(ClientAuth),
     Produce(ProduceEvent),
     Disconnect(ConnectionId),
+    StateDelta(StateDeltaHeader),
 }
 unsafe impl Send for ProducerMessage {}
 

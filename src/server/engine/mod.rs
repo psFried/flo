@@ -55,7 +55,7 @@ pub fn run(options: ServerOptions) -> BackendChannels {
                     }
                 }
                 Err(recv_err) => {
-                    error!("Receive Error: {:?}", recv_err);
+                    error!("Receive Error: {:?}\nShutting down ProducerManager", recv_err);
                     break;
                 }
             }
@@ -79,7 +79,7 @@ pub fn run(options: ServerOptions) -> BackendChannels {
                     }
                 }
                 Err(err) => {
-                    error!("Error reading for Consumer Manager: {:?}", err);
+                    error!("Receive Error: {:?}\nshutting down Consumer Manager", err);
                     break;
                 }
             }

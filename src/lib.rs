@@ -33,3 +33,4 @@ pub mod event_store;
 pub mod protocol;
 pub mod server;
 pub mod time;
+pub mod serializer;
