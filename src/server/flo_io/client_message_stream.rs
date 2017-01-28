@@ -4,7 +4,7 @@ use std::io::Read;
 use std::time::{Instant};
 
 use server::engine::api::{self, ClientMessage, ProducerMessage, ConsumerMessage, ConnectionId};
-use protocol::{ClientProtocol, ProtocolMessage, EventHeader, ConsumerStart};
+use protocol::{ClientProtocol, ProtocolMessage, ProduceEventHeader, ConsumerStart};
 use nom::IResult;
 
 const BUFFER_SIZE: usize = 8 * 1024;
@@ -153,7 +153,7 @@ impl <R: Read, P: ClientProtocol> ClientMessageStream<R, P> {
         }
     }
 
-    fn try_parse_event(&mut self, evt_header: Option<EventHeader>) -> Poll<Option<ClientMessage>, String> {
+    fn try_parse_event(&mut self, evt_header: Option<ProduceEventHeader>) -> Poll<Option<ClientMessage>, String> {
         let ClientMessageStream{
             ref mut state,
             ref mut buffer,
@@ -168,7 +168,7 @@ impl <R: Read, P: ClientProtocol> ClientMessageStream<R, P> {
                 evt
             } else {
                 evt_header.map(|header| {
-                    let EventHeader{namespace, parent_id, op_id, data_length} = header;
+                    let ProduceEventHeader {namespace, parent_id, op_id, data_length} = header;
                     InProgressEvent{
                         event: api::ProduceEvent{
                             message_recv_start: Instant::now(),
@@ -299,7 +299,7 @@ mod test {
 
     use flo_event::FloEventId;
     use server::engine::api::{ClientMessage, ConsumerMessage, ProducerMessage, ClientAuth, ProduceEvent};
-    use protocol::{ClientProtocol, ClientProtocolImpl, ProtocolMessage, EventHeader};
+    use protocol::{ClientProtocol, ClientProtocolImpl, ProtocolMessage, ProduceEventHeader};
     use nom::{IResult, Needed, ErrorKind, Err};
 
     use env_logger;
@@ -430,7 +430,7 @@ mod test {
         struct Proto;
         impl ClientProtocol for Proto {
             fn parse_any<'a>(&'a self, buffer: &'a [u8]) -> IResult<&'a [u8], ProtocolMessage> {
-                IResult::Done(&buffer[8..], ProtocolMessage::ProduceEvent(EventHeader{
+                IResult::Done(&buffer[8..], ProtocolMessage::ProduceEvent(ProduceEventHeader {
                     namespace: "foo".to_owned(),
                     parent_id: None,
                     op_id: 789,
@@ -480,7 +480,7 @@ mod test {
         impl ClientProtocol for Proto {
             fn parse_any<'a>(&'a self, buffer: &'a [u8]) -> IResult<&'a [u8], ProtocolMessage> {
                 //           remaining buffer excluded data length
-                IResult::Done(&buffer[16..], ProtocolMessage::ProduceEvent(EventHeader{
+                IResult::Done(&buffer[16..], ProtocolMessage::ProduceEvent(ProduceEventHeader {
                     namespace: "foo".to_owned(),
                     parent_id: None,
                     op_id: 999,

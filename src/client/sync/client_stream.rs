@@ -4,7 +4,7 @@ use std::net::{TcpStream, SocketAddr, ToSocketAddrs};
 
 use nom::IResult;
 
-use protocol::{ProtocolMessage, ServerMessage, EventHeader, read_server_message};
+use protocol::{ProtocolMessage, ServerMessage, ProduceEventHeader, read_server_message};
 use flo_event::{FloEventId, FloEvent, OwnedFloEvent};
 use client::{ClientError};
 

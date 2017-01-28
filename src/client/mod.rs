@@ -1,7 +1,7 @@
 pub mod sync;
 
 use std::io;
-use protocol::{ProtocolMessage, ServerMessage, ErrorMessage, EventHeader};
+use protocol::{ProtocolMessage, ServerMessage, ErrorMessage, ProduceEventHeader};
 use flo_event::{FloEventId, OwnedFloEvent};
 
 

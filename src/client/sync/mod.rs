@@ -6,7 +6,7 @@ use std::net::{TcpStream, SocketAddr, ToSocketAddrs};
 
 use nom::IResult;
 
-use protocol::{ProtocolMessage, ServerMessage, EventHeader, ConsumerStart, read_server_message};
+use protocol::{ProtocolMessage, ServerMessage, ProduceEventHeader, ConsumerStart, read_server_message};
 use flo_event::{FloEventId, FloEvent, OwnedFloEvent};
 use super::{ClientError, ConsumerOptions};
 use std::sync::Mutex;
@@ -104,7 +104,7 @@ impl <S: IoStream> SyncConnection<S> {
 
     pub fn produce_with_parent<N: ToString, D: AsRef<[u8]>>(&mut self, parent_id: Option<FloEventId>, namespace: N, data: D) -> Result<FloEventId, ClientError> {
         self.op_id += 1;
-        let mut send_msg = ProtocolMessage::ProduceEvent(EventHeader{
+        let mut send_msg = ProtocolMessage::ProduceEvent(ProduceEventHeader {
             namespace: namespace.to_string(),
             parent_id: parent_id,
             op_id: self.op_id,

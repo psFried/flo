@@ -1,5 +1,5 @@
 use nom::{be_u64, be_u32, be_u16, be_i64, IResult};
-use flo_event::{FloEventId, ActorId, EventCounter};
+use flo_event::{FloEventId, ActorId, EventCounter, OwnedFloEvent};
 use byteorder::{ByteOrder, BigEndian};
 use serializer::Serializer;
 
@@ -9,14 +9,19 @@ use std::collections::HashMap;
 pub mod headers {
     pub const CLIENT_AUTH: &'static str = "FLO_AUT\n";
     pub const PRODUCE_EVENT: &'static str = "FLO_PRO\n";
+    pub const RECEIVE_EVENT: &'static str = "FLO_EVT\n";
     pub const UPDATE_MARKER: &'static str = "FLO_UMK\n";
     pub const START_CONSUMING: &'static str = "FLO_CNS\n";
     pub const PEER_ANNOUNCE: &'static str = "FLO_PAN\n";
     pub const PEER_UPDATE: &'static str = "FLO_PUD\n";
     pub const EVENT_DELTA_HEADER: &'static str = "FLO_DEL\n";
+    pub const ACK_HEADER: &'static [u8; 8] = b"FLO_ACK\n";
+    pub const ERROR_HEADER: &'static [u8; 8] = b"FLO_ERR\n";
 }
 
 use self::headers::*;
+pub const ERROR_INVALID_NAMESPACE: u8 = 15;
+
 
 named!{pub parse_str<String>,
     map_res!(
@@ -73,11 +78,26 @@ named!{pub parse_producer_event<ProtocolMessage>,
         op_id: be_u32 ~
         data_len: be_u32,
         || {
-            ProtocolMessage::ProduceEvent(EventHeader{
+            ProtocolMessage::ProduceEvent(ProduceEventHeader{
                 namespace: namespace.to_owned(),
                 parent_id: parent_id,
                 op_id: op_id,
                 data_length: data_len
+            })
+        }
+    )
+}
+
+named!{parse_event_ack<ProtocolMessage>,
+    chain!(
+        _tag: tag!(ACK_HEADER) ~
+        op_id: be_u32 ~
+        counter: be_u64 ~
+        actor_id: be_u16,
+        || {
+            ProtocolMessage::AckEvent(EventAck {
+                op_id: op_id,
+                event_id: FloEventId::new(actor_id, counter)
             })
         }
     )
@@ -161,13 +181,125 @@ named!{parse_event_delta_header<ProtocolMessage>,
         }
     )
 }
-named!{pub parse_any<ProtocolMessage>, alt!( parse_producer_event | parse_peer_update | parse_event_delta_header | parse_peer_announce | parse_update_marker | parse_start_consuming | parse_auth ) }
+
+named!{parse_error_message<ProtocolMessage>,
+    chain!(
+        _tag: tag!(ERROR_HEADER) ~
+        op_id: be_u32 ~
+        kind: map_res!(take!(1), |res: &[u8]| {
+            ErrorKind::from_u8(res[0])
+        }) ~
+        description: parse_str,
+        || {
+            ProtocolMessage::Error(ErrorMessage {
+                op_id: op_id,
+                kind: kind,
+                description: description,
+            })
+        }
+    )
+}
+
+named!{pub parse_parent_id<Option<FloEventId>>,
+    chain!(
+        actor: be_u16 ~
+        counter: be_u64,
+        || {
+            if counter > 0 {
+                Some(FloEventId::new(actor, counter))
+            } else {
+                None
+            }
+        }
+    )
+}
+
+//TODO: remove owned event message from protocol once things are switch to using the headers
+named!{parse_event<ProtocolMessage>,
+    chain!(
+        _tag: tag!("FLO_EVT\n") ~
+        actor: be_u16 ~
+        counter: be_u64 ~
+        parent_id: parse_parent_id ~
+        timestamp: be_u64 ~
+        namespace: parse_str ~
+        data: length_bytes!(be_u32),
+        || {
+            ProtocolMessage::Event(OwnedFloEvent {
+                id: FloEventId::new(actor, counter),
+                namespace: namespace.to_owned(),
+                timestamp: ::time::from_millis_since_epoch(timestamp),
+                parent_id: parent_id,
+                data: data.to_owned()
+            })
+        }
+    )
+}
+
+named!{pub parse_any<ProtocolMessage>, alt!(
+        parse_producer_event |
+        parse_event_ack |
+        parse_peer_update |
+        parse_event_delta_header |
+        parse_peer_announce |
+        parse_update_marker |
+        parse_start_consuming |
+        parse_auth |
+        parse_error_message |
+        parse_event
+)}
+
+// Error message
+#[derive(Debug, PartialEq, Clone)]
+pub enum ErrorKind {
+    InvalidNamespaceGlob,
+}
+unsafe impl Send for ErrorKind {}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct ErrorMessage {
+    pub op_id: u32,
+    pub kind: ErrorKind,
+    pub description: String,
+}
+
+impl ErrorKind {
+    pub fn from_u8(byte: u8) -> Result<ErrorKind, u8> {
+        match byte {
+            ERROR_INVALID_NAMESPACE => Ok(ErrorKind::InvalidNamespaceGlob),
+            other => Err(other)
+        }
+    }
+
+    pub fn u8_value(&self) -> u8 {
+        match self {
+            &ErrorKind::InvalidNamespaceGlob => ERROR_INVALID_NAMESPACE,
+        }
+    }
+}
 
 #[derive(Debug, PartialEq)]
-pub struct EventHeader {
+pub struct ProduceEventHeader {
     pub op_id: u32,
     pub namespace: String,
     pub parent_id: Option<FloEventId>,
+    pub data_length: u32,
+}
+
+// Event Acknowledged
+#[derive(Debug, PartialEq, Clone)]
+pub struct EventAck {
+    pub op_id: u32,
+    pub event_id: FloEventId,
+}
+unsafe impl Send for EventAck {}
+
+#[derive(Debug, PartialEq)]
+pub struct ReceiveEventHeader {
+    pub id: FloEventId,
+    pub parent_id: Option<FloEventId>,
+    pub namespace: String,
+    pub timestamp: ::std::time::SystemTime,
     pub data_length: u32,
 }
 
@@ -180,7 +312,9 @@ pub struct ConsumerStart {
 
 #[derive(Debug, PartialEq)]
 pub enum ProtocolMessage {
-    ProduceEvent(EventHeader),
+    ProduceEvent(ProduceEventHeader),
+    AckEvent(EventAck),
+    ReceiveEvent(ReceiveEventHeader),
     UpdateMarker(FloEventId),
     StartConsuming(ConsumerStart),
     PeerAnnounce(ActorId),
@@ -197,7 +331,9 @@ pub enum ProtocolMessage {
         namespace: String,
         username: String,
         password: String,
-    }
+    },
+    Error(ErrorMessage),
+    Event(OwnedFloEvent), //TODO: remove this message type
 }
 
 
@@ -212,7 +348,7 @@ fn string_to_buffer(mut buf: &mut [u8], string: &String) -> Result<usize, io::Er
     Ok(str_len + 1)
 }
 
-fn serialize_produce_header(header: &EventHeader, mut buf: &mut [u8]) -> usize {
+fn serialize_produce_header(header: &ProduceEventHeader, mut buf: &mut [u8]) -> usize {
 
     let (counter, actor) = header.parent_id.map(|id| {
         (id.event_counter, id.actor)
@@ -227,35 +363,84 @@ fn serialize_produce_header(header: &EventHeader, mut buf: &mut [u8]) -> usize {
             .finish()
 }
 
-impl Read for ProtocolMessage {
-    fn read(&mut self, buf: &mut [u8]) -> Result<usize, io::Error> {
-        let n_bytes = match *self {
+fn serialize_receive_event_header(header: &ReceiveEventHeader, buf: &mut [u8]) -> usize {
+    let (counter, actor) = header.parent_id.map(|id| {
+        (id.event_counter, id.actor)
+    }).unwrap_or((0, 0));
+
+    Serializer::new(buf).write_bytes(RECEIVE_EVENT)
+            .write_u16(header.id.actor)
+            .write_u64(header.id.event_counter)
+            .write_u16(header.parent_id.map(|id| id.actor).unwrap_or(0))
+            .write_u64(header.parent_id.map(|id| id.event_counter).unwrap_or(0))
+            .write_u64(::time::millis_since_epoch(header.timestamp))
+            .newline_term_string(&header.namespace)
+            .write_u32(header.data_length)
+            .finish()
+}
+
+fn serialize_event_ack(ack: &EventAck, buf: &mut [u8]) -> usize {
+    Serializer::new(buf).write_bytes(ACK_HEADER)
+            .write_u32(ack.op_id)
+            .write_u64(ack.event_id.event_counter)
+            .write_u16(ack.event_id.actor)
+            .finish()
+}
+
+fn serialize_error_message(err: &ErrorMessage, buf: &mut [u8]) -> usize {
+    Serializer::new(buf).write_bytes(ERROR_HEADER)
+            .write_u32(err.op_id)
+            .write_u8(err.kind.u8_value())
+            .newline_term_string(&err.description)
+            .finish()
+}
+
+fn serialize_event(event: &OwnedFloEvent, buf: &mut [u8]) -> usize {
+    Serializer::new(buf).write_bytes(RECEIVE_EVENT)
+            .write_u16(event.id.actor)
+            .write_u64(event.id.event_counter)
+            .write_u16(event.parent_id.map(|id| id.actor).unwrap_or(0))
+            .write_u64(event.parent_id.map(|id| id.event_counter).unwrap_or(0))
+            .write_u64(::time::millis_since_epoch(event.timestamp))
+            .newline_term_string(&event.namespace)
+            .write_u32(event.data.len() as u32)
+            .write_bytes(&event.data)
+            .finish()
+}
+
+impl ProtocolMessage {
+
+    pub fn serialize(&self, buf: &mut [u8]) -> usize {
+        match *self {
             ProtocolMessage::ProduceEvent(ref header) => {
                 serialize_produce_header(header, buf)
             }
+            ProtocolMessage::ReceiveEvent(ref header) => {
+                serialize_receive_event_header(header, buf)
+            }
             ProtocolMessage::StartConsuming(ConsumerStart{ref namespace, ref max_events}) => {
                 Serializer::new(buf).write_bytes(START_CONSUMING)
-                        .newline_term_string(namespace)
-                        .write_i64(*max_events)
-                        .finish()
+                                    .newline_term_string(namespace)
+                                    .write_i64(*max_events)
+                                    .finish()
             }
             ProtocolMessage::UpdateMarker(id) => {
                 Serializer::new(buf).write_bytes(UPDATE_MARKER)
-                        .write_u64(id.event_counter)
-                        .write_u16(id.actor)
-                        .finish()
+                                    .write_u64(id.event_counter)
+                                    .write_u16(id.actor)
+                                    .finish()
             }
             ProtocolMessage::ClientAuth {ref namespace, ref username, ref password} => {
                 Serializer::new(buf).write_bytes(CLIENT_AUTH)
-                        .newline_term_string(namespace)
-                        .newline_term_string(username)
-                        .newline_term_string(password)
-                        .finish()
+                                    .newline_term_string(namespace)
+                                    .newline_term_string(username)
+                                    .newline_term_string(password)
+                                    .finish()
             }
             ProtocolMessage::PeerUpdate {ref actor_id, ref version_map} => {
                 let mut serializer = Serializer::new(buf).write_bytes(PEER_UPDATE)
-                        .write_u16(*actor_id)
-                        .write_u16(version_map.len() as u16);
+                                                         .write_u16(*actor_id)
+                                                         .write_u16(version_map.len() as u16);
 
                 for (actor, counter) in version_map.iter() {
                     serializer = serializer.write_u64(*counter).write_u16(*actor);
@@ -276,7 +461,22 @@ impl Read for ProtocolMessage {
                 }
                 serializer.write_u32(*event_count).finish()
             }
-        };
+            ProtocolMessage::AckEvent(ref ack) => {
+                serialize_event_ack(ack, buf)
+            }
+            ProtocolMessage::Error(ref err_message) => {
+                serialize_error_message(err_message, buf)
+            }
+            ProtocolMessage::Event(ref event) => {
+                serialize_event(event, buf)
+            }
+        }
+    }
+}
+
+impl Read for ProtocolMessage {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize, io::Error> {
+        let n_bytes = self.serialize(buf);
         Ok(n_bytes)
     }
 }
@@ -333,6 +533,37 @@ mod test {
     }
 
     #[test]
+    fn event_is_parsed() {
+        use flo_event::OwnedFloEvent;
+        let event = OwnedFloEvent {
+            id: FloEventId::new(123, 4567),
+            timestamp: ::time::from_millis_since_epoch(5678910),
+            parent_id: Some(FloEventId::new(123, 3456)),
+            namespace: "/the/namespace".to_owned(),
+            data: vec![1, 2, 3, 4, 5, 6, 7, 8 , 9],
+        };
+        test_serialize_then_deserialize(ProtocolMessage::Event(event));
+    }
+
+    #[test]
+    fn error_message_is_parsed() {
+        let error = ErrorMessage {
+            op_id: 12345,
+            kind: ErrorKind::InvalidNamespaceGlob,
+            description: "some shit happened".to_owned(),
+        };
+        test_serialize_then_deserialize(ProtocolMessage::Error(error));
+    }
+
+    #[test]
+    fn acknowledge_event_message_is_parsed() {
+        test_serialize_then_deserialize(ProtocolMessage::AckEvent(EventAck{
+            op_id: 2345667,
+            event_id: FloEventId::new(123, 456),
+        }));
+    }
+
+    #[test]
     fn event_delta_header_is_parsed() {
         let versions = hashmap!(1 => 3, 3 => 88, 4 => 72);
         let header = ProtocolMessage::EventDeltaHeader {
@@ -375,14 +606,14 @@ mod test {
 
     #[test]
     fn parse_producer_event_parses_correct_event() {
-        let input = ProtocolMessage::ProduceEvent(EventHeader {
+        let input = ProtocolMessage::ProduceEvent(ProduceEventHeader {
             namespace: "/the/namespace".to_owned(),
             parent_id: Some(FloEventId::new(123, 456)),
             op_id: 9,
             data_length: 5,
         });
         test_serialize_then_deserialize(input);
-        let input = ProtocolMessage::ProduceEvent(EventHeader {
+        let input = ProtocolMessage::ProduceEvent(ProduceEventHeader {
             namespace: "/another/namespace".to_owned(),
             parent_id: None,
             op_id: 8,
