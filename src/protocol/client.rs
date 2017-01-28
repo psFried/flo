@@ -1,6 +1,7 @@
 use nom::{be_u64, be_u32, be_u16, be_i64, IResult};
 use flo_event::{FloEventId, ActorId, EventCounter};
 use byteorder::{ByteOrder, BigEndian};
+use serializer::Serializer;
 
 use std::io::{self, Read};
 use std::collections::HashMap;
@@ -211,80 +212,58 @@ fn string_to_buffer(mut buf: &mut [u8], string: &String) -> Result<usize, io::Er
     Ok(str_len + 1)
 }
 
-fn read_produce_header(header: &EventHeader, mut buf: &mut [u8]) -> Result<usize, io::Error> {
-    set_header(buf, PRODUCE_EVENT);
-    let mut pos = 8;
-    pos += string_to_buffer(&mut buf[pos..], &header.namespace)?;
+fn serialize_produce_header(header: &EventHeader, mut buf: &mut [u8]) -> usize {
 
     let (counter, actor) = header.parent_id.map(|id| {
         (id.event_counter, id.actor)
     }).unwrap_or((0, 0));
-    BigEndian::write_u64(&mut buf[pos..(pos + 8)], counter);
-    pos += 8;
 
-    BigEndian::write_u16(&mut buf[pos..(pos + 2)], actor);
-    pos += 2;
-
-    BigEndian::write_u32(&mut buf[pos..(pos + 4)], header.op_id);
-    pos += 4;
-
-    BigEndian::write_u32(&mut buf[pos..(pos + 4)], header.data_length);
-    Ok(pos + 4)
+    Serializer::new(buf).write_bytes(PRODUCE_EVENT)
+            .newline_term_string(&header.namespace)
+            .write_u64(counter)
+            .write_u16(actor)
+            .write_u32(header.op_id)
+            .write_u32(header.data_length)
+            .finish()
 }
 
 impl Read for ProtocolMessage {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize, io::Error> {
-        use serializer::Serializer;
-
-        match *self {
+        let n_bytes = match *self {
             ProtocolMessage::ProduceEvent(ref header) => {
-                read_produce_header(header, buf)
+                serialize_produce_header(header, buf)
             }
             ProtocolMessage::StartConsuming(ConsumerStart{ref namespace, ref max_events}) => {
-                set_header(buf, START_CONSUMING);
-                string_to_buffer(&mut buf[8..], namespace).map(|ns_length| {
-                    let buffer_start = 8 + ns_length;
-                    BigEndian::write_i64(&mut buf[buffer_start..(buffer_start + 8)], *max_events);
-                    buffer_start + 8
-                })
+                Serializer::new(buf).write_bytes(START_CONSUMING)
+                        .newline_term_string(namespace)
+                        .write_i64(*max_events)
+                        .finish()
             }
             ProtocolMessage::UpdateMarker(id) => {
-                set_header(buf, UPDATE_MARKER);
-                BigEndian::write_u64(&mut buf[8..16], id.event_counter);
-                BigEndian::write_u16(&mut buf[16..18], id.actor);
-                Ok(18)
+                Serializer::new(buf).write_bytes(UPDATE_MARKER)
+                        .write_u64(id.event_counter)
+                        .write_u16(id.actor)
+                        .finish()
             }
             ProtocolMessage::ClientAuth {ref namespace, ref username, ref password} => {
-                set_header(buf, CLIENT_AUTH);
-                let mut pos = 8;
-                pos += string_to_buffer(&mut buf[pos..], namespace)?;
-                pos += string_to_buffer(&mut buf[pos..], username)?;
-                pos += string_to_buffer(&mut buf[pos..], password)?;
-                Ok(pos)
+                Serializer::new(buf).write_bytes(CLIENT_AUTH)
+                        .newline_term_string(namespace)
+                        .newline_term_string(username)
+                        .newline_term_string(password)
+                        .finish()
             }
             ProtocolMessage::PeerUpdate {ref actor_id, ref version_map} => {
-                set_header(buf, headers::PEER_UPDATE);
-                let mut pos = 8;
-
-                BigEndian::write_u16(&mut buf[pos..(pos+2)], *actor_id);
-                pos += 2;
-
-                let mut n_versions = version_map.len() as u16;
-                //safe cast since ActorId is only a u16. If there's anywhere near 64k actors, we're in deep shit
-                BigEndian::write_u16(&mut buf[pos..(pos+2)], n_versions);
-                pos += 2;
+                let mut serializer = Serializer::new(buf).write_bytes(PEER_UPDATE)
+                        .write_u16(*actor_id)
+                        .write_u16(version_map.len() as u16);
 
                 for (actor, counter) in version_map.iter() {
-                    BigEndian::write_u64(&mut buf[pos..(pos+8)], *counter);
-                    pos += 8;
-                    BigEndian::write_u16(&mut buf[pos..(pos+2)], *actor);
-                    pos += 2;
+                    serializer = serializer.write_u64(*counter).write_u16(*actor);
                 }
-                Ok(pos)
+                serializer.finish()
             }
             ProtocolMessage::PeerAnnounce(actor_id) => {
-                let nbytes = Serializer::new(buf).write_bytes(headers::PEER_ANNOUNCE.as_bytes()).write_u16(actor_id).finish();
-                Ok(nbytes)
+                Serializer::new(buf).write_bytes(headers::PEER_ANNOUNCE.as_bytes()).write_u16(actor_id).finish()
             }
             ProtocolMessage::EventDeltaHeader {ref actor_id, ref version_map, ref event_count} => {
                 let mut serializer = Serializer::new(buf)
@@ -295,10 +274,10 @@ impl Read for ProtocolMessage {
                 for (actor_id, event_counter) in version_map.iter() {
                     serializer = serializer.write_u64(*event_counter).write_u16(*actor_id);
                 }
-                let nbytes = serializer.write_u32(*event_count).finish();
-                Ok(nbytes)
+                serializer.write_u32(*event_count).finish()
             }
-        }
+        };
+        Ok(n_bytes)
     }
 }
 
