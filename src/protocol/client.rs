@@ -3,6 +3,7 @@ use flo_event::{FloEventId, ActorId, EventCounter, OwnedFloEvent};
 use byteorder::{ByteOrder, BigEndian};
 use serializer::Serializer;
 
+use std::time::SystemTime;
 use std::io::{self, Read};
 use std::collections::HashMap;
 
@@ -83,6 +84,30 @@ named!{pub parse_producer_event<ProtocolMessage>,
                 parent_id: parent_id,
                 op_id: op_id,
                 data_length: data_len
+            })
+        }
+    )
+}
+
+named!{parse_timestamp<SystemTime>,
+    map!(be_u64, ::time::from_millis_since_epoch)
+}
+
+named!{parse_receive_event_header<ProtocolMessage>,
+    chain!(
+        _tag: tag!(RECEIVE_EVENT) ~
+        id: parse_non_zero_event_id ~
+        parent_id: parse_event_id ~
+        timestamp: parse_timestamp ~
+        namespace: parse_str ~
+        data_len: be_u32,
+        || {
+           ProtocolMessage::ReceiveEvent(ReceiveEventHeader {
+                id: id,
+                parent_id: parent_id,
+                namespace: namespace,
+                timestamp: timestamp,
+                data_length: data_len,
             })
         }
     )
@@ -200,53 +225,17 @@ named!{parse_error_message<ProtocolMessage>,
     )
 }
 
-named!{pub parse_parent_id<Option<FloEventId>>,
-    chain!(
-        actor: be_u16 ~
-        counter: be_u64,
-        || {
-            if counter > 0 {
-                Some(FloEventId::new(actor, counter))
-            } else {
-                None
-            }
-        }
-    )
-}
-
-//TODO: remove owned event message from protocol once things are switch to using the headers
-named!{parse_event<ProtocolMessage>,
-    chain!(
-        _tag: tag!("FLO_EVT\n") ~
-        actor: be_u16 ~
-        counter: be_u64 ~
-        parent_id: parse_parent_id ~
-        timestamp: be_u64 ~
-        namespace: parse_str ~
-        data: length_bytes!(be_u32),
-        || {
-            ProtocolMessage::Event(OwnedFloEvent {
-                id: FloEventId::new(actor, counter),
-                namespace: namespace.to_owned(),
-                timestamp: ::time::from_millis_since_epoch(timestamp),
-                parent_id: parent_id,
-                data: data.to_owned()
-            })
-        }
-    )
-}
-
 named!{pub parse_any<ProtocolMessage>, alt!(
         parse_producer_event |
         parse_event_ack |
+        parse_receive_event_header |
         parse_peer_update |
         parse_event_delta_header |
         parse_peer_announce |
         parse_update_marker |
         parse_start_consuming |
         parse_auth |
-        parse_error_message |
-        parse_event
+        parse_error_message
 )}
 
 // Error message
@@ -278,7 +267,7 @@ impl ErrorKind {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct ProduceEventHeader {
     pub op_id: u32,
     pub namespace: String,
@@ -294,7 +283,7 @@ pub struct EventAck {
 }
 unsafe impl Send for EventAck {}
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct ReceiveEventHeader {
     pub id: FloEventId,
     pub parent_id: Option<FloEventId>,
@@ -303,14 +292,14 @@ pub struct ReceiveEventHeader {
     pub data_length: u32,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct ConsumerStart {
     pub max_events: i64,
     pub namespace: String,
 }
 
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum ProtocolMessage {
     ProduceEvent(ProduceEventHeader),
     AckEvent(EventAck),
@@ -333,7 +322,6 @@ pub enum ProtocolMessage {
         password: String,
     },
     Error(ErrorMessage),
-    Event(OwnedFloEvent), //TODO: remove this message type
 }
 
 
@@ -369,10 +357,10 @@ fn serialize_receive_event_header(header: &ReceiveEventHeader, buf: &mut [u8]) -
     }).unwrap_or((0, 0));
 
     Serializer::new(buf).write_bytes(RECEIVE_EVENT)
-            .write_u16(header.id.actor)
             .write_u64(header.id.event_counter)
-            .write_u16(header.parent_id.map(|id| id.actor).unwrap_or(0))
+            .write_u16(header.id.actor)
             .write_u64(header.parent_id.map(|id| id.event_counter).unwrap_or(0))
+            .write_u16(header.parent_id.map(|id| id.actor).unwrap_or(0))
             .write_u64(::time::millis_since_epoch(header.timestamp))
             .newline_term_string(&header.namespace)
             .write_u32(header.data_length)
@@ -395,18 +383,7 @@ fn serialize_error_message(err: &ErrorMessage, buf: &mut [u8]) -> usize {
             .finish()
 }
 
-fn serialize_event(event: &OwnedFloEvent, buf: &mut [u8]) -> usize {
-    Serializer::new(buf).write_bytes(RECEIVE_EVENT)
-            .write_u16(event.id.actor)
-            .write_u64(event.id.event_counter)
-            .write_u16(event.parent_id.map(|id| id.actor).unwrap_or(0))
-            .write_u64(event.parent_id.map(|id| id.event_counter).unwrap_or(0))
-            .write_u64(::time::millis_since_epoch(event.timestamp))
-            .newline_term_string(&event.namespace)
-            .write_u32(event.data.len() as u32)
-            .write_bytes(&event.data)
-            .finish()
-}
+
 
 impl ProtocolMessage {
 
@@ -466,9 +443,6 @@ impl ProtocolMessage {
             }
             ProtocolMessage::Error(ref err_message) => {
                 serialize_error_message(err_message, buf)
-            }
-            ProtocolMessage::Event(ref event) => {
-                serialize_event(event, buf)
             }
         }
     }
@@ -530,19 +504,6 @@ mod test {
                 panic!("Got incomplete: {:?}", need)
             }
         }
-    }
-
-    #[test]
-    fn event_is_parsed() {
-        use flo_event::OwnedFloEvent;
-        let event = OwnedFloEvent {
-            id: FloEventId::new(123, 4567),
-            timestamp: ::time::from_millis_since_epoch(5678910),
-            parent_id: Some(FloEventId::new(123, 3456)),
-            namespace: "/the/namespace".to_owned(),
-            data: vec![1, 2, 3, 4, 5, 6, 7, 8 , 9],
-        };
-        test_serialize_then_deserialize(ProtocolMessage::Event(event));
     }
 
     #[test]

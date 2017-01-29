@@ -9,14 +9,14 @@ use futures::sync::mpsc::UnboundedReceiver;
 use std::sync::Arc;
 use std::io::{self, Read};
 
-pub struct ServerMessageStream<P: ServerProtocol<Arc<OwnedFloEvent>>> {
+pub struct ServerMessageStream<P: ServerProtocol> {
     connection_id: ConnectionId,
-    server_receiver: UnboundedReceiver<ServerMessage<Arc<OwnedFloEvent>>>,
+    server_receiver: UnboundedReceiver<ServerMessage>,
     current_message: Option<P>,
 }
 
-impl <P: ServerProtocol<Arc<OwnedFloEvent>>> ServerMessageStream<P> {
-    pub fn new(connection_id: ConnectionId, server_rx: UnboundedReceiver<ServerMessage<Arc<OwnedFloEvent>>>) -> ServerMessageStream<P> {
+impl <P: ServerProtocol> ServerMessageStream<P> {
+    pub fn new(connection_id: ConnectionId, server_rx: UnboundedReceiver<ServerMessage>) -> ServerMessageStream<P> {
         ServerMessageStream {
             connection_id: connection_id,
             server_receiver: server_rx,
@@ -25,7 +25,7 @@ impl <P: ServerProtocol<Arc<OwnedFloEvent>>> ServerMessageStream<P> {
     }
 }
 
-impl <P: ServerProtocol<Arc<OwnedFloEvent>>> Drop for ServerMessageStream<P> {
+impl <P: ServerProtocol> Drop for ServerMessageStream<P> {
     fn drop(&mut self) {
         debug!("Dropping ServerMessageStream for : {}", self.connection_id);
     }
@@ -36,7 +36,7 @@ fn not_ready() -> io::Error {
     io::Error::new(io::ErrorKind::WouldBlock, NOT_READY_MSG)
 }
 
-impl <P: ServerProtocol<Arc<OwnedFloEvent>>> Read for ServerMessageStream<P> {
+impl <P: ServerProtocol> Read for ServerMessageStream<P> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let mut message = self.current_message.take();
 

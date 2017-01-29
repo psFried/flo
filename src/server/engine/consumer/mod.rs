@@ -5,7 +5,7 @@ pub use self::client::{Client, ClientState, ClientSendError, ConsumingState};
 use self::client::NamespaceGlob;
 
 use server::engine::api::{ConnectionId, ConsumerMessage, ClientConnect};
-use protocol::{ServerMessage, ErrorMessage, ErrorKind};
+use protocol::{ServerMessage, ProtocolMessage, ErrorMessage, ErrorKind};
 use flo_event::{FloEvent, OwnedFloEvent, FloEventId};
 use std::sync::{Arc, mpsc};
 use std::thread;
@@ -119,13 +119,13 @@ impl <R: EventReader + 'static> ConsumerManager<R> {
 
 }
 
-fn namespace_glob_error(description: String) -> ServerMessage<Arc<OwnedFloEvent>> {
+fn namespace_glob_error(description: String) -> ServerMessage {
     let err = ErrorMessage {
         op_id: 0,
         kind: ErrorKind::InvalidNamespaceGlob,
         description: description,
     };
-    ServerMessage::Error(err)
+    ServerMessage::Other(ProtocolMessage::Error(err))
 }
 
 fn consume_from_file<R: EventReader + 'static>(event_sender: mpsc::Sender<ConsumerMessage>, client: &mut Client, event_reader: &mut R, start_id: FloEventId, namespace_glob: NamespaceGlob, limit: i64) {

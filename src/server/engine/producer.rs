@@ -3,7 +3,7 @@ use server::engine::api::{ProduceEvent, ConsumerMessage, ProducerMessage};
 use server::engine::client_map::ClientMap;
 use event_store::EventWriter;
 use flo_event::{ActorId, OwnedFloEvent, EventCounter, FloEventId};
-use protocol::{ServerMessage, EventAck};
+use protocol::{ServerMessage, ProtocolMessage, EventAck};
 use server::metrics::ProducerMetrics;
 
 use std::sync::mpsc::Sender;
@@ -75,10 +75,10 @@ impl <S: EventWriter> ProducerManager<S> {
             let storage_time = produce_start.elapsed();
             self.metrics.event_persisted(event_id, time_in_channel, storage_time);
 
-            let event_ack = ServerMessage::EventPersisted(EventAck {
+            let event_ack = ServerMessage::Other(ProtocolMessage::AckEvent(EventAck {
                 op_id: op_id,
                 event_id: event_id,
-            });
+            }));
             self.clients.send(producer_id, event_ack).map_err(|err| {
                 format!("Error sending event ack to client: {:?}", err)
             }).and_then(|()| {

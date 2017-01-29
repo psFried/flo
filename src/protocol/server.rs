@@ -2,159 +2,30 @@ use flo_event::{FloEventId, FloEvent, OwnedFloEvent};
 use std::io::{self, Read};
 use time;
 
+use protocol::ProtocolMessage;
+use std::sync::Arc;
 use nom::{be_u16, be_u32, be_u64};
 use byteorder::{ByteOrder, BigEndian};
 
-static ACK_HEADER: &'static [u8; 8] = b"FLO_ACK\n";
-static EVENT_HEADER: &'static [u8; 8] = b"FLO_EVT\n";
-static ERROR_HEADER: &'static [u8; 8] = b"FLO_ERR\n";
-
-pub const ERROR_INVALID_NAMESPACE: u8 = 15;
-
-// Event Acknowledged
-#[derive(Debug, PartialEq, Clone)]
-pub struct EventAck {
-    pub op_id: u32,
-    pub event_id: FloEventId,
-}
-unsafe impl Send for EventAck {}
-
-
-// Error message
-#[derive(Debug, PartialEq, Clone)]
-pub enum ErrorKind {
-    InvalidNamespaceGlob,
-}
-unsafe impl Send for ErrorKind {}
-
-#[derive(Debug, PartialEq, Clone)]
-pub struct ErrorMessage {
-    pub op_id: u32,
-    pub kind: ErrorKind,
-    pub description: String,
-}
-
-impl ErrorKind {
-    pub fn from_u8(byte: u8) -> Result<ErrorKind, u8> {
-        match byte {
-            ERROR_INVALID_NAMESPACE => Ok(ErrorKind::InvalidNamespaceGlob),
-            other => Err(other)
-        }
-    }
-
-    pub fn u8_value(&self) -> u8 {
-        match self {
-            &ErrorKind::InvalidNamespaceGlob => ERROR_INVALID_NAMESPACE,
-        }
-    }
-}
-
 #[derive(Debug, PartialEq)]
-pub enum ServerMessage<T: FloEvent> {
-    EventPersisted(EventAck),
-    Event(T),
-    Error(ErrorMessage)
+pub enum ServerMessage {
+    Event(Arc<OwnedFloEvent>),
+    Other(ProtocolMessage)
 }
-unsafe impl <T> Send for ServerMessage<T> where T: FloEvent + Send {}
+unsafe impl Send for ServerMessage {}
 
-impl <T> Clone for ServerMessage<T> where T: FloEvent + Clone {
+impl Clone for ServerMessage {
     fn clone(&self) -> Self {
         match self {
             &ServerMessage::Event(ref evt) => ServerMessage::Event(evt.clone()),
-            &ServerMessage::EventPersisted(ref ack) => ServerMessage::EventPersisted(ack.clone()),
-            &ServerMessage::Error(ref kind) => ServerMessage::Error(kind.clone())
+            &ServerMessage::Other(ref protocol_msg) => ServerMessage::Other((*protocol_msg).clone())
         }
     }
 }
 
-named!{pub parse_str<String>,
-    map_res!(
-        take_until_and_consume!("\n"),
-        |res| {
-            ::std::str::from_utf8(res).map(|val| val.to_owned())
-        }
-    )
-}
 
-named!{pub parse_parent_id<Option<FloEventId>>,
-    chain!(
-        actor: be_u16 ~
-        counter: be_u64,
-        || {
-            if counter > 0 {
-                Some(FloEventId::new(actor, counter))
-            } else {
-                None
-            }
-        }
-    )
-}
-
-
-named!{parse_event<OwnedFloEvent>,
-    chain!(
-        _tag: tag!("FLO_EVT\n") ~
-        actor: be_u16 ~
-        counter: be_u64 ~
-        parent_id: parse_parent_id ~
-        timestamp: be_u64 ~
-        namespace: parse_str ~
-        data: length_bytes!(be_u32),
-        || {
-            OwnedFloEvent {
-                id: FloEventId::new(actor, counter),
-                namespace: namespace.to_owned(),
-                timestamp: time::from_millis_since_epoch(timestamp),
-                parent_id: parent_id,
-                data: data.to_owned()
-            }
-        }
-    )
-}
-
-named!{parse_event_ack<EventAck>,
-    chain!(
-        _tag: tag!(ACK_HEADER) ~
-        op_id: be_u32 ~
-        counter: be_u64 ~
-        actor_id: be_u16,
-        || {
-            EventAck {
-                op_id: op_id,
-                event_id: FloEventId::new(actor_id, counter)
-            }
-        }
-    )
-}
-
-named!{parse_error_message<ErrorMessage>,
-    chain!(
-        _tag: tag!(ERROR_HEADER) ~
-        op_id: be_u32 ~
-        kind: map_res!(take!(1), |res: &[u8]| {
-            ErrorKind::from_u8(res[0])
-        }) ~
-        description: parse_str,
-        || {
-            ErrorMessage {
-                op_id: op_id,
-                kind: kind,
-                description: description,
-            }
-        }
-    )
-}
-
-named!{pub read_server_message<ServerMessage<OwnedFloEvent>>,
-    alt!(
-        map!(parse_event, |event| ServerMessage::Event(event)) |
-        map!(parse_event_ack, |ack| ServerMessage::EventPersisted(ack)) |
-        map!(parse_error_message, |err| ServerMessage::Error(err))
-    )
-}
-
-pub trait ServerProtocol<E: FloEvent>: Read + Sized {
-    fn new(server_message: ServerMessage<E>) -> Self;
+pub trait ServerProtocol: Read + Sized {
+    fn new(server_message: ServerMessage) -> Self;
     fn is_done(&self) -> bool;
 }
 
@@ -168,13 +39,13 @@ enum ReadState {
     Done,
 }
 
-pub struct ServerProtocolImpl<E: FloEvent> {
-    message: ServerMessage<E>,
+pub struct ServerProtocolImpl {
+    message: ServerMessage,
     state: ReadState,
 }
 
-impl <E: FloEvent> ServerProtocol<E> for ServerProtocolImpl<E> {
-    fn new(server_message: ServerMessage<E>) -> ServerProtocolImpl<E> {
+impl ServerProtocol for ServerProtocolImpl {
+    fn new(server_message: ServerMessage) -> ServerProtocolImpl {
         ServerProtocolImpl {
             message: server_message,
             state: ReadState::Init,
@@ -187,8 +58,9 @@ impl <E: FloEvent> ServerProtocol<E> for ServerProtocolImpl<E> {
 }
 
 
-impl <E: FloEvent> Read for ServerProtocolImpl<E> {
+impl Read for ServerProtocolImpl {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        use serializer::Serializer;
         let ServerProtocolImpl { ref message, ref mut state, } = *self;
 
         if *state == ReadState::Done {
@@ -196,64 +68,27 @@ impl <E: FloEvent> Read for ServerProtocolImpl<E> {
         }
 
         match message {
-            &ServerMessage::Error(ref err_message) => {
-                trace!("serializing error message: {:?}", err_message);
-                &buf[..8].copy_from_slice(&ERROR_HEADER[..]);
-                BigEndian::write_u32(&mut buf[8..12], err_message.op_id);
-                buf[12] = err_message.kind.u8_value();
-                let desc_end_idx = err_message.description.len() + 13;
-                &buf[13..desc_end_idx].copy_from_slice(err_message.description.as_bytes());
-                buf[desc_end_idx] = b'\n';
-
+            &ServerMessage::Other(ref protocol_message) => {
+                trace!("serializing protocol message: {:?}", protocol_message);
+                let nbytes = protocol_message.serialize(buf);
                 *state = ReadState::Done;
-                Ok(desc_end_idx + 1)
-            }
-            &ServerMessage::EventPersisted(ref ack) => {
-                trace!("serializing event ack: {:?}", ack);
-                let mut nread = 0;
-                &buf[..8].copy_from_slice(&ACK_HEADER[..]);
-                nread += 8;
-                BigEndian::write_u32(&mut buf[8..12], ack.op_id);
-                nread += 4;
-                BigEndian::write_u64(&mut buf[12..20], ack.event_id.event_counter);
-                nread += 8;
-                BigEndian::write_u16(&mut buf[20..22], ack.event_id.actor);
-                nread += 2;
-
-                *state = ReadState::Done;
-                Ok(nread)
+                Ok(nbytes)
             }
             &ServerMessage::Event(ref event) => {
                 let (buffer_pos, data_pos): (usize, usize) = match *state {
                     ReadState::Init => {
                         trace!("Writing header for event: {:?}", event);
-                        let mut pos: usize = 8;
-                        //only write this stuff if we haven't already
-                        &buf[..pos].copy_from_slice(&EVENT_HEADER[..]);
 
-                        BigEndian::write_u16(&mut buf[8..10], event.id().actor);
-                        BigEndian::write_u64(&mut buf[10..18], event.id().event_counter);
-                        pos += 10;
-
-                        let (parent_counter, parent_actor) = event.parent_id().map(|id| {
-                            (id.event_counter, id.actor)
-                        }).unwrap_or((0, 0));
-                        BigEndian::write_u16(&mut buf[pos..(pos + 2)], parent_actor);
-                        pos += 2;
-                        BigEndian::write_u64(&mut buf[pos..(pos + 8)], parent_counter);
-                        pos += 8;
-
-                        BigEndian::write_u64(&mut buf[pos..(pos + 8)], ::time::millis_since_epoch(event.timestamp()));
-                        pos += 8;
-
-                        let ns_length = event.namespace().len();
-                        &buf[pos..(ns_length + pos)].copy_from_slice(event.namespace().as_bytes());
-                        pos += ns_length;
-                        buf[pos] = 10u8;
-                        pos += 1;
-
-                        BigEndian::write_u32(&mut buf[pos..], event.data_len());
-                        (pos + 4, 0)
+                        let header_len = Serializer::new(buf).write_bytes("FLO_EVT\n")
+                                .write_u64(event.id.event_counter)
+                                .write_u16(event.id.actor)
+                                .write_u64(event.parent_id.map(|id| id.event_counter).unwrap_or(0))
+                                .write_u16(event.parent_id.map(|id| id.actor).unwrap_or(0))
+                                .write_u64(::time::millis_since_epoch(event.timestamp))
+                                .newline_term_string(&event.namespace)
+                                .write_u32(event.data.len() as u32)
+                                .finish();
+                        (header_len, 0)
                     }
                     ReadState::EventData{ref position, ..} => (0, *position),
                     ReadState::Done => {
@@ -291,10 +126,17 @@ mod test {
     use std::sync::Arc;
     use time;
     use byteorder::{ByteOrder, BigEndian};
+    use protocol::{ProtocolMessage, ClientProtocol, ClientProtocolImpl, ErrorMessage, ErrorKind, EventAck};
 
-    fn assert_message_serializes_and_deserializes(message: ServerMessage<OwnedFloEvent>) {
+    static client_protocol: ClientProtocolImpl = ClientProtocolImpl;
+
+    fn read_server_message(buf: &[u8]) -> IResult<&[u8], ProtocolMessage> {
+        client_protocol.parse_any(buf)
+    }
+
+    fn assert_message_serializes_and_deserializes(message: ProtocolMessage) {
         let mut buffer = [0; 1024];
-        let mut serializer = ServerProtocolImpl::new(message.clone());
+        let mut serializer = ServerProtocolImpl::new(ServerMessage::Other(message.clone()));
         let nread = serializer.read(&mut buffer[..]).expect("failed to read message into buffer");
         println!("Buffer: {:?}", &buffer[..nread]);
 
@@ -315,7 +157,7 @@ mod test {
 
     #[test]
     fn error_message_is_serialized_and_deserialized() {
-        let err = ServerMessage::Error(ErrorMessage{
+        let err = ProtocolMessage::Error(ErrorMessage{
             op_id: 1234,
             kind: ErrorKind::InvalidNamespaceGlob,
             description: "Cannot have move than two '*' characters sequentially".to_owned(),
@@ -324,15 +166,40 @@ mod test {
     }
 
     #[test]
-    fn event_is_serialized_and_deserialized() {
-        let event = ServerMessage::Event(OwnedFloEvent{
-            id: FloEventId::new(1, 6),
-            parent_id: Some(FloEventId::new(123, 456)),
-            timestamp: ::time::from_millis_since_epoch(1), //time needs to be from milliseconds, otherwise we lose precision
-            namespace: "/the/event/namespace".to_owned(),
-            data: "the event data".as_bytes().to_owned(),
-        });
-        assert_message_serializes_and_deserializes(event);
+    fn event_is_serialized_and_deserialized_as_header_and_data() {
+        let namespace = "/the/event/namespace";
+        let event_data = "the event data";
+        let event_id = FloEventId::new(1, 6);
+        let parent_id = Some(FloEventId::new(123, 456));
+        //time needs to be from milliseconds, otherwise we lose precision
+        let event_ts = ::time::from_millis_since_epoch(1);
+
+        let event = ServerMessage::Event(Arc::new(OwnedFloEvent{
+            id: event_id,
+            parent_id: parent_id,
+            timestamp: event_ts,
+            namespace: namespace.to_owned(),
+            data: event_data.as_bytes().to_owned(),
+        }));
+        let mut buffer = [0; 256];
+        let mut serializer = ServerProtocolImpl::new(event);
+        let total_length = serializer.read(&mut buffer[..]).unwrap();
+        println!("total length: {}, buffer: {:?}", total_length, &buffer[..total_length]);
+
+        let (remaining, result) = read_server_message(&buffer[..total_length]).unwrap();
+
+        let expected_header = ::protocol::ReceiveEventHeader{
+            id: event_id,
+            parent_id: parent_id,
+            namespace: namespace.to_owned(),
+            timestamp: event_ts,
+            data_length: event_data.len() as u32,
+        };
+
+        assert_eq!(ProtocolMessage::ReceiveEvent(expected_header), result);
+
+        assert_eq!(event_data.as_bytes(), remaining);
+
     }
 
     #[test]
@@ -348,8 +215,8 @@ mod test {
 
         let expected_header = b"FLO_EVT\n";
         assert_eq!(&expected_header[..], &buffer[..8]);                //starts with header
-        assert_eq!(&[0, 12, 0, 0, 0, 0, 0, 0, 0, 23], &buffer[8..18]); //event id is actor id then event counter
-        assert_eq!(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0], &buffer[18..28]);  //parent event id is actor id then event counter
+        assert_eq!(&[0, 0, 0, 0, 0, 0, 0, 23, 0, 12], &buffer[8..18]); //event id is event counter then actor
+        assert_eq!(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0], &buffer[18..28]);  //parent event id is event counter then actor
         let expected_namespace = b"the namespace\n";
         assert_eq!(&expected_namespace[..], &buffer[36..50]);   // namespace written with terminating newline
         assert_eq!(&[0, 0, 0, 64], &buffer[50..54]);            //data length as big endian u32
@@ -378,8 +245,8 @@ mod test {
 
         let expected_header = b"FLO_EVT\n";
         assert_eq!(&expected_header[..], &buffer[..8]);                //starts with header
-        assert_eq!(&[0, 12, 0, 0, 0, 0, 0, 0, 0, 23], &buffer[8..18]); //event id is actor id then event counter
-        assert_eq!(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0], &buffer[18..28]);  // parent event id is actor id then event counter
+        assert_eq!(&[0, 0, 0, 0, 0, 0, 0, 23, 0, 12], &buffer[8..18]); //event id is counter then actor
+        assert_eq!(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0], &buffer[18..28]);  // parent event id is counter then actor
 
         let mut expected_timestamp = [0; 8];
         BigEndian::write_u64(&mut expected_timestamp[..], timestamp_millis);
@@ -405,7 +272,7 @@ mod test {
 
     #[test]
     fn event_ack_is_serialized_and_deserialized() {
-        let ack = ServerMessage::EventPersisted(
+        let ack = ProtocolMessage::AckEvent(
             EventAck{op_id: 123, event_id: FloEventId::new(234, 5)}
         );
         assert_message_serializes_and_deserializes(ack);

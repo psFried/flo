@@ -79,7 +79,7 @@ unsafe impl Send for ClientMessage {}
 pub struct ClientConnect {
     pub connection_id: ConnectionId,
     pub client_addr: ::std::net::SocketAddr,
-    pub message_sender: UnboundedSender<ServerMessage<Arc<OwnedFloEvent>>>,
+    pub message_sender: UnboundedSender<ServerMessage>,
 }
 unsafe impl Send for ClientConnect {}
 
@@ -93,7 +93,7 @@ impl PartialEq for ClientConnect {
     fn eq(&self, other: &ClientConnect) -> bool {
         self.connection_id == other.connection_id &&
                 self.client_addr == other.client_addr &&
-                &(self.message_sender) as * const UnboundedSender<ServerMessage<Arc<OwnedFloEvent>>> == &(other.message_sender) as * const UnboundedSender<ServerMessage<Arc<OwnedFloEvent>>>
+                &(self.message_sender) as * const UnboundedSender<ServerMessage> == &(other.message_sender) as * const UnboundedSender<ServerMessage>
     }
 }
 

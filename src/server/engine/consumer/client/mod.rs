@@ -15,10 +15,10 @@ use std::net::SocketAddr;
 static SEND_ERROR_DESC: &'static str = "Failed to send message through Client Channel";
 
 #[derive(Debug, PartialEq)]
-pub struct ClientSendError(pub ServerMessage<Arc<OwnedFloEvent>>);
+pub struct ClientSendError(pub ServerMessage);
 
 impl ClientSendError {
-    fn into_message(self) -> ServerMessage<Arc<OwnedFloEvent>> {
+    fn into_message(self) -> ServerMessage {
         self.0
     }
 }
@@ -106,7 +106,7 @@ impl ClientState {
 pub struct Client {
     pub connection_id: ConnectionId,
     pub addr: SocketAddr,
-    sender: UnboundedSender<ServerMessage<Arc<OwnedFloEvent>>>,
+    sender: UnboundedSender<ServerMessage>,
     consumer_state: ClientState,
 }
 
@@ -145,7 +145,7 @@ impl Client {
         self.consumer_state = ClientState::NotConsuming(event_id);
     }
 
-    pub fn send(&mut self, message: ServerMessage<Arc<OwnedFloEvent>>) -> Result<(), ClientSendError> {
+    pub fn send(&mut self, message: ServerMessage) -> Result<(), ClientSendError> {
         let conn_id = self.connection_id;
         trace!("Sending message to client: {} : {:?}", conn_id, message);
         if let &ServerMessage::Event(ref event) = &message {

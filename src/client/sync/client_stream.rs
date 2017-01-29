@@ -4,7 +4,7 @@ use std::net::{TcpStream, SocketAddr, ToSocketAddrs};
 
 use nom::IResult;
 
-use protocol::{ProtocolMessage, ServerMessage, ProduceEventHeader, read_server_message};
+use protocol::{ProtocolMessage, ServerMessage, ProduceEventHeader, ClientProtocol, ClientProtocolImpl};
 use flo_event::{FloEventId, FloEvent, OwnedFloEvent};
 use client::{ClientError};
 
@@ -54,6 +54,13 @@ impl Buffer {
         let buf = &self.bytes[self.pos..self.len];
         debug!("Returning buffer: {:?}", buf);
         Ok(buf)
+    }
+
+    fn drain(&mut self, num_bytes: usize) -> &[u8] {
+        let pos = self.pos;
+        let byte_count = ::std::cmp::min(num_bytes, self.len - pos);
+        self.consume(byte_count);
+        &self.bytes[pos..(pos + byte_count)]
     }
 
     fn consume(&mut self, nbytes: usize) {
@@ -112,13 +119,13 @@ impl <T: IoStream> ClientStream<T> {
         })
     }
 
-    pub fn read(&mut self) -> io::Result<ServerMessage<OwnedFloEvent>> {
+    pub fn read(&mut self) -> io::Result<ProtocolMessage> {
         let ClientStream {ref mut writer, ref mut read_buffer, ..} = *self;
 
         let result = {
             let bytes = read_buffer.fill(writer)?;
-
-            let result = read_server_message(bytes);
+            let protocol = ClientProtocolImpl;
+            let result = protocol.parse_any(bytes);
             match result {
                 IResult::Done(remaining, message) => Ok((bytes.len() - remaining.len(), message)),
                 IResult::Incomplete(needed) => {
@@ -135,5 +142,23 @@ impl <T: IoStream> ClientStream<T> {
             read_buffer.consume(consumed);
             message
         })
+    }
+
+    pub fn read_event_data(&mut self, data_len: usize) -> io::Result<Vec<u8>> {
+        let existing_data = self.read_buffer.drain(data_len);
+
+        let mut data = Vec::with_capacity(data_len);
+        data.extend_from_slice(existing_data);
+
+        let position = existing_data.len();
+        if position < data_len {
+            unsafe {
+                data.set_len(data_len);
+            }
+            let buffer = &mut data[position..];
+            self.writer.read_exact(buffer)?
+        }
+
+        Ok(data)
     }
 }

@@ -20,7 +20,7 @@ impl ClientMap {
         self.0.remove(&client);
     }
 
-    pub fn send(&mut self, client: ConnectionId, message: ServerMessage<Arc<OwnedFloEvent>>) -> Result<(), String> {
+    pub fn send(&mut self, client: ConnectionId, message: ServerMessage) -> Result<(), String> {
         self.0.get_mut(&client).ok_or_else(|| {
             format!("Client: {} does not exist in producer map", client)
         }).and_then(|client_connect| {

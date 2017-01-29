@@ -6,7 +6,7 @@ use std::net::{TcpStream, SocketAddr, ToSocketAddrs};
 
 use nom::IResult;
 
-use protocol::{ProtocolMessage, ServerMessage, ProduceEventHeader, ConsumerStart, read_server_message};
+use protocol::{ProtocolMessage, ProduceEventHeader, ReceiveEventHeader, ConsumerStart};
 use flo_event::{FloEventId, FloEvent, OwnedFloEvent};
 use super::{ClientError, ConsumerOptions};
 use std::sync::Mutex;
@@ -61,10 +61,14 @@ pub trait FloConsumer: Sized {
     fn on_event<C: ConsumerContext>(&mut self, event: Result<OwnedFloEvent, &ClientError>, context: &mut C) -> ConsumerAction;
 }
 
+enum ClientMessage {
+    Event(OwnedFloEvent),
+    Proto(ProtocolMessage),
+}
 
 pub struct SyncConnection<S: IoStream> {
     stream: ClientStream<S>,
-    message_buffer: VecDeque<ServerMessage<OwnedFloEvent>>,
+    message_buffer: VecDeque<ClientMessage>,
     op_id: u32,
 }
 
@@ -118,26 +122,44 @@ impl <S: IoStream> SyncConnection<S> {
         })
     }
 
-    fn read(&mut self) -> Result<ServerMessage<OwnedFloEvent>, ClientError> {
+    fn read_next_message(&mut self) -> Result<ClientMessage, ClientError> {
         self.message_buffer.pop_front().map(|message| {
             Ok(message)
         }).unwrap_or_else(|| {
-            self.stream.read().map_err(|io_err| io_err.into())
+            self.stream.read()
+                    .map_err(|io_err| io_err.into())
+                    .and_then(|protocol_msg| {
+                        match protocol_msg {
+                            ProtocolMessage::ReceiveEvent(header) => {
+                                self.read_event_data(header).map(|event| {
+                                    ClientMessage::Event(event)
+                                })
+                            }
+                            other @ _ => {
+                                Ok(ClientMessage::Proto(other))
+                            }
+                        }
+                    })
         })
     }
 
     fn read_event_ack(&mut self) -> Result<FloEventId, ClientError> {
         loop {
             match self.stream.read() {
-                Ok(ServerMessage::EventPersisted(ref ack)) if ack.op_id == self.op_id => {
+                Ok(ProtocolMessage::AckEvent(ref ack)) if ack.op_id == self.op_id => {
                     return Ok(ack.event_id);
                 }
-                Ok(ServerMessage::Error(error_message)) => {
+                Ok(ProtocolMessage::Error(error_message)) => {
                     return Err(ClientError::FloError(error_message));
+                }
+                Ok(ProtocolMessage::ReceiveEvent(header)) => {
+                    trace!("buffering event: {:?}", header);
+                    let event = self.read_event_data(header)?; //return error if unable to read data
+                    self.message_buffer.push_back(ClientMessage::Event(event));
                 }
                 Ok(other) => {
                     trace!("buffering message: {:?}", other);
-                    self.message_buffer.push_back(other);
+                    self.message_buffer.push_back(ClientMessage::Proto(other));
                 }
                 Err(io_err) => {
                     return Err(io_err.into());
@@ -208,12 +230,21 @@ impl <S: IoStream> SyncConnection<S> {
     }
 
     fn read_event(&mut self) -> Result<OwnedFloEvent, ClientError> {
-        match self.read() {
-            Ok(ServerMessage::Event(event)) => Ok(event),
-            Ok(ServerMessage::Error(error_msg)) => Err(ClientError::FloError(error_msg)),
-            Ok(other) => Err(ClientError::UnexpectedMessage(other)),
+        match self.read_next_message() {
+            Ok(ClientMessage::Event(event)) => {
+                Ok(event)
+            },
+            Ok(ClientMessage::Proto(ProtocolMessage::Error(error_msg))) => Err(ClientError::FloError(error_msg)),
+            Ok(ClientMessage::Proto(other)) => Err(ClientError::UnexpectedMessage(other)),
             Err(io_err) => Err(io_err.into())
         }
+    }
+
+    fn read_event_data(&mut self, header: ReceiveEventHeader) -> Result<OwnedFloEvent, ClientError> {
+        let data_length = header.data_length;
+        self.stream.read_event_data(data_length as usize)
+                   .map_err(|io_err| io_err.into())
+                   .map(move |event_data| header_into_event(header, event_data))
     }
 
     fn start_consuming(&mut self, namespace: String, max: u64) -> Result<(), ClientError> {
@@ -242,4 +273,17 @@ impl <S: IoStream> SyncConnection<S> {
         self.stream.write(&mut auth_msg).map_err(|io_err| io_err.into())
     }
 
+}
+
+
+fn header_into_event(ReceiveEventHeader{id, parent_id, namespace, timestamp, data_length}: ReceiveEventHeader, data: Vec<u8>) -> OwnedFloEvent {
+    debug_assert_eq!(data_length as usize, data.len()); //TODO: maybe replace this with explicit error handling
+
+    OwnedFloEvent {
+        id: id,
+        timestamp: timestamp,
+        parent_id: parent_id,
+        namespace: namespace,
+        data: data,
+    }
 }

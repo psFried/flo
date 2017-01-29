@@ -81,7 +81,7 @@ pub fn run(options: ServerOptions) {
     }).for_each(move |(tcp_stream, client_addr): (TcpStream, SocketAddr)| {
         debug!("Got new connection from: {:?}", client_addr);
 
-        let (server_tx, server_rx): (UnboundedSender<ServerMessage<Arc<OwnedFloEvent>>>, UnboundedReceiver<ServerMessage<Arc<OwnedFloEvent>>>) = unbounded();
+        let (server_tx, server_rx): (UnboundedSender<ServerMessage>, UnboundedReceiver<ServerMessage>) = unbounded();
 
         let connection_id = api::next_connection_id();
         let (tcp_reader, tcp_writer) = tcp_stream.split();
@@ -120,7 +120,7 @@ pub fn run(options: ServerOptions) {
             Ok(())
         });
 
-        let server_to_client = nio::copy(ServerMessageStream::<ServerProtocolImpl<Arc<OwnedFloEvent>>>::new(connection_id, server_rx), tcp_writer).map_err(|err| {
+        let server_to_client = nio::copy(ServerMessageStream::<ServerProtocolImpl>::new(connection_id, server_rx), tcp_writer).map_err(|err| {
             error!("Error writing to client: {:?}", err);
             format!("Error writing to client: {:?}", err)
         }).map(move |amount| {
