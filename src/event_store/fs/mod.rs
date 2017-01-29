@@ -92,13 +92,13 @@ mod test {
     use super::*;
     use event_store::{EventReader, EventWriter, StorageEngineOptions};
     use event_store::index::EventIndex;
-    use flo_event::{FloEventId, OwnedFloEvent};
+    use flo_event::{FloEventId, OwnedFloEvent, Timestamp};
     use std::io::Cursor;
     use std::time::SystemTime;
 
     use tempdir::TempDir;
 
-    fn event_time() -> SystemTime {
+    fn event_time() -> Timestamp {
         ::time::from_millis_since_epoch(12345)
     }
 

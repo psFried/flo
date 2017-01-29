@@ -1,8 +1,12 @@
+extern crate chrono;
+
 use std::cmp::{Ord, PartialOrd, Ordering};
 use std::collections::HashMap;
 use std::fmt::Debug;
-use std::time::SystemTime;
 
+use chrono::{DateTime, TimeZone, UTC};
+
+pub type Timestamp = DateTime<UTC>;
 
 pub type ActorId = u16;
 pub type EventCounter = u64;
@@ -94,7 +98,7 @@ impl FloEventIdMap for HashMap<ActorId, EventCounter> {
 
 pub trait FloEvent: Debug {
     fn id(&self) -> &FloEventId;
-    fn timestamp(&self) -> SystemTime;
+    fn timestamp(&self) -> Timestamp;
     fn parent_id(&self) -> Option<FloEventId>;
     fn namespace(&self) -> &str;
     fn data_len(&self) -> u32;
@@ -128,7 +132,7 @@ impl <T> FloEvent for T where T: AsRef<OwnedFloEvent> + Debug {
         self.as_ref().parent_id()
     }
 
-    fn timestamp(&self) -> SystemTime {
+    fn timestamp(&self) -> Timestamp {
         self.as_ref().timestamp()
     }
 }
@@ -136,14 +140,14 @@ impl <T> FloEvent for T where T: AsRef<OwnedFloEvent> + Debug {
 #[derive(Debug, PartialEq, Clone)]
 pub struct OwnedFloEvent {
     pub id: FloEventId,
-    pub timestamp: SystemTime,
+    pub timestamp: Timestamp,
     pub parent_id: Option<FloEventId>,
     pub namespace: String,
     pub data: Vec<u8>,
 }
 
 impl OwnedFloEvent {
-    pub fn new(id: FloEventId, parent_id: Option<FloEventId>, timestamp: SystemTime, namespace: String, data: Vec<u8>) -> OwnedFloEvent {
+    pub fn new(id: FloEventId, parent_id: Option<FloEventId>, timestamp: Timestamp, namespace: String, data: Vec<u8>) -> OwnedFloEvent {
         OwnedFloEvent {
             id: id,
             timestamp: timestamp,
@@ -178,7 +182,7 @@ impl FloEvent for OwnedFloEvent {
     fn parent_id(&self) -> Option<FloEventId> {
         self.parent_id
     }
-    fn timestamp(&self) -> SystemTime {
+    fn timestamp(&self) -> Timestamp {
         self.timestamp
     }
 }

@@ -1,9 +1,8 @@
 use nom::{be_u64, be_u32, be_u16, be_i64, IResult};
-use flo_event::{FloEventId, ActorId, EventCounter, OwnedFloEvent};
+use flo_event::{FloEventId, ActorId, EventCounter, OwnedFloEvent, Timestamp};
 use byteorder::{ByteOrder, BigEndian};
 use serializer::Serializer;
 
-use std::time::SystemTime;
 use std::io::{self, Read};
 use std::collections::HashMap;
 
@@ -89,7 +88,7 @@ named!{pub parse_producer_event<ProtocolMessage>,
     )
 }
 
-named!{parse_timestamp<SystemTime>,
+named!{parse_timestamp<Timestamp>,
     map!(be_u64, ::time::from_millis_since_epoch)
 }
 
@@ -288,7 +287,7 @@ pub struct ReceiveEventHeader {
     pub id: FloEventId,
     pub parent_id: Option<FloEventId>,
     pub namespace: String,
-    pub timestamp: ::std::time::SystemTime,
+    pub timestamp: Timestamp,
     pub data_length: u32,
 }
 
