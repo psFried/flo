@@ -1,11 +1,8 @@
-use flo_event::{FloEventId, FloEvent, OwnedFloEvent};
+use flo_event::{FloEvent, OwnedFloEvent};
 use std::io::{self, Read};
-use time;
 
 use protocol::ProtocolMessage;
 use std::sync::Arc;
-use nom::{be_u16, be_u32, be_u64};
-use byteorder::{ByteOrder, BigEndian};
 
 #[derive(Debug, PartialEq)]
 pub enum ServerMessage {
@@ -120,18 +117,16 @@ impl Read for ServerProtocolImpl {
 mod test {
     use super::*;
     use nom::IResult;
-    use std::time::SystemTime;
     use std::io::Read;
     use flo_event::{FloEventId, OwnedFloEvent};
     use std::sync::Arc;
-    use time;
     use byteorder::{ByteOrder, BigEndian};
     use protocol::{ProtocolMessage, ClientProtocol, ClientProtocolImpl, ErrorMessage, ErrorKind, EventAck};
 
-    static client_protocol: ClientProtocolImpl = ClientProtocolImpl;
+    static CLIENT_PROTOCOL: ClientProtocolImpl = ClientProtocolImpl;
 
     fn read_server_message(buf: &[u8]) -> IResult<&[u8], ProtocolMessage> {
-        client_protocol.parse_any(buf)
+        CLIENT_PROTOCOL.parse_any(buf)
     }
 
     fn assert_message_serializes_and_deserializes(message: ProtocolMessage) {

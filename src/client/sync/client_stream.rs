@@ -1,12 +1,10 @@
 use std::io::{self, Write, Read};
 use std::time::Duration;
-use std::net::{TcpStream, SocketAddr, ToSocketAddrs};
+use std::net::{TcpStream, ToSocketAddrs};
 
 use nom::IResult;
 
-use protocol::{ProtocolMessage, ServerMessage, ProduceEventHeader, ClientProtocol, ClientProtocolImpl};
-use flo_event::{FloEventId, FloEvent, OwnedFloEvent};
-use client::{ClientError};
+use protocol::{ProtocolMessage, ClientProtocol, ClientProtocolImpl};
 
 
 const BUFFER_LENGTH: usize = 8 * 1024;
@@ -15,6 +13,22 @@ struct Buffer {
     bytes: Vec<u8>,
     pos: usize,
     len: usize,
+}
+
+fn read<R: Read>(buffer: &mut [u8], reader: &mut R) -> io::Result<usize> {
+    loop {
+        match reader.read(buffer) {
+            Ok(n) => {
+                return Ok(n);
+            }
+            Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {
+                trace!("Interrupted reading from socket, trying again");
+            },
+            Err(io_err) => {
+                return Err(io_err);
+            }
+        }
+    }
 }
 
 impl Buffer {
@@ -30,22 +44,7 @@ impl Buffer {
         if self.pos >= self.len {
             let nread = {
                 let mut buf = &mut self.bytes[..];
-                let mut nread = 0;
-                loop {
-                    match reader.read(buf) {
-                        Ok(n) => {
-                            nread = n;
-                            break;
-                        }
-                        Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {
-                            trace!("Interrupted reading from socket, trying again");
-                        },
-                        Err(io_err) => {
-                            return Err(io_err);
-                        }
-                    }
-                }
-                nread
+                read(buf, reader)?
             };
             trace!("read {} bytes", nread);
             self.len = nread;

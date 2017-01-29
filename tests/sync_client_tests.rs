@@ -13,7 +13,7 @@ mod test_utils;
 
 use test_utils::*;
 use flo::client::sync::{SyncConnection, FloConsumer, ConsumerContext, ConsumerAction};
-use flo::protocol::{ErrorMessage, ErrorKind};
+use flo::protocol::ErrorKind;
 use flo::client::{ConsumerOptions, ClientError};
 use flo_event::{FloEventId, OwnedFloEvent};
 use std::thread;

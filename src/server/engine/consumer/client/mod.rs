@@ -2,13 +2,12 @@ mod namespace;
 
 pub use self::namespace::NamespaceGlob;
 
-use flo_event::{FloEvent, FloEventId, OwnedFloEvent};
+use flo_event::{FloEvent, FloEventId};
 use server::engine::api::{ConnectionId, ClientConnect};
 use protocol::ServerMessage;
 
 use futures::sync::mpsc::UnboundedSender;
 
-use std::sync::Arc;
 use std::net::SocketAddr;
 
 
@@ -16,12 +15,6 @@ static SEND_ERROR_DESC: &'static str = "Failed to send message through Client Ch
 
 #[derive(Debug, PartialEq)]
 pub struct ClientSendError(pub ServerMessage);
-
-impl ClientSendError {
-    fn into_message(self) -> ServerMessage {
-        self.0
-    }
-}
 
 impl ::std::error::Error for ClientSendError {
     fn description(&self) -> &str {
@@ -65,11 +58,6 @@ impl ConsumingState {
             consume_type: ConsumeType::Memory,
             remaining: limit,
         }
-    }
-
-    pub fn event_sent(&mut self, id: FloEventId) {
-        self.last_event_id = id;
-        self.remaining -= 1;
     }
 }
 
@@ -124,10 +112,6 @@ impl Client {
         self.connection_id
     }
 
-    pub fn addr(&self) -> &SocketAddr {
-        &self.addr
-    }
-
     pub fn event_namespace_matches(&self, event_namespace: &str) -> bool {
         if let ClientState::Consuming(ref state) = self.consumer_state {
             state.namespace.matches(event_namespace)
@@ -138,11 +122,6 @@ impl Client {
 
     pub fn start_consuming(&mut self, state: ConsumingState) {
         self.consumer_state = ClientState::Consuming(state);
-    }
-
-    pub fn stop_consuming(&mut self) {
-        let event_id = self.get_current_position();
-        self.consumer_state = ClientState::NotConsuming(event_id);
     }
 
     pub fn send(&mut self, message: ServerMessage) -> Result<(), ClientSendError> {

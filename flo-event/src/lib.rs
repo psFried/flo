@@ -4,7 +4,7 @@ use std::cmp::{Ord, PartialOrd, Ordering};
 use std::collections::HashMap;
 use std::fmt::Debug;
 
-use chrono::{DateTime, TimeZone, UTC};
+use chrono::{DateTime, UTC};
 
 pub type Timestamp = DateTime<UTC>;
 

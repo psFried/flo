@@ -1,8 +1,6 @@
 use server::engine::api::{ConnectionId, ClientConnect};
-use flo_event::{OwnedFloEvent};
 use protocol::ServerMessage;
 
-use std::sync::Arc;
 use std::collections::HashMap;
 
 pub struct ClientMap(HashMap<ConnectionId, ClientConnect>);

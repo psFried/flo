@@ -7,7 +7,7 @@ use protocol::{ServerMessage, ProtocolMessage, EventAck};
 use server::metrics::ProducerMetrics;
 
 use std::sync::mpsc::Sender;
-use std::time::{Instant, SystemTime};
+use std::time::Instant;
 
 pub struct ProducerManager<S: EventWriter> {
     actor_id: ActorId,
@@ -62,7 +62,7 @@ impl <S: EventWriter> ProducerManager<S> {
             id: event_id,
             timestamp: ::time::now(),
             namespace: namespace,
-            parent_id: event.parent_id,
+            parent_id: parent_id,
             data: event_data,
         };
 

@@ -298,11 +298,10 @@ mod test {
     use std::io::{self, Read, Cursor};
 
     use flo_event::FloEventId;
-    use server::engine::api::{ClientMessage, ConsumerMessage, ProducerMessage, ClientAuth, ProduceEvent};
+    use server::engine::api::{ClientMessage, ConsumerMessage, ProducerMessage, ClientAuth};
     use protocol::{ClientProtocol, ClientProtocolImpl, ProtocolMessage, ProduceEventHeader};
-    use nom::{IResult, Needed, ErrorKind, Err};
+    use nom::{IResult, Needed, ErrorKind};
 
-    use env_logger;
     #[test]
     fn multiple_events_are_read_in_sequence() {
         let reader = {

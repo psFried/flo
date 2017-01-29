@@ -1,6 +1,6 @@
 
 use flo_event::FloEventId;
-use std::time::{Instant, SystemTime, Duration};
+use std::time::Duration;
 
 
 
@@ -35,8 +35,6 @@ impl ProducerMetrics {
         }
     }
 }
-
-use std::fmt;
 
 const NANOS_IN_MILLISECOND: f64 = 1_000_000f64;
 

@@ -11,7 +11,6 @@ use tokio_core::net::{TcpStream, TcpListener};
 use tokio_core::io as nio;
 use tokio_core::io::Io;
 
-use flo_event::OwnedFloEvent;
 use self::channel_sender::ChannelSender;
 use protocol::{ClientProtocolImpl, ServerProtocolImpl};
 use server::engine::api::{self, ClientMessage, ProducerMessage, ConsumerMessage, ClientConnect};
@@ -21,7 +20,6 @@ use server::engine::BackendChannels;
 
 use std::path::PathBuf;
 use std::net::{SocketAddr, Ipv4Addr, SocketAddrV4};
-use std::sync::Arc;
 
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub enum MemoryUnit {

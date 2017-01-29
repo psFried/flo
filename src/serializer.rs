@@ -151,7 +151,7 @@ mod test {
     #[test]
     fn multiple_values_are_written_in_sequence() {
         let mut buffer = [0; 64];
-        let mut subject = Serializer::new(&mut buffer[..]);
+        let subject = Serializer::new(&mut buffer[..]);
         let result = subject.write_u16(987).write_u64(23).newline_term_string("bacon").finish();
         assert_eq!(16, result);
     }

@@ -1,6 +1,3 @@
-use std::cmp::max;
-
-
 use flo_event::FloEventId;
 
 use std::collections::{BTreeMap, Bound};

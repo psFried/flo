@@ -1,16 +1,11 @@
 mod client_stream;
 
-use std::io::{self, Write, Read};
-use std::time::Duration;
-use std::net::{TcpStream, SocketAddr, ToSocketAddrs};
-
-use nom::IResult;
+use std::io;
+use std::net::{TcpStream, ToSocketAddrs};
 
 use protocol::{ProtocolMessage, ProduceEventHeader, ReceiveEventHeader, ConsumerStart};
-use flo_event::{FloEventId, FloEvent, OwnedFloEvent};
+use flo_event::{FloEventId, OwnedFloEvent};
 use super::{ClientError, ConsumerOptions};
-use std::sync::Mutex;
-use std::cell::RefCell;
 use std::collections::VecDeque;
 
 pub use self::client_stream::{SyncStream, ClientStream, IoStream};

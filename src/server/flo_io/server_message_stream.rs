@@ -1,4 +1,3 @@
-use flo_event::{OwnedFloEvent};
 use server::engine::api::{ConnectionId};
 use protocol::{ServerProtocol, ServerMessage};
 
@@ -6,7 +5,6 @@ use futures::stream::Stream;
 use futures::Async;
 use futures::sync::mpsc::UnboundedReceiver;
 
-use std::sync::Arc;
 use std::io::{self, Read};
 
 pub struct ServerMessageStream<P: ServerProtocol> {

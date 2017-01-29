@@ -22,7 +22,6 @@ extern crate env_logger;
 
 mod logging;
 
-use log::LogLevel;
 use logging::{init_logging, LogLevelOption, LogFileOption};
 use clap::{App, Arg, ArgMatches};
 use std::str::FromStr;
@@ -96,7 +95,7 @@ fn main() {
         max_events: max_events,
         port: port,
         data_dir: data_dir,
-        max_cached_events: ::std::usize::MAX,
+        max_cached_events: max_cached_events,
         max_cache_memory: max_cache_memory
     };
     server::run(server_options);
@@ -125,7 +124,7 @@ fn get_max_cache_mem_amount(args: &ArgMatches) -> MemoryLimit {
 fn parse_arg_or_exit<T: FromStr + Default>(args: &ArgMatches, arg_name: &str, default: T) -> T {
     args.value_of(arg_name)
         .map(|value| {
-            value.parse::<T>().map_err(|err| {
+            value.parse::<T>().map_err(|_err| {
                 format!("argument {} invalid value: {}", arg_name, value)
             }).or_bail()
         })

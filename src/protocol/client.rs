@@ -1,6 +1,5 @@
 use nom::{be_u64, be_u32, be_u16, be_i64, IResult};
-use flo_event::{FloEventId, ActorId, EventCounter, OwnedFloEvent, Timestamp};
-use byteorder::{ByteOrder, BigEndian};
+use flo_event::{FloEventId, ActorId, EventCounter, Timestamp};
 use serializer::Serializer;
 
 use std::io::{self, Read};
@@ -323,18 +322,6 @@ pub enum ProtocolMessage {
     Error(ErrorMessage),
 }
 
-
-fn set_header(buf: &mut [u8], header: &'static str) {
-    (&mut buf[..8]).copy_from_slice(header.as_bytes());
-}
-
-fn string_to_buffer(mut buf: &mut [u8], string: &String) -> Result<usize, io::Error> {
-    let str_len = string.len();
-    (&mut buf[..str_len]).copy_from_slice(string.as_bytes());
-    buf[str_len] = b'\n';
-    Ok(str_len + 1)
-}
-
 fn serialize_produce_header(header: &ProduceEventHeader, mut buf: &mut [u8]) -> usize {
 
     let (counter, actor) = header.parent_id.map(|id| {
@@ -351,10 +338,6 @@ fn serialize_produce_header(header: &ProduceEventHeader, mut buf: &mut [u8]) -> 
 }
 
 fn serialize_receive_event_header(header: &ReceiveEventHeader, buf: &mut [u8]) -> usize {
-    let (counter, actor) = header.parent_id.map(|id| {
-        (id.event_counter, id.actor)
-    }).unwrap_or((0, 0));
-
     Serializer::new(buf).write_bytes(RECEIVE_EVENT)
             .write_u64(header.id.event_counter)
             .write_u16(header.id.actor)

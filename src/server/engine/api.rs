@@ -3,12 +3,10 @@ use flo_event::{FloEventId, ActorId, EventCounter, OwnedFloEvent};
 
 use futures::sync::mpsc::UnboundedSender;
 
-use std::time::{Instant, SystemTime};
+use std::time::Instant;
 use std::sync::atomic;
-use std::sync::Arc;
 use std::fmt::{self, Debug};
 use std::collections::HashMap;
-use std::net::SocketAddr;
 
 pub type ConnectionId = usize;
 

@@ -94,7 +94,6 @@ mod test {
     use event_store::index::EventIndex;
     use flo_event::{FloEventId, OwnedFloEvent, Timestamp};
     use std::io::Cursor;
-    use std::time::SystemTime;
 
     use tempdir::TempDir;
 
@@ -152,11 +151,20 @@ mod test {
 
     #[test]
     fn event_header_is_read() {
-        let event = OwnedFloEvent::new(FloEventId::new(9, 44), None, event_time(), "/foo/bar".to_owned(), "something happened".as_bytes().to_owned());
+        let event_id = FloEventId::new(9, 44);
+        let parent_id = Some(FloEventId::new(1, 2));
+        let timestamp = event_time();
+        let namespace = "/foo/bar";
+
+        let event = OwnedFloEvent::new(event_id, parent_id, event_time(), namespace.to_owned(), "something happened".as_bytes().to_owned());
         let mut buffer = Vec::new();
         super::writer::write_event(&mut buffer, &event).expect("Failed to write event");
 
         let header = super::reader::read_header(&mut Cursor::new(buffer)).expect("Failed to read header");
+        assert_eq!(event_id, header.event_id());
+        assert_eq!(parent_id, header.parent_id());
+        assert_eq!(timestamp, header.timestamp());
+        assert_eq!(namespace.len() as u32, header.namespace_length)
     }
 
     #[test]

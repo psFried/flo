@@ -59,14 +59,6 @@ impl Cache {
         event_rc
     }
 
-    pub fn min(&self) -> FloEventId {
-        self.least_event_id
-    }
-
-    pub fn max(&self) -> FloEventId {
-        self.greatest_event_id
-    }
-
     pub fn last_evicted_id(&self) -> FloEventId {
         self.last_evicted_id
     }
@@ -81,6 +73,7 @@ impl Cache {
     }
 }
 
+/// This is used to determine the amount of memory will use in the cache. It doesn't have to be perfect
 fn size_of(event: &OwnedFloEvent) -> usize {
     ::std::mem::size_of::<OwnedFloEvent>() +
             ::std::mem::size_of::<Arc<OwnedFloEvent>>() +

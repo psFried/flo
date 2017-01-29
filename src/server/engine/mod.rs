@@ -38,7 +38,6 @@ pub fn run(options: ServerOptions) -> BackendChannels {
     let highest_event_id = event_reader.get_highest_event_id();
 
 
-    //TODO: write this whole fucking thing
     let consumer_manager_sender = consumer_tx.clone();
     thread::Builder::new().name("Producer-Manager-thread".to_owned()).spawn(move || {
         let mut producer_manager = ProducerManager::new(event_writer, consumer_manager_sender, actor_id, highest_event_id.event_counter);
@@ -60,7 +59,7 @@ pub fn run(options: ServerOptions) -> BackendChannels {
                 }
             }
         }
-    });
+    }).expect("Failed to start Consumer Manager thread");
 
     let consumer_manager_sender = consumer_tx.clone();
     thread::Builder::new().name("Consumer-Manager-thread".to_owned()).spawn(move || {
@@ -84,7 +83,7 @@ pub fn run(options: ServerOptions) -> BackendChannels {
                 }
             }
         }
-    });
+    }).expect("Failed to start producer manager thread");
 
     BackendChannels {
         producer_manager: producer_tx,

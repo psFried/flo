@@ -2,11 +2,8 @@ mod index;
 pub mod test_util;
 pub mod fs;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::io;
-
-const EVENTS_FILE_NAME: &'static str = "events.json";
-const MAX_CACHED_EVENTS: usize = 150;
 
 use flo_event::{FloEvent, OwnedFloEvent, FloEventId};
 

@@ -44,7 +44,7 @@ impl <R: EventReader + 'static> ConsumerManager<R> {
             ConsumerMessage::StartConsuming(connection_id, namespace, limit) => {
                 self.start_consuming(connection_id, namespace, limit)
             }
-            ConsumerMessage::ContinueConsuming(connection_id, _event_id, limit) => {
+            ConsumerMessage::ContinueConsuming(_connection_id, _event_id, _limit) => {
                 unimplemented!()
             }
             ConsumerMessage::EventLoaded(connection_id, event) => {
@@ -180,14 +180,6 @@ impl ConsumerMap {
     pub fn get_mut(&mut self, connection_id: ConnectionId) -> Result<&mut Client, String> {
         self.0.get_mut(&connection_id).ok_or_else(|| {
             format!("No Client exists for connection id: {}", connection_id)
-        })
-    }
-
-    pub fn get_consumer_position(&self, connection_id: ConnectionId) -> Result<FloEventId, String> {
-        self.0.get(&connection_id).ok_or_else(|| {
-            format!("Consumer: {} does not exist", connection_id)
-        }).map(|consumer| {
-            consumer.get_current_position()
         })
     }
 
