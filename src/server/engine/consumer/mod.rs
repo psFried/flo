@@ -85,7 +85,8 @@ impl <R: EventReader + 'static> ConsumerManager<R> {
 
             match NamespaceGlob::new(&namespace) {
                 Ok(namespace_glob) => {
-                    debug!("Client: {} starting to consume starting at: {:?}", connection_id, start_id);
+                    let last_cache_evicted = cache.last_evicted_id();
+                    debug!("Client: {} starting to consume starting at: {:?}, cache last evicted id: {:?}", connection_id, start_id, last_cache_evicted);
                     if start_id < cache.last_evicted_id() {
 
                         consume_from_file(my_sender.clone(), client, event_reader, start_id, namespace_glob, limit);

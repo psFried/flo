@@ -48,7 +48,7 @@ impl Cache {
 
         let event_size = size_of(&event);
 
-        while (self.entries.len() + 1 >= self.max_entries) || (self.current_memory + event_size > self.max_memory) {
+        while (self.entries.len() >= self.max_entries) || (self.current_memory + event_size > self.max_memory) {
             self.remove_oldest_entry();
         }
 
@@ -67,6 +67,7 @@ impl Cache {
         self.entries.keys().take(1).cloned().next().map(|id| {
             self.entries.remove(&id).map(|event| {
                 self.current_memory -= size_of(&*event);
+                self.last_evicted_id = event.id;
                 trace!("Cache evicted event: {:?}", id);
             });
         });

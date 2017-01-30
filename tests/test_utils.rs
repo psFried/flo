@@ -26,6 +26,22 @@ pub fn init_logger() {
     });
 }
 
+#[derive(PartialEq, Debug)]
+pub enum ServerProcessType {
+    Detached,
+    Child
+}
+
+pub fn get_server_port() -> (ServerProcessType, u16) {
+    ::std::env::var("FLO_TEST_PORT").ok().map(|value| {
+        (ServerProcessType::Detached, value.parse::<u16>().unwrap())
+    }).unwrap_or_else(|| {
+        unsafe {
+            (ServerProcessType::Child, 3001u16 + PORT.fetch_add(1, Ordering::Relaxed) as u16)
+        }
+    })
+}
+
 #[macro_export]
 macro_rules! integration_test {
     ($d:ident, $p:ident, $s:ident, $t:block) => (
@@ -33,18 +49,10 @@ macro_rules! integration_test {
         #[allow(unused_variables, unused_mut)]
         fn $d() {
             init_logger();
-            let port_var = ::std::env::var("FLO_TEST_PORT").ok().map(|value| {
-                value.parse::<u16>().unwrap()
-            });
-
-            let port = port_var.unwrap_or_else(|| {
-                unsafe {
-                    3001u16 + PORT.fetch_add(1, Ordering::Relaxed) as u16
-                }
-            });
+            let (process_type, port) = get_server_port();
 
             let mut flo_proc: Option<FloServerProcess> = None;
-            if port_var.is_none() {
+            if ServerProcessType::Child == process_type {
                 // if env variable is not defined, then we need to start the server process ourselves
                 let data_dir = tempdir::TempDir::new("flo-integration-test").unwrap();
                 flo_proc = Some(FloServerProcess::new(port, data_dir));
@@ -73,14 +81,20 @@ pub struct FloServerProcess {
     child_proc: Option<Child>,
     port: u16,
     data_dir: TempDir,
+    args: Vec<String>,
 }
 
 impl FloServerProcess {
     pub fn new(port: u16, data_dir: TempDir) -> FloServerProcess {
+        FloServerProcess::with_args(port, data_dir, Vec::new())
+    }
+
+    pub fn with_args(port: u16, data_dir: TempDir, args: Vec<String>) -> FloServerProcess {
         let mut server_proc = FloServerProcess {
             child_proc: None,
             port: port,
-            data_dir: data_dir
+            data_dir: data_dir,
+            args: args,
         };
         server_proc.start();
         server_proc
@@ -102,6 +116,7 @@ impl FloServerProcess {
                 .arg(format!("{}", self.port))
                 .arg("--data-dir")
                 .arg(self.data_dir.path().to_str().unwrap())
+                .args(&self.args)
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .spawn().unwrap();

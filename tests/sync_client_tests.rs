@@ -18,7 +18,6 @@ use flo::client::{ConsumerOptions, ClientError};
 use flo_event::{FloEventId, OwnedFloEvent};
 use std::thread;
 use std::time::Duration;
-use std::sync::atomic::{Ordering};
 use std::net::{TcpStream, SocketAddr, SocketAddrV4, Ipv4Addr};
 
 
@@ -59,6 +58,43 @@ impl FloConsumer for TestConsumer {
             }
         }
     }
+}
+
+#[test]
+fn consumer_transitions_from_reading_events_from_disk_to_reading_from_memory() {
+    use test_utils::{FloServerProcess, init_logger, get_server_port, ServerProcessType};
+    use tempdir::TempDir;
+
+    init_logger();
+    let mut server_process = None;
+    let (proc_type, port) = get_server_port();
+    if proc_type == ServerProcessType::Child {
+        let tempdir = TempDir::new("flo-integraion-test-transitions").unwrap();
+        let args = vec!["--max-cached-events".to_owned(), "5".to_owned()];
+        server_process = Some(FloServerProcess::with_args(port, tempdir, args));
+    }
+
+    let mut client = SyncConnection::connect(localhost(port)).expect("failed to connect");
+    for i in 0..10 {
+        client.produce("/the/namespace", format!("event data: {}", i)).expect("Failed to produce event");
+    }
+
+    let mut consumer = TestConsumer::new("consumer_transitions_from_reading_events_from_disk_to_reading_from_memory");
+    let options = ConsumerOptions {
+        namespace: "/the/namespace".to_owned(),
+        start_position: None,
+        max_events: 10,
+        username: String::new(),
+        password: String::new(),
+    };
+    client.run_consumer(options, &mut consumer).expect("running consumer failed");
+
+    assert_eq!(10, consumer.events.len());
+
+    server_process.map(|mut process| {
+        // explicitly kill the server here to ensure that it stays in scope since it's automatically killed on Drop
+        process.kill();
+    });
 }
 
 integration_test!{consumer_responds_to_event, port, _tcp_stream, {
