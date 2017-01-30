@@ -27,6 +27,7 @@ use clap::{App, Arg, ArgMatches};
 use std::str::FromStr;
 use std::path::{PathBuf, Path};
 use flo::server::{self, ServerOptions, MemoryLimit, MemoryUnit};
+use std::net::{SocketAddr, ToSocketAddrs};
 
 const FLO_VERSION: &'static str = env!("CARGO_PKG_VERSION");
 
@@ -75,6 +76,12 @@ fn app_args() -> App<'static, 'static> {
                     .value_name("megabytes")
                     .default_value("512")
                     .help("Maximum amount of memory in megabytes to use for the event cache"))
+            .arg(Arg::with_name("join-cluster-address")
+                    .long("cluster-addr")
+                    .short("c")
+                    .multiple(true)
+                    .value_name("host:port")
+                    .help("address of another Flo instance to join a cluster; this argument may be supplied multiple times"))
 }
 
 fn main() {
@@ -90,16 +97,32 @@ fn main() {
     let default_ns = args.value_of("default-namespace").map(|value| value.to_owned()).expect("Must have a value for 'default-namespace' argument");
     let max_cached_events = parse_arg_or_exit(&args, "max-cached-events", ::std::usize::MAX);
     let max_cache_memory = get_max_cache_mem_amount(&args);
+    let cluster_addresses = get_cluster_addresses(&args);
+
     let server_options = ServerOptions {
         default_namespace: default_ns,
         max_events: max_events,
         port: port,
         data_dir: data_dir,
         max_cached_events: max_cached_events,
-        max_cache_memory: max_cache_memory
+        max_cache_memory: max_cache_memory,
+        cluster_addresses: cluster_addresses,
     };
     server::run(server_options);
     info!("Shutdown server");
+}
+
+fn get_cluster_addresses(args: &ArgMatches) -> Option<Vec<SocketAddr>> {
+    args.values_of("join-cluster-address").map(|values| {
+        values.flat_map(|address_arg| {
+            address_arg.to_socket_addrs()
+                    .map_err(|err| {
+                        format!("Unable to resolve address: '{}', error: {}", address_arg, err)
+                    })
+                    .or_bail()
+                    .next()
+        }).collect()
+    })
 }
 
 fn get_log_file_option(args: &ArgMatches) -> LogFileOption {
@@ -140,8 +163,9 @@ impl <T> ParseArg<T> for Result<T, String> {
         match self {
             Ok(value) => value,
             Err(err) => {
+                println!("Error: {}", err);
                 app_args().print_help().expect("failed to print help message");
-                panic!("{}", err);
+                ::std::process::exit(1);
             }
         }
     }

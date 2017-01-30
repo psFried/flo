@@ -61,6 +61,7 @@ pub struct ServerOptions {
     pub max_events: usize,
     pub max_cached_events: usize,
     pub max_cache_memory: MemoryLimit,
+    pub cluster_addresses: Option<Vec<SocketAddr>>,
 }
 
 pub fn run(options: ServerOptions) {
