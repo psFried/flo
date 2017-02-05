@@ -15,9 +15,9 @@ Since we want to use the one from the log crate, that has to go last.
 #[macro_use]
 extern crate log;
 
-extern crate lru_time_cache;
 extern crate byteorder;
 extern crate chrono;
+extern crate num_cpus;
 
 #[macro_use]
 extern crate tokio_core;
@@ -35,3 +35,4 @@ pub mod protocol;
 pub mod server;
 pub mod time;
 pub mod serializer;
+pub mod error;

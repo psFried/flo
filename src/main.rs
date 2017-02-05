@@ -19,6 +19,7 @@ extern crate log4rs;
 
 #[cfg(test)]
 extern crate env_logger;
+extern crate num_cpus;
 
 mod logging;
 
