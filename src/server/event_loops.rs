@@ -75,6 +75,7 @@ pub fn spawn_event_loop_threads(num_threads: u8) -> Result<(EventLoopsJoinHandle
     Ok((EventLoopsJoinHandle(thread_handles), LoopHandles::new(remotes)))
 }
 
+#[derive(Clone)]
 pub struct LoopHandles {
     handles: Vec<Remote>,
     current: usize,

@@ -7,6 +7,7 @@ use std::time::Instant;
 use std::sync::atomic;
 use std::fmt::{self, Debug};
 use std::collections::HashMap;
+use std::net::SocketAddr;
 
 pub type ConnectionId = usize;
 
@@ -62,6 +63,7 @@ pub enum ProducerMessage {
     Produce(ProduceEvent),
     Disconnect(ConnectionId),
     StateDelta(StateDeltaHeader),
+    PeerConnectFailed(SocketAddr),
 }
 unsafe impl Send for ProducerMessage {}
 
@@ -76,7 +78,7 @@ unsafe impl Send for ClientMessage {}
 #[derive(Clone)]
 pub struct ClientConnect {
     pub connection_id: ConnectionId,
-    pub client_addr: ::std::net::SocketAddr,
+    pub client_addr: SocketAddr,
     pub message_sender: UnboundedSender<ServerMessage>,
 }
 unsafe impl Send for ClientConnect {}

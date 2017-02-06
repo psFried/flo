@@ -1,5 +1,6 @@
 mod client_message_stream;
 mod server_message_stream;
+mod cluster_io;
 
 use std::net::SocketAddr;
 
@@ -7,7 +8,7 @@ pub use self::client_message_stream::ClientMessageStream;
 pub use self::server_message_stream::ServerMessageStream;
 use server::channel_sender::ChannelSender;
 use protocol::{ClientProtocolImpl, ServerProtocolImpl, ServerMessage};
-use server::engine::api::{self, ProducerMessage, ConsumerMessage, ConnectionId, ClientMessage, ClientConnect};
+use server::engine::api::{ProducerMessage, ConsumerMessage, ConnectionId, ClientMessage, ClientConnect};
 
 use tokio_core::reactor::Remote;
 use tokio_core::net::TcpStream;
@@ -16,10 +17,11 @@ use tokio_core::io as nio;
 use futures::sync::mpsc::{unbounded, UnboundedSender, UnboundedReceiver};
 use futures::{Future, Stream};
 
-pub fn setup_message_streams(tcp_stream: TcpStream, client_addr: SocketAddr, mut engine: ChannelSender, remote_handle: &Remote) {
+pub use self::cluster_io::start_cluster_io;
+
+pub fn setup_message_streams(connection_id: ConnectionId, tcp_stream: TcpStream, client_addr: SocketAddr, mut engine: ChannelSender, remote_handle: &Remote) {
 
     remote_handle.spawn(move |_handle| {
-        let connection_id = api::next_connection_id();
         debug!("Established new connection to: {:?} as connection_id: {}", client_addr, connection_id);
         let (server_tx, server_rx): (UnboundedSender<ServerMessage>, UnboundedReceiver<ServerMessage>) = unbounded();
         let (tcp_reader, tcp_writer) = tcp_stream.split();
@@ -29,16 +31,10 @@ pub fn setup_message_streams(tcp_stream: TcpStream, client_addr: SocketAddr, mut
         let client_stream = ClientMessageStream::new(connection_id, tcp_reader, ClientProtocolImpl);
         let client_to_server = client_stream.map_err(|err| {
             format!("Error parsing client stream: {:?}", err)
-        }).and_then(move |client_message| {
-            let log = format!("Sent message: {:?}", client_message);
+        }).for_each(move |client_message| {
             engine.send(client_message).map_err(|err| {
                 format!("Error sending message: {:?}", err)
-            }).map(|()| {
-                log
             })
-        }).for_each(|inner_thing| {
-            info!("for each inner thingy: {:?}", inner_thing);
-            Ok(())
         }).or_else(|err| {
             warn!("Recovering from error: {:?}", err);
             Ok(())

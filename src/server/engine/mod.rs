@@ -12,6 +12,9 @@ use event_store::{StorageEngine, EventReader, StorageEngineOptions};
 use event_store::fs::{FSStorageEngine};
 use flo_event::ActorId;
 
+use futures::sync::mpsc::UnboundedSender;
+
+use std::net::SocketAddr;
 use std::sync::mpsc;
 use std::thread;
 
@@ -20,7 +23,8 @@ pub struct BackendChannels {
     pub consumer_manager: mpsc::Sender<ConsumerMessage>,
 }
 
-pub fn run(options: ServerOptions) -> BackendChannels {
+//TODO: use the cluster sender to setup peer connections
+pub fn run(options: ServerOptions, _cluster_sender: UnboundedSender<SocketAddr>) -> BackendChannels {
     let (producer_tx, producer_rx) = mpsc::channel::<ProducerMessage>();
     let (consumer_tx, consumer_rx) = mpsc::channel::<ConsumerMessage>();
 
