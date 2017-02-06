@@ -1,6 +1,5 @@
 use tokio_core::reactor::{Core, Remote};
 use std::thread::{self, JoinHandle};
-use error::Critical;
 
 use std::sync::mpsc::sync_channel;
 use std::time::Duration;
@@ -27,13 +26,11 @@ fn spawn_event_loop_thread(thread_num: u8) -> Result<(JoinHandle<()>, Remote), S
                 loop {
                     reactor.turn(None);
                 }
-                error!("End of IO event loop thread");
-
             }).map_err(|err| format!("Error starting thread for client i/o event loop {}: {:?}", thread_num, err));
 
     thread_handle.and_then(|join_handle| {
         rx.recv_timeout(thread_startup_timeout()).map_err(|err| {
-            format!("Error starting IO event loop thread")
+            format!("Error starting IO event loop thread: {}", err)
         }).map(|remote| {
             (join_handle, remote)
         })
@@ -44,7 +41,15 @@ pub struct EventLoopsJoinHandle(Vec<JoinHandle<()>>);
 impl EventLoopsJoinHandle {
     pub fn join(self) {
         for handle in self.0 {
-            handle.join();
+            match handle.join() {
+                Ok(_) => {
+                    // Should never enter here since there's a non-terminating loop polling the Core
+                    unreachable!()
+                }
+                Err(_) => {
+                    error!("Client I/O thread died unexpectedly")
+                }
+            }
         }
     }
 }

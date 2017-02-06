@@ -7,7 +7,7 @@ mod event_loops;
 use futures::stream::Stream;
 use futures::{Future};
 use futures::sync::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
-use tokio_core::reactor::Core;
+use tokio_core::reactor::Remote;
 use tokio_core::net::{TcpStream, TcpListener};
 use tokio_core::io as nio;
 use tokio_core::io::Io;
@@ -65,6 +65,68 @@ pub struct ServerOptions {
     pub cluster_addresses: Option<Vec<SocketAddr>>,
 }
 
+pub fn setup_message_streams(tcp_stream: TcpStream, client_addr: SocketAddr, engine: ChannelSender, remote_handle: &Remote) {
+
+    remote_handle.spawn(move |_handle| {
+
+        debug!("Got new connection from: {:?}", client_addr);
+        let (server_tx, server_rx): (UnboundedSender<ServerMessage>, UnboundedReceiver<ServerMessage>) = unbounded();
+
+        let connection_id = api::next_connection_id();
+        let (tcp_reader, tcp_writer) = tcp_stream.split();
+
+        let client_connect = ClientConnect {
+            connection_id: connection_id,
+            client_addr: client_addr,
+            message_sender: server_tx.clone(),
+        };
+
+        engine.send(ClientMessage::Both(
+            ConsumerMessage::ClientConnect(client_connect.clone()),
+            ProducerMessage::ClientConnect(client_connect)
+        )).unwrap(); //TODO: something better than unwrapping this result
+
+
+        let client_stream = ClientMessageStream::new(connection_id, tcp_reader, ClientProtocolImpl);
+        let client_to_server = client_stream.map_err(|err| {
+            format!("Error parsing client stream: {:?}", err)
+        }).and_then(move |client_message| {
+            let log = format!("Sent message: {:?}", client_message);
+            engine.send(client_message).map_err(|err| {
+                format!("Error sending message: {:?}", err)
+            }).map(|()| {
+                log
+            })
+        }).for_each(|inner_thing| {
+            info!("for each inner thingy: {:?}", inner_thing);
+            Ok(())
+        }).or_else(|err| {
+            warn!("Recovering from error: {:?}", err);
+            Ok(())
+        });
+
+        let server_to_client = nio::copy(ServerMessageStream::<ServerProtocolImpl>::new(connection_id, server_rx), tcp_writer).map_err(|err| {
+            error!("Error writing to client: {:?}", err);
+            format!("Error writing to client: {:?}", err)
+        }).map(move |amount| {
+            info!("Wrote: {} bytes to client: {:?}, connection_id: {}, dropping connection", amount, client_addr, connection_id);
+            ()
+        });
+
+        client_to_server.select(server_to_client).then(move |res| {
+            match res {
+                Ok((compl, _fut)) => {
+                    info!("Finished with connection: {}, value: {:?}", connection_id, compl);
+                }
+                Err((err, _)) => {
+                    warn!("Error with connection: {}, err: {:?}", connection_id, err);
+                }
+            }
+            Ok(())
+        })
+    });
+}
+
 pub fn run(options: ServerOptions) {
     let (join_handle, mut event_loop_handles) = self::event_loops::spawn_default_event_loops().unwrap();
 
@@ -87,64 +149,7 @@ pub fn run(options: ServerOptions) {
             };
 
             let remote_handle = event_loop_handles.next_handle();
-            remote_handle.spawn(move |_handle| {
-
-                debug!("Got new connection from: {:?}", client_addr);
-                let (server_tx, server_rx): (UnboundedSender<ServerMessage>, UnboundedReceiver<ServerMessage>) = unbounded();
-
-                let connection_id = api::next_connection_id();
-                let (tcp_reader, tcp_writer) = tcp_stream.split();
-
-                let client_connect = ClientConnect {
-                    connection_id: connection_id,
-                    client_addr: client_addr,
-                    message_sender: server_tx.clone(),
-                };
-
-                channel_sender.send(ClientMessage::Both(
-                    ConsumerMessage::ClientConnect(client_connect.clone()),
-                    ProducerMessage::ClientConnect(client_connect)
-                )).unwrap(); //TODO: something better than unwrapping this result
-
-
-                let client_stream = ClientMessageStream::new(connection_id, tcp_reader, ClientProtocolImpl);
-                let client_to_server = client_stream.map_err(|err| {
-                    format!("Error parsing client stream: {:?}", err)
-                }).and_then(move |client_message| {
-                    let log = format!("Sent message: {:?}", client_message);
-                    channel_sender.send(client_message).map_err(|err| {
-                        format!("Error sending message: {:?}", err)
-                    }).map(|()| {
-                        log
-                    })
-                }).for_each(|inner_thing| {
-                    info!("for each inner thingy: {:?}", inner_thing);
-                    Ok(())
-                }).or_else(|err| {
-                    warn!("Recovering from error: {:?}", err);
-                    Ok(())
-                });
-
-                let server_to_client = nio::copy(ServerMessageStream::<ServerProtocolImpl>::new(connection_id, server_rx), tcp_writer).map_err(|err| {
-                    error!("Error writing to client: {:?}", err);
-                    format!("Error writing to client: {:?}", err)
-                }).map(move |amount| {
-                    info!("Wrote: {} bytes to client: {:?}, connection_id: {}, dropping connection", amount, client_addr, connection_id);
-                    ()
-                });
-
-                client_to_server.select(server_to_client).then(move |res| {
-                    match res {
-                        Ok((compl, _fut)) => {
-                            info!("Finished with connection: {}, value: {:?}", connection_id, compl);
-                        }
-                        Err((err, _)) => {
-                            warn!("Error with connection: {}, err: {:?}", connection_id, err);
-                        }
-                    }
-                    Ok(())
-                })
-            });
+            setup_message_streams(tcp_stream, client_addr, channel_sender, &remote_handle);
             Ok(())
         })
     });

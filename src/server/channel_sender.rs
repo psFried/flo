@@ -4,6 +4,7 @@ use std::sync::mpsc::Sender;
 use server::engine::api::{ClientMessage, ConsumerMessage, ProducerMessage};
 
 
+#[derive(Clone)]
 pub struct ChannelSender {
     pub producer_manager: Sender<ProducerMessage>,
     pub consumer_manager: Sender<ConsumerMessage>,
