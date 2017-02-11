@@ -1,4 +1,4 @@
-use event_store::{StorageEngine, EventWriter, EventReader, StorageEngineOptions};
+use engine::event_store::{StorageEngine, EventWriter, EventReader, StorageEngineOptions};
 use flo_event::{FloEvent, FloEventId, OwnedFloEvent};
 
 use std::sync::{Arc, Mutex};

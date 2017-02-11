@@ -28,7 +28,7 @@ extern crate env_logger;
 extern crate tempdir;
 
 pub mod client;
-pub mod event_store;
+pub mod engine;
 pub mod protocol;
 pub mod server;
 pub mod time;

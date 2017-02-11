@@ -1,8 +1,8 @@
 mod client_map;
 
 use self::client_map::ClientMap;
-use server::engine::api::{ProduceEvent, ConsumerMessage, ProducerMessage, VersionMap};
-use event_store::EventWriter;
+use engine::api::{ProduceEvent, ConsumerMessage, ProducerMessage, VersionMap};
+use engine::event_store::EventWriter;
 use flo_event::{ActorId, OwnedFloEvent, EventCounter, FloEventId};
 use protocol::{ServerMessage, ProtocolMessage, EventAck};
 use server::metrics::ProducerMetrics;
@@ -94,10 +94,10 @@ impl <S: EventWriter> ProducerManager<S> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use server::engine::api::*;
+    use engine::api::*;
     use protocol::*;
     use flo_event::{FloEvent, OwnedFloEvent, ActorId, EventCounter};
-    use event_store::EventWriter;
+    use engine::event_store::EventWriter;
     use std::sync::mpsc::{channel, Sender, Receiver};
     use std::time::{Instant, Duration};
     use futures::sync::mpsc::{UnboundedSender, UnboundedReceiver, unbounded};

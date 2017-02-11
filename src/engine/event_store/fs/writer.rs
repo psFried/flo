@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use std::io::{self, Seek, Write, BufWriter};
 use std::fs::{File, OpenOptions, create_dir_all};
 
-use event_store::{EventWriter, StorageEngineOptions};
-use event_store::index::EventIndex;
+use engine::event_store::{EventWriter, StorageEngineOptions};
+use engine::event_store::index::EventIndex;
 
 use flo_event::FloEvent;
 
@@ -46,7 +46,7 @@ impl EventWriter for FSEventWriter {
     type Error = io::Error;
 
     fn store<E: FloEvent>(&mut self, event: &E) -> Result<(), Self::Error> {
-        use event_store::index::IndexEntry;
+        use engine::event_store::index::IndexEntry;
 
         let FSEventWriter{ref mut offset, ref mut index, ref mut event_writer, ..} = *self;
 

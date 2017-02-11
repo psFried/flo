@@ -1,4 +1,3 @@
-pub mod engine;
 pub mod metrics;
 mod flo_io;
 mod channel_sender;
@@ -14,6 +13,7 @@ use self::engine::api::next_connection_id;
 use futures::sync::mpsc::unbounded;
 use std::path::PathBuf;
 use std::net::{SocketAddr, Ipv4Addr, SocketAddrV4};
+use engine;
 
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub enum MemoryUnit {

@@ -3,7 +3,7 @@ mod namespace;
 pub use self::namespace::NamespaceGlob;
 
 use flo_event::{FloEvent, FloEventId};
-use server::engine::api::{ConnectionId, ClientConnect};
+use engine::api::{ConnectionId, ClientConnect};
 use protocol::ServerMessage;
 
 use futures::sync::mpsc::UnboundedSender;

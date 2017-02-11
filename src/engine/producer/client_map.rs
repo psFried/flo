@@ -1,4 +1,4 @@
-use server::engine::api::{ConnectionId, ClientConnect};
+use engine::api::{ConnectionId, ClientConnect};
 use protocol::ServerMessage;
 
 use std::collections::HashMap;

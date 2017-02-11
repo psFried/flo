@@ -5,8 +5,8 @@ use std::fs::{OpenOptions, File};
 
 use byteorder::{ByteOrder, BigEndian};
 
-use event_store::index::{EventIndex, IndexEntry};
-use event_store::{EventReader, StorageEngineOptions};
+use engine::event_store::index::{EventIndex, IndexEntry};
+use engine::event_store::{EventReader, StorageEngineOptions};
 use flo_event::{FloEventId, OwnedFloEvent, Timestamp};
 
 enum EventIterInner {

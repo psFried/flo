@@ -7,7 +7,7 @@ pub const FLO_EVT: &'static str = "FLO_EVT\n";
 pub use self::writer::FSEventWriter;
 pub use self::reader::{FSEventReader, FSEventIter};
 use super::{StorageEngine, StorageEngineOptions};
-use event_store::index::{EventIndex, IndexEntry};
+use engine::event_store::index::{EventIndex, IndexEntry};
 use flo_event::{FloEvent};
 
 use std::sync::{Arc, RwLock};
@@ -90,8 +90,8 @@ impl StorageEngine for FSStorageEngine {
 mod test {
     use std::sync::{Arc, RwLock};
     use super::*;
-    use event_store::{EventReader, EventWriter, StorageEngineOptions};
-    use event_store::index::EventIndex;
+    use engine::event_store::{EventReader, EventWriter, StorageEngineOptions};
+    use engine::event_store::index::EventIndex;
     use flo_event::{FloEventId, OwnedFloEvent, Timestamp};
     use std::io::Cursor;
 

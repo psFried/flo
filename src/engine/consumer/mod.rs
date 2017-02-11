@@ -4,7 +4,7 @@ mod cache;
 pub use self::client::{Client, ClientState, ClientSendError, ConsumingState};
 use self::client::NamespaceGlob;
 
-use server::engine::api::{ConnectionId, ConsumerMessage, ClientConnect};
+use engine::api::{ConnectionId, ConsumerMessage, ClientConnect};
 use protocol::{ServerMessage, ProtocolMessage, ErrorMessage, ErrorKind};
 use flo_event::{FloEvent, OwnedFloEvent, FloEventId};
 use std::sync::{Arc, mpsc};
@@ -13,7 +13,7 @@ use std::collections::HashMap;
 
 use self::cache::Cache;
 use server::MemoryLimit;
-use event_store::EventReader;
+use engine::event_store::EventReader;
 
 pub struct ConsumerManager<R: EventReader + 'static> {
     event_reader: R,

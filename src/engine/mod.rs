@@ -1,4 +1,5 @@
 pub mod api;
+pub mod event_store;
 
 mod producer;
 mod consumer;
@@ -7,8 +8,8 @@ use self::api::{ConsumerMessage, ProducerMessage};
 use self::producer::ProducerManager;
 use self::consumer::ConsumerManager;
 use server::ServerOptions;
-use event_store::{StorageEngine, EventReader, StorageEngineOptions};
-use event_store::fs::{FSStorageEngine};
+use engine::event_store::{StorageEngine, EventReader, StorageEngineOptions};
+use engine::event_store::fs::{FSStorageEngine};
 use flo_event::ActorId;
 
 use futures::sync::mpsc::UnboundedSender;
