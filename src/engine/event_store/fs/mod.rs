@@ -8,6 +8,7 @@ pub use self::writer::FSEventWriter;
 pub use self::reader::{FSEventReader, FSEventIter};
 use super::{StorageEngine, StorageEngineOptions};
 use engine::event_store::index::{EventIndex, IndexEntry};
+use engine::version_vec::VersionVector;
 use flo_event::{FloEvent};
 
 use std::sync::{Arc, RwLock};
@@ -34,29 +35,35 @@ fn events_file(storage_opts: &StorageEngineOptions) -> PathBuf {
     dir
 }
 
-fn initialize_index(storage_opts: &StorageEngineOptions) -> Result<EventIndex, io::Error> {
+fn init(storage_opts: &StorageEngineOptions) -> Result<(EventIndex, VersionVector), io::Error> {
     let events_file = events_file(storage_opts);
 
-    if events_file.exists() && events_file.is_file() {
+    if events_file.exists() {
         debug!("initializing index from file: {:?}", events_file);
         FSEventIter::initialize(0, ::std::usize::MAX, &events_file).and_then(|event_iter| {
             build_index(storage_opts.max_events, event_iter)
         })
     } else {
         debug!("No existing events at {:?}, creating new index", events_file);
-        Ok(EventIndex::new(storage_opts.max_events))
+        Ok((EventIndex::new(storage_opts.max_events), VersionVector::new()))
     }
 
 }
 
-fn build_index(max_events: usize, iter: FSEventIter) -> Result<EventIndex, io::Error> {
+fn build_index(max_events: usize, iter: FSEventIter) -> Result<(EventIndex, VersionVector), io::Error> {
     let mut index = EventIndex::new(max_events);
     let mut offset = 0;
     let mut event_count = 0;
 
+    let mut version_vec = VersionVector::new();
+
     for result in iter {
         match result {
             Ok(event) => {
+                version_vec.update(*event.id()).map_err(|str_err| {
+                    io::Error::new(io::ErrorKind::InvalidData, str_err)
+                })?; // early return if event counters are somehow out of order
+
                 index.add(IndexEntry::new(*event.id(), offset)); //don't care about possible evictions here
                 offset += total_size_on_disk(&event);
                 event_count += 1;
@@ -65,20 +72,20 @@ fn build_index(max_events: usize, iter: FSEventIter) -> Result<EventIndex, io::E
         }
     }
     debug!("Finished building index, iterated {} events and {} bytes", event_count, offset);
-    Ok(index)
+    Ok((index, version_vec))
 }
 
 impl StorageEngine for FSStorageEngine {
     type Writer = FSEventWriter;
     type Reader = FSEventReader;
 
-    fn initialize(options: StorageEngineOptions) -> Result<(Self::Writer, Self::Reader), io::Error> {
-        initialize_index(&options).and_then(|index| {
+    fn initialize(options: StorageEngineOptions) -> Result<(Self::Writer, Self::Reader, VersionVector), io::Error> {
+        init(&options).and_then(|(index, version_vector)| {
             let index = Arc::new(RwLock::new(index));
 
             FSEventWriter::initialize(index.clone(), &options).and_then(|writer| {
                 FSEventReader::initialize(index, &options).map(|reader| {
-                    (writer, reader)
+                    (writer, reader, version_vector)
                 })
             })
         })
@@ -102,7 +109,7 @@ mod test {
     }
 
     #[test]
-    fn index_is_initialized_from_preexisting_events() {
+    fn storage_engine_initialized_from_preexisting_events() {
         let storage_dir = TempDir::new("events_are_written_and_read_from_preexisting_directory").unwrap();
         let storage_opts = StorageEngineOptions {
             storage_dir: storage_dir.path().to_owned(),
@@ -111,8 +118,8 @@ mod test {
         };
 
         let event1 = OwnedFloEvent::new(FloEventId::new(1, 1), None, event_time(), "/foo/bar".to_owned(), "first event data".as_bytes().to_owned());
-        let event2 = OwnedFloEvent::new(FloEventId::new(1, 2), None, event_time(), "/nacho/cheese".to_owned(), "second event data".as_bytes().to_owned());
-        let event3 = OwnedFloEvent::new(FloEventId::new(1, 3), None, event_time(), "/smalls/yourekillinme".to_owned(), "third event data".as_bytes().to_owned());
+        let event2 = OwnedFloEvent::new(FloEventId::new(2, 2), None, event_time(), "/nacho/cheese".to_owned(), "second event data".as_bytes().to_owned());
+        let event3 = OwnedFloEvent::new(FloEventId::new(2, 3), None, event_time(), "/smalls/yourekillinme".to_owned(), "third event data".as_bytes().to_owned());
 
         {
             let index = Arc::new(RwLock::new(EventIndex::new(20)));
@@ -123,12 +130,12 @@ mod test {
             writer.store(&event3).expect("Failed to store event 3");
         }
 
-        let (mut writer, mut reader) = FSStorageEngine::initialize(storage_opts).expect("failed to initialize storage engine");
+        let (mut writer, mut reader, version_vec) = FSStorageEngine::initialize(storage_opts).expect("failed to initialize storage engine");
 
         let event4 = OwnedFloEvent::new(FloEventId::new(1, 4), None, event_time(), "/yolo".to_owned(), "fourth event data".as_bytes().to_owned());
         writer.store(&event4).unwrap();
 
-        let mut event_iter = reader.load_range(FloEventId::new(1, 2), 55);
+        let mut event_iter = reader.load_range(FloEventId::new(2, 2), 55);
         let result = event_iter.next().expect("expected result to be Some").expect("failed to read event 3");
         assert_eq!(event3, result);
 
@@ -136,6 +143,10 @@ mod test {
         assert_eq!(event4, result);
 
         assert!(event_iter.next().is_none());
+
+        // version vec still has counter of 1 from when version vec was initialized
+        assert_eq!(1, version_vec.get(1));
+        assert_eq!(3, version_vec.get(2));
     }
 
     #[test]

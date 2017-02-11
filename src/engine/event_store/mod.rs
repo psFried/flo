@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::io;
 
 use flo_event::{FloEvent, OwnedFloEvent, FloEventId};
+use engine::version_vec::VersionVector;
 
 pub struct StorageEngineOptions {
     pub storage_dir: PathBuf,
@@ -34,7 +35,7 @@ pub trait StorageEngine {
     type Writer: EventWriter;
     type Reader: EventReader;
 
-    fn initialize(options: StorageEngineOptions) -> Result<(Self::Writer, Self::Reader), io::Error>;
+    fn initialize(options: StorageEngineOptions) -> Result<(Self::Writer, Self::Reader, VersionVector), io::Error>;
 }
 
 

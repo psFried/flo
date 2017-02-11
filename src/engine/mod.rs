@@ -39,7 +39,7 @@ pub fn run(options: ServerOptions, _cluster_sender: UnboundedSender<SocketAddr>)
 
     //TODO: set max events and namespace and have some proper error handling
     let actor_id: ActorId = 1;
-    let (event_writer, mut event_reader) = FSStorageEngine::initialize(storage_options).expect("Failed to initialize storage engine");
+    let (event_writer, mut event_reader, version_vec) = FSStorageEngine::initialize(storage_options).expect("Failed to initialize storage engine");
     let highest_event_id = event_reader.get_highest_event_id();
 
 

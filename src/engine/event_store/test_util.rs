@@ -1,4 +1,5 @@
 use engine::event_store::{StorageEngine, EventWriter, EventReader, StorageEngineOptions};
+use engine::version_vec::VersionVector;
 use flo_event::{FloEvent, FloEventId, OwnedFloEvent};
 
 use std::sync::{Arc, Mutex};
@@ -83,7 +84,7 @@ impl StorageEngine for TestStorageEngine {
     type Reader = TestEventReader;
     type Writer = TestEventWriter;
 
-    fn initialize(_options: StorageEngineOptions) -> Result<(Self::Writer, Self::Reader), io::Error> {
+    fn initialize(_options: StorageEngineOptions) -> Result<(Self::Writer, Self::Reader, VersionVector), io::Error> {
         let storage = Arc::new(Mutex::new(Vec::new()));
         let writer = TestEventWriter {
             storage: storage.clone()
@@ -91,6 +92,6 @@ impl StorageEngine for TestStorageEngine {
         let reader = TestEventReader {
             storage: storage
         };
-        Ok((writer, reader))
+        Ok((writer, reader, VersionVector::new()))
     }
 }
