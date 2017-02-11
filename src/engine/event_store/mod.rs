@@ -5,7 +5,7 @@ pub mod fs;
 use std::path::PathBuf;
 use std::io;
 
-use flo_event::{FloEvent, OwnedFloEvent, FloEventId, ActorId, EventCounter};
+use flo_event::{FloEvent, OwnedFloEvent, FloEventId};
 
 pub struct StorageEngineOptions {
     pub storage_dir: PathBuf,

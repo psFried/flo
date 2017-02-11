@@ -1,5 +1,6 @@
 pub mod api;
 pub mod event_store;
+pub mod version_vec;
 
 mod producer;
 mod consumer;

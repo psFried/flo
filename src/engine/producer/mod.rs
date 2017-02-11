@@ -96,11 +96,11 @@ mod test {
     use super::*;
     use engine::api::*;
     use protocol::*;
-    use flo_event::{FloEvent, OwnedFloEvent, ActorId, EventCounter};
+    use flo_event::{FloEvent, OwnedFloEvent, ActorId};
     use engine::event_store::EventWriter;
-    use std::sync::mpsc::{channel, Sender, Receiver};
+    use std::sync::mpsc::{channel, Receiver};
     use std::time::{Instant, Duration};
-    use futures::sync::mpsc::{UnboundedSender, UnboundedReceiver, unbounded};
+    use futures::sync::mpsc::{UnboundedReceiver, unbounded};
     use futures::{Async, Stream};
 
     const SUBJECT_ACTOR_ID: ActorId = 1;
@@ -117,9 +117,9 @@ mod test {
 
     #[test]
     fn when_client_upgrades_to_peer_then_peer_announce_is_sent_to_consumer_manager() {
-        let (mut subject, mut consumer_manager) = setup();
+        let (mut subject, mut _consumer_manager) = setup();
         let client_connection_id  = 7;
-        let (client, mut client_receiver) = client_connects(client_connection_id, &mut subject);
+        let (_client, mut _client_receiver) = client_connects(client_connection_id, &mut subject);
 
         panic!("need to finish this test");
     }
@@ -207,7 +207,7 @@ mod test {
             client_addr: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(1, 2, 3, 4), 4444)),
             message_sender: tx,
         };
-        subject.process(ProducerMessage::ClientConnect(connect.clone()));
+        subject.process(ProducerMessage::ClientConnect(connect.clone())).expect("failed to process client connect");
         (connect, rx)
     }
 

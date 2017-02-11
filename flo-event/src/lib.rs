@@ -58,44 +58,6 @@ impl PartialOrd for FloEventId {
     }
 }
 
-pub trait FloEventIdMap {
-    fn new() -> Self;
-    fn get_counter(&self, actor: ActorId) -> EventCounter;
-    fn increment(&mut self, actor: ActorId, amount: u64) -> EventCounter;
-
-    fn set(&mut self, event_id: FloEventId);
-
-    fn event_is_greater(&self, event_id: FloEventId) -> bool {
-        let current = self.get_counter(event_id.actor);
-        event_id.event_counter > current
-    }
-}
-
-
-impl FloEventIdMap for HashMap<ActorId, EventCounter> {
-    fn new() -> HashMap<ActorId, EventCounter> {
-        HashMap::new()
-    }
-
-    fn get_counter(&self, actor: ActorId) -> EventCounter {
-        self.get(&actor).map(|c| *c).unwrap_or(0)
-    }
-
-    fn increment(&mut self, actor: ActorId, amount: u64) -> EventCounter {
-        let current: &mut EventCounter = self.entry(actor).or_insert(0);
-        *current += amount;
-        *current
-    }
-
-    fn set(&mut self, event_id: FloEventId) {
-        let actor = event_id.actor;
-        let counter: &mut EventCounter = self.entry(actor).or_insert(event_id.event_counter);
-        *counter = event_id.event_counter
-    }
-
-}
-
-
 pub trait FloEvent: Debug {
     fn id(&self) -> &FloEventId;
     fn timestamp(&self) -> Timestamp;
