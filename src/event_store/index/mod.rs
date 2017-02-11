@@ -60,7 +60,7 @@ impl EventIndex {
     }
 
     pub fn get_next_entry(&self, start_after: FloEventId) -> Option<&IndexEntry> {
-        self.entries.range(Bound::Excluded(&start_after), Bound::Unbounded).next().map(|(_k, v)| v)
+        self.entries.range((Bound::Excluded(&start_after), Bound::Unbounded)).next().map(|(_k, v)| v)
     }
 
     pub fn contains(&self, event_id: FloEventId) -> bool {

@@ -18,8 +18,6 @@ extern crate log;
 extern crate byteorder;
 extern crate chrono;
 extern crate num_cpus;
-
-#[macro_use]
 extern crate tokio_core;
 extern crate futures;
 extern crate glob;

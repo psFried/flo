@@ -1,6 +1,7 @@
+mod client_map;
 
+use self::client_map::ClientMap;
 use server::engine::api::{ProduceEvent, ConsumerMessage, ProducerMessage};
-use server::engine::client_map::ClientMap;
 use event_store::EventWriter;
 use flo_event::{ActorId, OwnedFloEvent, EventCounter, FloEventId};
 use protocol::{ServerMessage, ProtocolMessage, EventAck};
