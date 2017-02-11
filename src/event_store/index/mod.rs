@@ -1,6 +1,6 @@
-use flo_event::FloEventId;
+use flo_event::{FloEventId, ActorId, EventCounter};
 
-use std::collections::{BTreeMap, Bound};
+use std::collections::{BTreeMap, Bound, HashMap};
 
 //TODO: look into finite state transducers for index https://crates.io/crates/fst or something else to allow an index larger than what fits into memory
 
@@ -23,7 +23,8 @@ pub struct EventIndex {
     entries: BTreeMap<FloEventId, IndexEntry>,
     max_entries: usize,
     least_entry: FloEventId,
-    greatest_entry: FloEventId
+    greatest_entry: FloEventId,
+    max_event_counter_per_actor: HashMap<ActorId, EventCounter>,
 }
 
 impl EventIndex {
@@ -33,6 +34,7 @@ impl EventIndex {
             max_entries: max_events,
             least_entry: FloEventId::new(0, 0),
             greatest_entry: FloEventId::new(0, 0),
+            max_event_counter_per_actor: HashMap::new(),
         }
     }
 

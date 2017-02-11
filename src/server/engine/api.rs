@@ -20,6 +20,14 @@ pub fn next_connection_id() -> ConnectionId {
 pub type VersionMap = HashMap<ActorId, EventCounter>;
 
 #[derive(Debug, PartialEq, Clone)]
+pub struct PeerVersionMap {
+    connection_id: ConnectionId,
+    from_actor: ActorId,
+    actor_versions: VersionMap,
+}
+unsafe impl Send for PeerVersionMap {}
+
+#[derive(Debug, PartialEq, Clone)]
 pub struct StateDeltaHeader {
     connection_id: ConnectionId,
     from_actor: ActorId,
@@ -62,7 +70,8 @@ pub enum ProducerMessage {
     ClientAuth(ClientAuth),
     Produce(ProduceEvent),
     Disconnect(ConnectionId),
-    StateDelta(StateDeltaHeader),
+    PeerAnnounce(PeerVersionMap),
+    StateDelta(PeerVersionMap, u32),
     PeerConnectFailed(SocketAddr),
 }
 unsafe impl Send for ProducerMessage {}
