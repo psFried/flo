@@ -1,5 +1,6 @@
 use protocol::ServerMessage;
 use flo_event::{FloEventId, ActorId, EventCounter, OwnedFloEvent};
+use engine::version_vec::VersionVector;
 
 use futures::sync::mpsc::UnboundedSender;
 
@@ -17,37 +18,35 @@ pub fn next_connection_id() -> ConnectionId {
     CURRENT_CONNECTION_ID.fetch_add(1, atomic::Ordering::SeqCst)
 }
 
-pub type VersionMap = HashMap<ActorId, EventCounter>;
-
 #[derive(Debug, PartialEq, Clone)]
 pub struct PeerVersionMap {
-    connection_id: ConnectionId,
-    from_actor: ActorId,
-    actor_versions: VersionMap,
+    pub connection_id: ConnectionId,
+    pub from_actor: ActorId,
+    pub actor_versions: VersionVector,
 }
 unsafe impl Send for PeerVersionMap {}
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct StateDeltaHeader {
-    connection_id: ConnectionId,
-    from_actor: ActorId,
-    actor_versions: VersionMap,
-    event_count: u32,
+    pub connection_id: ConnectionId,
+    pub from_actor: ActorId,
+    pub actor_versions: VersionVector,
+    pub event_count: u32,
 }
 unsafe impl Send for StateDeltaHeader {}
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct PeerUpdate {
-    connection_id: ConnectionId,
-    actor_id: ActorId,
-    version_map: VersionMap,
+    pub connection_id: ConnectionId,
+    pub actor_id: ActorId,
+    pub version_map: VersionVector,
 }
 unsafe impl Send for PeerUpdate {}
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct PeerAnnounce {
-    connection_id: ConnectionId,
-    actor_id: ActorId,
+    pub connection_id: ConnectionId,
+    pub actor_id: ActorId,
 }
 unsafe impl Send for PeerAnnounce {}
 
@@ -71,7 +70,7 @@ pub enum ProducerMessage {
     Produce(ProduceEvent),
     Disconnect(ConnectionId),
     PeerAnnounce(PeerVersionMap),
-    StateDelta(PeerVersionMap, u32),
+    ReplicateEvent(ConnectionId, OwnedFloEvent, Instant),
     PeerConnectFailed(SocketAddr),
 }
 unsafe impl Send for ProducerMessage {}

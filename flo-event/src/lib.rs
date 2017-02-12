@@ -11,7 +11,7 @@ pub type Timestamp = DateTime<UTC>;
 pub type ActorId = u16;
 pub type EventCounter = u64;
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub struct FloEventId {
     pub actor: ActorId,
     pub event_counter: EventCounter,

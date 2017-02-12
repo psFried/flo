@@ -45,7 +45,7 @@ pub fn run(options: ServerOptions, _cluster_sender: UnboundedSender<SocketAddr>)
 
     let consumer_manager_sender = consumer_tx.clone();
     thread::Builder::new().name("Producer-Manager-thread".to_owned()).spawn(move || {
-        let mut producer_manager = ProducerManager::new(event_writer, consumer_manager_sender, actor_id, highest_event_id.event_counter);
+        let mut producer_manager = ProducerManager::new(event_writer, consumer_manager_sender, actor_id, version_vec);
         loop {
             match producer_rx.recv() {
                 Ok(msg) => {
@@ -64,7 +64,7 @@ pub fn run(options: ServerOptions, _cluster_sender: UnboundedSender<SocketAddr>)
                 }
             }
         }
-    }).expect("Failed to start Consumer Manager thread");
+    }).expect("Failed to start Producer Manager thread");
 
     let consumer_manager_sender = consumer_tx.clone();
     thread::Builder::new().name("Consumer-Manager-thread".to_owned()).spawn(move || {

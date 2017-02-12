@@ -1,9 +1,8 @@
 use nom::{be_u64, be_u32, be_u16, be_i64, IResult};
-use flo_event::{FloEventId, ActorId, EventCounter, Timestamp};
+use flo_event::{FloEventId, ActorId, Timestamp};
 use serializer::Serializer;
 
 use std::io::{self, Read};
-use std::collections::HashMap;
 
 pub mod headers {
     pub const CLIENT_AUTH: &'static str = "FLO_AUT\n";
@@ -163,27 +162,19 @@ named!{parse_peer_announce<ProtocolMessage>,
     )
 }
 
-fn event_ids_to_map(ids: Vec<FloEventId>) -> HashMap<ActorId, EventCounter> {
-    let mut map = HashMap::with_capacity(ids.len());
-    for id in ids {
-        map.insert(id.actor, id.event_counter);
-    }
-    map
-}
-
-named!{parse_version_map<HashMap<ActorId, EventCounter>>,
-    map!(length_count!(be_u16, parse_non_zero_event_id), event_ids_to_map)
+named!{parse_version_vec<Vec<FloEventId>>,
+    length_count!(be_u16, parse_non_zero_event_id)
 }
 
 named!{parse_peer_update<ProtocolMessage>,
     chain!(
         _tag: tag!(PEER_UPDATE) ~
         actor_id: be_u16 ~
-        versions: parse_version_map,
+        versions: parse_version_vec,
         || {
             ProtocolMessage::PeerUpdate{
                 actor_id: actor_id,
-                version_map: versions,
+                version_vec: versions,
             }
         }
     )
@@ -193,12 +184,12 @@ named!{parse_event_delta_header<ProtocolMessage>,
     chain!(
         _tag: tag!(EVENT_DELTA_HEADER) ~
         actor_id: be_u16 ~
-        versions: parse_version_map ~
+        versions: parse_version_vec ~
         event_count: be_u32,
         || {
             ProtocolMessage::EventDeltaHeader{
                 actor_id: actor_id,
-                version_map: versions,
+                version_vec: versions,
                 event_count: event_count,
             }
         }
@@ -307,11 +298,11 @@ pub enum ProtocolMessage {
     PeerAnnounce(ActorId),
     PeerUpdate{
         actor_id: ActorId,
-        version_map: HashMap<ActorId, EventCounter>
+        version_vec: Vec<FloEventId>,
     },
     EventDeltaHeader{
         actor_id: ActorId,
-        version_map: HashMap<ActorId, EventCounter>,
+        version_vec: Vec<FloEventId>,
         event_count: u32,
     },
     ClientAuth {
@@ -396,27 +387,27 @@ impl ProtocolMessage {
                                     .newline_term_string(password)
                                     .finish()
             }
-            ProtocolMessage::PeerUpdate {ref actor_id, ref version_map} => {
+            ProtocolMessage::PeerUpdate {ref actor_id, ref version_vec} => {
                 let mut serializer = Serializer::new(buf).write_bytes(PEER_UPDATE)
                                                          .write_u16(*actor_id)
-                                                         .write_u16(version_map.len() as u16);
+                                                         .write_u16(version_vec.len() as u16);
 
-                for (actor, counter) in version_map.iter() {
-                    serializer = serializer.write_u64(*counter).write_u16(*actor);
+                for id in version_vec.iter() {
+                    serializer = serializer.write_u64(id.event_counter).write_u16(id.actor);
                 }
                 serializer.finish()
             }
             ProtocolMessage::PeerAnnounce(actor_id) => {
                 Serializer::new(buf).write_bytes(headers::PEER_ANNOUNCE.as_bytes()).write_u16(actor_id).finish()
             }
-            ProtocolMessage::EventDeltaHeader {ref actor_id, ref version_map, ref event_count} => {
+            ProtocolMessage::EventDeltaHeader {ref actor_id, ref version_vec, ref event_count} => {
                 let mut serializer = Serializer::new(buf)
                         .write_bytes(headers::EVENT_DELTA_HEADER.as_bytes())
                         .write_u16(*actor_id)
-                        .write_u16(version_map.len() as u16); //safe cast since we should never have more than 2^16 actors in the system
+                        .write_u16(version_vec.len() as u16); //safe cast since we should never have more than 2^16 actors in the system
 
-                for (actor_id, event_counter) in version_map.iter() {
-                    serializer = serializer.write_u64(*event_counter).write_u16(*actor_id);
+                for id in version_vec.iter() {
+                    serializer = serializer.write_u64(id.event_counter).write_u16(id.actor);
                 }
                 serializer.write_u32(*event_count).finish()
             }
@@ -455,17 +446,6 @@ mod test {
     use std::io::Read;
     use nom::IResult;
     use flo_event::FloEventId;
-    use std::collections::HashMap;
-
-    macro_rules! hashmap {
-        ($($key:expr => $val:expr),*) => {{
-            let mut m = HashMap::new();
-            $(
-                m.insert($key, $val);
-            )*
-            m
-        }}
-    }
 
     fn test_serialize_then_deserialize(mut message: ProtocolMessage) {
         let mut buffer = [0; 128];
@@ -508,10 +488,14 @@ mod test {
 
     #[test]
     fn event_delta_header_is_parsed() {
-        let versions = hashmap!(1 => 3, 3 => 88, 4 => 72);
+        let version_vec = vec![
+            FloEventId::new(1, 3),
+            FloEventId::new(3, 88),
+            FloEventId::new(4, 72)
+        ];
         let header = ProtocolMessage::EventDeltaHeader {
             actor_id: 123,
-            version_map: versions,
+            version_vec: version_vec,
             event_count: 3,
         };
         test_serialize_then_deserialize(header);
@@ -524,13 +508,14 @@ mod test {
 
     #[test]
     fn peer_update_is_parsed() {
-        let mut version_map = HashMap::new();
-        version_map.insert(1, 5);
-        version_map.insert(2, 7);
-        version_map.insert(5, 1);
+        let version_vec = vec![
+            FloEventId::new(1, 5),
+            FloEventId::new(2, 7),
+            FloEventId::new(5, 1)
+        ];
         test_serialize_then_deserialize(ProtocolMessage::PeerUpdate {
             actor_id: 12345,
-            version_map: version_map,
+            version_vec: version_vec,
         });
     }
 
