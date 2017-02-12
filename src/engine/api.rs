@@ -60,6 +60,7 @@ pub enum ConsumerMessage {
     Disconnect(ConnectionId),
     EventPersisted(ConnectionId, OwnedFloEvent),
     EventLoaded(ConnectionId, OwnedFloEvent),
+    StartPeerReplication(PeerVersionMap),
 }
 unsafe impl Send for ConsumerMessage {}
 

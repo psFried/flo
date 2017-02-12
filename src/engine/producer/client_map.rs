@@ -7,26 +7,16 @@ use std::net::SocketAddr;
 
 use futures::sync::mpsc::UnboundedSender;
 
-enum ClientType {
-    Unknown,
-    Normal,
-    Peer(ActorId)
-}
-
 struct Client {
-    connection_id: ConnectionId,
     remote_address: SocketAddr,
     sender: UnboundedSender<ServerMessage>,
-    state: ClientType,
 }
 
 impl From<ClientConnect> for Client {
-    fn from(ClientConnect{connection_id, client_addr, message_sender}: ClientConnect) -> Self {
+    fn from(ClientConnect{client_addr, message_sender, ..}: ClientConnect) -> Self {
         Client {
-            connection_id: connection_id,
             remote_address: client_addr,
             sender: message_sender,
-            state: ClientType::Unknown,
         }
     }
 }

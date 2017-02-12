@@ -5,11 +5,12 @@ use engine::api::{ProduceEvent, ConsumerMessage, ProducerMessage, PeerVersionMap
 use engine::event_store::EventWriter;
 use engine::version_vec::VersionVector;
 use flo_event::{ActorId, OwnedFloEvent, EventCounter, FloEventId};
-use protocol::{ServerMessage, ProtocolMessage, EventAck};
+use protocol::{ProtocolMessage, EventAck};
 use server::metrics::ProducerMetrics;
 
 use std::sync::mpsc::Sender;
 use std::time::Instant;
+use std::cmp::max;
 
 pub struct ProducerManager<S: EventWriter> {
     actor_id: ActorId,
@@ -79,7 +80,11 @@ impl <S: EventWriter> ProducerManager<S> {
             actor_id: self.actor_id,
             version_vec: my_version_vec,
         };
-        self.clients.send(peer_version_map.connection_id, message)
+        self.clients.send(peer_version_map.connection_id, message).and_then(|()| {
+            self.consumer_manager_channel.send(ConsumerMessage::StartPeerReplication(peer_version_map)).map_err(|send_err| {
+                format!("Failed to send message to consumer manager: {:?}", send_err)
+            })
+        })
     }
 
     fn persist_event(&mut self, connection_id: ConnectionId, op_id: u32, event: OwnedFloEvent, message_recv_time: Instant) -> Result<(), String> {
@@ -90,11 +95,10 @@ impl <S: EventWriter> ProducerManager<S> {
         self.event_store.store(&event).map_err(|err| {
             format!("Error storing event: {:?}", err)
         }).and_then(|()| {
+            self.highest_event_id = max(self.highest_event_id + 1, event_id.event_counter);
+            debug!("Stored event, new highest_event_id: {}", self.highest_event_id);
             self.version_vec.update(event_id)
         }).and_then(|()| {
-            self.highest_event_id += 1;
-            debug!("Stored event, new highest_event_id: {}", self.highest_event_id);
-
             let storage_time = produce_start.elapsed();
             self.metrics.event_persisted(event_id, time_in_channel, storage_time);
 
@@ -144,12 +148,21 @@ mod test {
 
     const SUBJECT_ACTOR_ID: ActorId = 1;
 
+    macro_rules! version_vec {
+        ($([$actor:expr,$counter:expr]),*) => {
+            {
+                let mut vv = VersionVector::new();
+                $( vv.update(FloEventId::new($actor, $counter)).unwrap(); )*
+                vv
+            }
+        }
+    }
 
     #[test]
     fn when_client_produces_event_it_is_written_and_consumer_manager_is_notified() {
         let (mut subject, mut consumer_manager) = setup();
         let client_connection_id  = 7;
-        let (client, mut client_receiver) = client_connects(client_connection_id, &mut subject);
+        let (_client, mut client_receiver) = client_connects(client_connection_id, &mut subject);
 
         client_produces_event(client_connection_id, &mut subject, &mut client_receiver, &mut consumer_manager);
     }
@@ -168,16 +181,6 @@ mod test {
         assert_eq!(start_counter + 1, end_event_counter);
     }
 
-    macro_rules! version_vec {
-        ($([$actor:expr,$counter:expr]),*) => {
-            {
-                let mut vv = VersionVector::new();
-                $( vv.update(FloEventId::new($actor, $counter)).unwrap(); )*
-                vv
-            }
-        }
-    }
-
     #[test]
     fn when_peer_sends_event_delta_then_events_are_persisted_and_version_vector_is_updated() {
         let peer_actor_id = 2;
@@ -188,7 +191,7 @@ mod test {
         let (_client, mut client_receiver) = client_connects(client_connection_id, &mut subject);
 
         let peer_versions = version_vec!{[1,3], [peer_actor_id,7]};
-        client_upgrades_to_peer(client_connection_id, peer_actor_id, peer_versions, subject_versions.clone(), &mut subject, &mut client_receiver);
+        client_upgrades_to_peer(client_connection_id, peer_actor_id, peer_versions, subject_versions.clone(), &mut subject, &mut client_receiver, &mut consumer_manager);
         let event = OwnedFloEvent {
             id: FloEventId::new(peer_actor_id, 5),
             timestamp: ::time::from_millis_since_epoch(4),
@@ -200,19 +203,18 @@ mod test {
 
         assert_eq!(5, subject.version_vec.get(peer_actor_id));
         assert_event_written(event, &subject.event_store);
-
     }
 
     #[test]
     fn when_client_upgrades_to_peer_then_version_vector_is_sent_to_client() {
         let subject_versions = version_vec!([1,5], [2,4], [3,3]);
-        let (mut subject, _consumer_manager) = setup_with_version_map(subject_versions.clone());
+        let (mut subject, mut consumer_manager) = setup_with_version_map(subject_versions.clone());
         let client_connection_id  = 7;
         let (_client, mut client_receiver) = client_connects(client_connection_id, &mut subject);
 
         let peer_versions = version_vec!{[1,3], [2,9], [6,7]};
 
-        client_upgrades_to_peer(client_connection_id, 2, peer_versions, subject_versions, &mut subject, &mut client_receiver);
+        client_upgrades_to_peer(client_connection_id, 2, peer_versions, subject_versions, &mut subject, &mut client_receiver, &mut consumer_manager);
     }
 
     fn client_upgrades_to_peer(client_id: ConnectionId,
@@ -220,13 +222,15 @@ mod test {
                                peer_versions: VersionVector,
                                subject_versions: VersionVector,
                                subject: &mut ProducerManager<MockEventWriter>,
-                               client: &mut UnboundedReceiver<ServerMessage>) {
-
-        let input = ProducerMessage::PeerAnnounce(PeerVersionMap{
+                               client: &mut UnboundedReceiver<ServerMessage>,
+                               consumer_manager: &mut Receiver<ConsumerMessage>) {
+        let peer_versions = PeerVersionMap {
             connection_id: client_id,
             from_actor: peer_actor_id,
             actor_versions: peer_versions,
-        });
+        };
+
+        let input = ProducerMessage::PeerAnnounce(peer_versions.clone());
         subject.process(input).expect("failed to process peer announce");
 
         assert_client_message_sent(client, |msg| {
@@ -239,6 +243,15 @@ mod test {
                 other @ _ => {
                     panic!("expected PeerUpdate, got: {:?}", other);
                 }
+            }
+        });
+
+        assert_consumer_manager_message_sent(consumer_manager, |msg| {
+            match msg {
+                ConsumerMessage::StartPeerReplication(versions) => {
+                    assert_eq!(peer_versions, versions);
+                }
+                other @ _ => panic!("Expected StartPeerReplication message, got: {:?}", other)
             }
         });
     }
