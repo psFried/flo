@@ -4,7 +4,7 @@ mod cache;
 pub use self::client::{Client, ClientState, ClientSendError, ConsumingState};
 use self::client::NamespaceGlob;
 
-use engine::api::{ConnectionId, ConsumerMessage, ClientConnect};
+use engine::api::{ConnectionId, ConsumerMessage, ClientConnect, PeerVersionMap};
 use protocol::{ServerMessage, ProtocolMessage, ErrorMessage, ErrorKind};
 use flo_event::{FloEvent, OwnedFloEvent, FloEventId};
 use std::sync::{Arc, mpsc};
@@ -60,15 +60,23 @@ impl <R: EventReader + 'static> ConsumerManager<R> {
                 self.consumers.update_consumer_position(connection_id, event_id)
             }
             ConsumerMessage::Disconnect(connection_id) => {
-                debug!("Removing consumer: {}", connection_id);
+                debug!("Removing client: {}", connection_id);
                 self.consumers.remove(connection_id);
                 Ok(())
+            }
+            ConsumerMessage::StartPeerReplication(peer_version_info) => {
+                self.start_peer_replication(peer_version_info)
             }
             m @ _ => {
                 error!("Got unhandled message: {:?}", m);
                 panic!("Got unhandled message: {:?}", m);
             }
         }
+    }
+
+    fn start_peer_replication(&mut self, peer_version_info: PeerVersionMap) -> Result<(), String> {
+        //TODO: send events to peer
+        Err("oh shit".to_owned())
     }
 
     fn update_greatest_event(&mut self, id: FloEventId) {
@@ -211,6 +219,176 @@ impl ConsumerMap {
         }
         Ok(())
     }
+}
+
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use flo_event::*;
+    use engine::api::*;
+    use protocol::*;
+    use engine::event_store::EventReader;
+    use engine::version_vec::VersionVector;
+    use server::{MemoryLimit, MemoryUnit};
+    use std::sync::mpsc::{channel, Receiver};
+
+    use futures::sync::mpsc::{unbounded, UnboundedReceiver};
+
+    const SUBJECT_ACTOR_ID: ActorId = 1;
+
+    fn subject_with_existing_events(events: Vec<OwnedFloEvent>) -> (ConsumerManager<MockEventReader>, Receiver<ConsumerMessage>) {
+        let (tx, rx) = channel();
+        let mem_limit = MemoryLimit::new(10, MemoryUnit::Megabyte);
+        let reader = MockEventReader::new(events);
+        let consumer_manager = ConsumerManager::new(reader, tx, FloEventId::zero(), 100, mem_limit);
+        (consumer_manager, rx)
+    }
+
+    macro_rules! version_vec {
+        ($([$actor:expr,$counter:expr]),*) => {
+            {
+                let mut vv = VersionVector::new();
+                $( vv.update(FloEventId::new($actor, $counter)).unwrap(); )*
+                vv
+            }
+        }
+    }
+
+    #[test]
+    fn client_is_sent_all_events_greater_than_those_in_version_map_after_upgrading_to_peer() {
+        let peer_actor_id = 2;
+        let existing_events = vec![
+            event(SUBJECT_ACTOR_ID, 1),
+            event(peer_actor_id, 2),
+            event(SUBJECT_ACTOR_ID, 2),
+            event(3, 2),
+            event(peer_actor_id, 3),
+            event(3, 3)
+        ];
+        let (mut subject, receiver) = subject_with_existing_events(existing_events);
+
+        let connection_id = 7;
+        let mut client_receiver = client_connect(&mut subject, connection_id);
+
+        let peer_versions = vec![id(SUBJECT_ACTOR_ID, 1), id(3, 2)];
+        let input = ConsumerMessage::StartPeerReplication(PeerVersionMap{
+            connection_id: connection_id,
+            from_actor: peer_actor_id,
+            actor_versions: peer_versions,
+        });
+
+        subject.process(input).expect("failed to processs startPeerReplication");
+
+        assert_event_sent(&mut client_receiver, id(SUBJECT_ACTOR_ID, 2));
+        assert_event_sent(&mut client_receiver, id(3, 2));
+        assert_event_sent(&mut client_receiver, id(3, 3));
+    }
+
+    fn assert_event_sent(client: &mut UnboundedReceiver<ServerMessage>, expected_id: FloEventId) {
+        assert_client_message_sent(client, |msg| {
+            match msg {
+                ServerMessage::Event(event_arc) => {
+                    assert_eq!(expected_id, event_arc.id);
+                }
+                other @ _ => {
+                    panic!("expected event, got: {:?}", other);
+                }
+            }
+        })
+    }
+
+    fn assert_client_message_sent<F: Fn(ServerMessage)>(client: &mut UnboundedReceiver<ServerMessage>, fun: F) {
+        use futures::{Async, Stream};
+        match client.poll().expect("failed to receive message") {
+            Async::Ready(Some(message)) => fun(message),
+            _ => {
+                panic!("Expected to receive a message, got none")
+            }
+        }
+    }
+
+    fn id(actor: ActorId, counter: EventCounter) -> FloEventId {
+        FloEventId::new(actor, counter)
+    }
+
+    fn event(actor: ActorId, counter: EventCounter) -> OwnedFloEvent {
+        OwnedFloEvent {
+            id: FloEventId::new(actor, counter),
+            timestamp: ::time::now(),
+            parent_id: None,
+            namespace: "/green/onions".to_owned(),
+            data: vec![1, 2, 3, 4, 5],
+        }
+    }
+
+    fn event_persisted(client_id: ConnectionId, event: OwnedFloEvent, subject: &mut ConsumerManager<MockEventReader>) {
+        let event_id = event.id;
+        let message = ConsumerMessage::EventPersisted(client_id, event);
+        subject.process(message).expect("failed to process event persisted");
+    }
+
+
+    fn client_connect(subject: &mut ConsumerManager<MockEventReader>, client_id: ConnectionId) -> UnboundedReceiver<ServerMessage> {
+        use std::net::{SocketAddr, SocketAddrV4, Ipv4Addr};
+
+        let (tx, rx) = unbounded();
+        let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(1, 2, 3, 4), 3000));
+        let connect = ClientConnect {
+            connection_id: client_id,
+            client_addr: addr,
+            message_sender: tx,
+        };
+        subject.process(ConsumerMessage::ClientConnect(connect)).expect("Failed to process client connect");
+        rx
+    }
+
+    struct MockEventReader {
+        stored_events: Vec<OwnedFloEvent>
+    }
+
+    impl MockEventReader {
+        pub fn new(events: Vec<OwnedFloEvent>) -> MockEventReader {
+            MockEventReader {
+                stored_events: events,
+            }
+        }
+
+        pub fn empty() -> MockEventReader {
+            MockEventReader::new(Vec::new())
+        }
+    }
+
+    impl EventReader for MockEventReader {
+        type Iter = MockReaderIter;
+        type Error = String;
+        fn load_range(&mut self, range_start: FloEventId, limit: usize) -> Self::Iter {
+            let events = self.stored_events.iter()
+                    .filter(|evt| evt.id > range_start)
+                    .take(limit)
+                    .cloned()
+                    .collect();
+            MockReaderIter {
+                events: events
+            }
+        }
+
+        fn get_highest_event_id(&mut self) -> FloEventId {
+            self.stored_events.iter().map(|evt| evt.id).max().unwrap_or(FloEventId::new(0, 0))
+        }
+    }
+
+    struct MockReaderIter {
+        events: Vec<OwnedFloEvent>,
+    }
+
+    impl Iterator for MockReaderIter {
+        type Item = Result<OwnedFloEvent, String>;
+        fn next(&mut self) -> Option<Self::Item> {
+            self.events.pop().map(|e| Ok(e))
+        }
+    }
+
 }
 
 

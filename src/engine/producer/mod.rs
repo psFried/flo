@@ -190,7 +190,7 @@ mod test {
         let client_connection_id  = 7;
         let (_client, mut client_receiver) = client_connects(client_connection_id, &mut subject);
 
-        let peer_versions = version_vec!{[1,3], [peer_actor_id,7]};
+        let peer_versions = vec![id(1, 3), id(peer_actor_id,7)];
         client_upgrades_to_peer(client_connection_id, peer_actor_id, peer_versions, subject_versions.clone(), &mut subject, &mut client_receiver, &mut consumer_manager);
         let event = OwnedFloEvent {
             id: FloEventId::new(peer_actor_id, 5),
@@ -212,14 +212,18 @@ mod test {
         let client_connection_id  = 7;
         let (_client, mut client_receiver) = client_connects(client_connection_id, &mut subject);
 
-        let peer_versions = version_vec!{[1,3], [2,9], [6,7]};
+        let peer_versions = vec![id(1,3), id(2, 9), id(6, 7)];
 
         client_upgrades_to_peer(client_connection_id, 2, peer_versions, subject_versions, &mut subject, &mut client_receiver, &mut consumer_manager);
     }
 
+    fn id(actor: ActorId, counter: EventCounter) -> FloEventId {
+        FloEventId::new(actor, counter)
+    }
+
     fn client_upgrades_to_peer(client_id: ConnectionId,
                                peer_actor_id: ActorId,
-                               peer_versions: VersionVector,
+                               peer_versions: Vec<FloEventId>,
                                subject_versions: VersionVector,
                                subject: &mut ProducerManager<MockEventWriter>,
                                client: &mut UnboundedReceiver<ServerMessage>,

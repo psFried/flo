@@ -1,6 +1,5 @@
 use protocol::ServerMessage;
 use flo_event::{FloEventId, ActorId, EventCounter, OwnedFloEvent};
-use engine::version_vec::VersionVector;
 
 use futures::sync::mpsc::UnboundedSender;
 
@@ -22,7 +21,7 @@ pub fn next_connection_id() -> ConnectionId {
 pub struct PeerVersionMap {
     pub connection_id: ConnectionId,
     pub from_actor: ActorId,
-    pub actor_versions: VersionVector,
+    pub actor_versions: Vec<FloEventId>,
 }
 unsafe impl Send for PeerVersionMap {}
 
@@ -30,7 +29,7 @@ unsafe impl Send for PeerVersionMap {}
 pub struct StateDeltaHeader {
     pub connection_id: ConnectionId,
     pub from_actor: ActorId,
-    pub actor_versions: VersionVector,
+    pub actor_versions: Vec<FloEventId>,
     pub event_count: u32,
 }
 unsafe impl Send for StateDeltaHeader {}
@@ -39,7 +38,7 @@ unsafe impl Send for StateDeltaHeader {}
 pub struct PeerUpdate {
     pub connection_id: ConnectionId,
     pub actor_id: ActorId,
-    pub version_map: VersionVector,
+    pub version_map: Vec<FloEventId>,
 }
 unsafe impl Send for PeerUpdate {}
 
