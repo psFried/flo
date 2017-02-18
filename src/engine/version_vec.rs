@@ -42,7 +42,6 @@ impl VersionVector {
     pub fn snapshot(&self) -> Vec<FloEventId> {
         self.0.iter().map(|(actor, counter)| FloEventId::new(*actor, *counter)).collect()
     }
-
 }
 
 

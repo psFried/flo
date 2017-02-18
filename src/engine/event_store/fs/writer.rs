@@ -1,46 +1,94 @@
 
 use std::sync::{Arc, RwLock};
-use std::path::PathBuf;
+use std::path::{PathBuf, Path};
 use std::io::{self, Seek, Write, BufWriter};
 use std::fs::{File, OpenOptions, create_dir_all};
+use std::collections::HashMap;
 
 use engine::event_store::{EventWriter, StorageEngineOptions};
 use engine::event_store::index::EventIndex;
 
-use flo_event::FloEvent;
+use flo_event::{FloEvent, ActorId};
+
+struct FileWriter {
+    actor_id: ActorId,
+    file_path: PathBuf,
+    writer: BufWriter<File>,
+    current_offset: u64,
+}
+
+impl FileWriter {
+    fn initialize(storage_dir: &Path, actor: ActorId) -> Result<FileWriter, io::Error> {
+        let events_file = super::get_events_file(storage_dir, actor);
+        let open_result = OpenOptions::new().write(true).truncate(false).create(true).append(true).open(&events_file);
+
+        open_result.and_then(|mut file| {
+            file.seek(io::SeekFrom::End(0)).map(|file_offset| {
+                trace!("initializing writer for actor: {} starting at offset: {} in file: {:?}", actor, file_offset, &events_file);
+                let writer = BufWriter::new(file);
+
+                FileWriter{
+                    actor_id: actor,
+                    file_path: events_file,
+                    writer: writer,
+                    current_offset: file_offset,
+                }
+            })
+        })
+    }
+
+    fn write<E: FloEvent>(&mut self, event: &E) -> Result<u64, io::Error> {
+        let size_on_disk = write_event(&mut self.writer, event)?;
+        let event_offset = self.current_offset;
+        debug!("wrote event to disk for actor: {}, start_offset: {}, event_size_in_bytes: {}", event.id().actor, event_offset, size_on_disk);
+        self.current_offset += size_on_disk;
+        Ok(event_offset)
+    }
+}
 
 #[allow(dead_code)]
 pub struct FSEventWriter {
     index: Arc<RwLock<EventIndex>>,
     storage_dir: PathBuf,
-    event_writer: BufWriter<File>,
-    offset: u64,
+    writers_by_actor: HashMap<ActorId, FileWriter>,
 }
 
 impl FSEventWriter {
     pub fn initialize(index: Arc<RwLock<EventIndex>>, storage_options: &StorageEngineOptions) -> Result<FSEventWriter, io::Error> {
         let mut storage_dir = storage_options.storage_dir.clone();
         storage_dir.push(&storage_options.root_namespace);
-        create_dir_all(&storage_dir)?;
+        create_dir_all(&storage_dir)?; //early return if this fails
 
-        let events_file = storage_dir.as_path().join(super::DATA_FILE_NAME);
-        let open_result = OpenOptions::new().write(true).truncate(false).create(true).append(true).open(&events_file);
-
-        open_result.and_then(|mut file| {
-            file.seek(io::SeekFrom::End(0)).map(|file_offset| {
-                trace!("initializing writer starting at offset: {}", file_offset);
-                let writer = BufWriter::new(file);
-
-                FSEventWriter {
-                    offset: file_offset,
-                    index: index,
-                    storage_dir: storage_dir,
-                    event_writer: writer,
-                }
-            })
+        let mut file_writers = HashMap::new();
+        let max_actor_id = {
+            //TODO: how safe is it to trust that the index has complete knowledge of all actors at this point in initialization?
+            let idx = index.read().map_err(|err| {
+                io::Error::new(io::ErrorKind::Other, format!("Error acquiring write lock for index: {:?}", err))
+            })?;
+            idx.get_max_actor_id()
+            //drop the read lock at the end of this block
+        };
+        for actor_id in 0..max_actor_id {
+            //Open all the events files up front, NOT lazily. Early return if any fails
+            let writer = FileWriter::initialize(&storage_dir, actor_id)?;
+            file_writers.insert(actor_id, writer);
+        }
+        Ok(FSEventWriter{
+            index: index,
+            storage_dir: storage_dir,
+            writers_by_actor: file_writers,
         })
     }
+
+    fn get_or_create_writer(&mut self, actor: ActorId) -> Result<&mut FileWriter, io::Error> {
+        if !self.writers_by_actor.contains_key(&actor) {
+            let writer = FileWriter::initialize(&self.storage_dir, actor)?; //early return if this fails
+            self.writers_by_actor.insert(actor, writer);
+        }
+        Ok(self.writers_by_actor.get_mut(&actor).unwrap()) //safe unwrap since we just inserted the goddamn thing
+    }
 }
+
 
 impl EventWriter for FSEventWriter {
     type Error = io::Error;
@@ -48,16 +96,16 @@ impl EventWriter for FSEventWriter {
     fn store<E: FloEvent>(&mut self, event: &E) -> Result<(), Self::Error> {
         use engine::event_store::index::IndexEntry;
 
-        let FSEventWriter{ref mut offset, ref mut index, ref mut event_writer, ..} = *self;
-
-        write_event(event_writer, event).and_then(|size_on_disk| {
-            trace!("Wrote event: {:?} to disk as: {} bytes, starting at offset: {}", event.id(), size_on_disk, offset);
-            index.write().map_err(|err| {
+        let write_result = {
+            let writer = self.get_or_create_writer(event.id().actor)?; //early return if this fails
+            writer.write(event)
+        };
+        write_result.and_then(|event_offset| {
+            self.index.write().map_err(|err| {
                 io::Error::new(io::ErrorKind::Other, format!("Error acquiring write lock for index: {:?}", err))
             }).map(|mut idx| {
-                let index_entry = IndexEntry::new(*event.id(), *offset);
+                let index_entry = IndexEntry::new(*event.id(), event_offset);
                 let evicted = idx.add(index_entry);
-                *offset += size_on_disk;
                 if let Some(removed_event) = evicted {
                     debug!("Evicted old event: {:?}", removed_event.id);
                 }

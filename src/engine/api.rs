@@ -55,7 +55,7 @@ pub enum ConsumerMessage {
     ClientAuth(ClientAuth),
     UpdateMarker(ConnectionId, FloEventId),
     StartConsuming(ConnectionId, String, i64),
-    ContinueConsuming(ConnectionId, FloEventId, i64),
+    ContinueConsuming(ConnectionId, FloEventId, String, i64),
     Disconnect(ConnectionId),
     EventPersisted(ConnectionId, OwnedFloEvent),
     EventLoaded(ConnectionId, OwnedFloEvent),

@@ -1,8 +1,8 @@
 use flo_event::{FloEventId, ActorId, EventCounter};
 
+use engine::version_vec::VersionVector;
 use std::collections::{BTreeMap, Bound, HashMap};
-
-//TODO: look into finite state transducers for index https://crates.io/crates/fst or something else to allow an index larger than what fits into memory
+use std::cmp::max;
 
 #[derive(PartialEq, Debug, Clone)]
 pub struct IndexEntry {
@@ -25,6 +25,8 @@ pub struct EventIndex {
     least_entry: FloEventId,
     greatest_entry: FloEventId,
     max_event_counter_per_actor: HashMap<ActorId, EventCounter>,
+    version_vec: VersionVector,
+    max_actor_id: ActorId,
 }
 
 impl EventIndex {
@@ -35,12 +37,16 @@ impl EventIndex {
             least_entry: FloEventId::new(0, 0),
             greatest_entry: FloEventId::new(0, 0),
             max_event_counter_per_actor: HashMap::new(),
+            version_vec: VersionVector::new(),
+            max_actor_id: 0,
         }
     }
 
     pub fn add(&mut self, new_entry: IndexEntry) -> Option<IndexEntry> {
-        let mut to_return = None;
+        self.version_vec.update(new_entry.id);
+        self.max_actor_id = max(self.max_actor_id, new_entry.id.actor);
 
+        let mut to_return = None;
         trace!("adding index entry: {:?}", new_entry);
 
         if self.least_entry.is_zero() {
@@ -61,8 +67,24 @@ impl EventIndex {
         to_return
     }
 
+    pub fn get_version_vector(&self) -> &VersionVector {
+        &self.version_vec
+    }
+
+    pub fn get_max_actor_id(&self) -> ActorId {
+        self.max_actor_id
+    }
+
     pub fn get_next_entry(&self, start_after: FloEventId) -> Option<&IndexEntry> {
         self.entries.range((Bound::Excluded(&start_after), Bound::Unbounded)).next().map(|(_k, v)| v)
+    }
+
+    pub fn get_next_entry_for_actor(&self, start_after: FloEventId, actor_id: ActorId) -> Option<&IndexEntry> {
+        self.entries.range((Bound::Excluded(&start_after), Bound::Unbounded))
+                .filter(|&(id, _entry)| {
+                    id.actor == actor_id
+                }).next()
+                .map(|(_id, entry)| entry)
     }
 
     pub fn contains(&self, event_id: FloEventId) -> bool {
@@ -71,6 +93,10 @@ impl EventIndex {
 
     pub fn get_greatest_event_id(&self) -> FloEventId {
         self.greatest_entry
+    }
+
+    pub fn entry_count(&self) -> usize {
+        self.entries.len()
     }
 }
 
@@ -81,6 +107,36 @@ mod index_test {
     use flo_event::{FloEventId, ActorId, EventCounter};
 
     const ACTOR_ID: ActorId = 1;
+
+    fn id_entry(actor: ActorId, counter: EventCounter) -> IndexEntry {
+        IndexEntry::new(FloEventId::new(actor, counter), 76)
+    }
+
+
+    #[test]
+    fn index_tracks_max_actor_id() {
+        let mut subject = EventIndex::new(10);
+
+        assert_eq!(0, subject.get_max_actor_id());
+        subject.add(id_entry(1, 2));
+        assert_eq!(1, subject.get_max_actor_id());
+
+        subject.add(id_entry(5, 0));
+        assert_eq!(5, subject.get_max_actor_id());
+    }
+
+    #[test]
+    fn version_vector_is_kept_up_to_date() {
+        let mut subject = EventIndex::new(10);
+        subject.add(id_entry(2, 3));
+        subject.add(id_entry(4, 2));
+        subject.add(id_entry(5, 23));
+
+        let version_vec = subject.get_version_vector();
+        assert_eq!(3, version_vec.get(2));
+        assert_eq!(2, version_vec.get(4));
+        assert_eq!(23, version_vec.get(5));
+    }
 
     #[test]
     fn get_next_entry_returns_first_entry_when_start_id_is_zero() {

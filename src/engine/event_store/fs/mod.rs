@@ -2,6 +2,7 @@ mod writer;
 mod reader;
 
 pub const DATA_FILE_NAME: &'static str = "events";
+pub const DATA_FILE_EXTENSION: &'static str = ".events";
 pub const FLO_EVT: &'static str = "FLO_EVT\n";
 
 pub use self::writer::FSEventWriter;
@@ -9,10 +10,10 @@ pub use self::reader::{FSEventReader, FSEventIter};
 use super::{StorageEngine, StorageEngineOptions};
 use engine::event_store::index::{EventIndex, IndexEntry};
 use engine::version_vec::VersionVector;
-use flo_event::{FloEvent};
+use flo_event::{FloEvent, ActorId};
 
 use std::sync::{Arc, RwLock};
-use std::path::PathBuf;
+use std::path::{PathBuf, Path};
 use std::io;
 
 pub struct FSStorageEngine;
@@ -29,50 +30,12 @@ pub fn total_size_on_disk<E: FloEvent>(event: &E) -> u64 {
             event.data_len() as u64 //the actual event data
 }
 
-fn events_file(storage_opts: &StorageEngineOptions) -> PathBuf {
-    let mut dir = storage_opts.storage_dir.as_path().join(&storage_opts.root_namespace);
-    dir.push(DATA_FILE_NAME);
-    dir
+fn get_events_file(storage_dir: &Path, actor_id: ActorId) -> PathBuf {
+    storage_dir.join(format!("{}.events", actor_id))
 }
 
-fn init(storage_opts: &StorageEngineOptions) -> Result<(EventIndex, VersionVector), io::Error> {
-    let events_file = events_file(storage_opts);
-
-    if events_file.exists() {
-        debug!("initializing index from file: {:?}", events_file);
-        FSEventIter::initialize(0, ::std::usize::MAX, &events_file).and_then(|event_iter| {
-            build_index(storage_opts.max_events, event_iter)
-        })
-    } else {
-        debug!("No existing events at {:?}, creating new index", events_file);
-        Ok((EventIndex::new(storage_opts.max_events), VersionVector::new()))
-    }
-
-}
-
-fn build_index(max_events: usize, iter: FSEventIter) -> Result<(EventIndex, VersionVector), io::Error> {
-    let mut index = EventIndex::new(max_events);
-    let mut offset = 0;
-    let mut event_count = 0;
-
-    let mut version_vec = VersionVector::new();
-
-    for result in iter {
-        match result {
-            Ok(event) => {
-                version_vec.update(*event.id()).map_err(|str_err| {
-                    io::Error::new(io::ErrorKind::InvalidData, str_err)
-                })?; // early return if event counters are somehow out of order
-
-                index.add(IndexEntry::new(*event.id(), offset)); //don't care about possible evictions here
-                offset += total_size_on_disk(&event);
-                event_count += 1;
-            },
-            Err(err) => return Err(err)
-        }
-    }
-    debug!("Finished building index, iterated {} events and {} bytes", event_count, offset);
-    Ok((index, version_vec))
+fn events_dir(storage_opts: &StorageEngineOptions) -> PathBuf {
+    storage_opts.storage_dir.as_path().join(&storage_opts.root_namespace)
 }
 
 impl StorageEngine for FSStorageEngine {
@@ -80,12 +43,16 @@ impl StorageEngine for FSStorageEngine {
     type Reader = FSEventReader;
 
     fn initialize(options: StorageEngineOptions) -> Result<(Self::Writer, Self::Reader, VersionVector), io::Error> {
-        init(&options).and_then(|(index, version_vector)| {
-            let index = Arc::new(RwLock::new(index));
+        info!("initializing storage engine in directory: {:?}", &options.storage_dir);
+        let index = Arc::new(RwLock::new(EventIndex::new(options.max_events)));
 
-            FSEventWriter::initialize(index.clone(), &options).and_then(|writer| {
-                FSEventReader::initialize(index, &options).map(|reader| {
-                    (writer, reader, version_vector)
+        FSEventWriter::initialize(index.clone(), &options).and_then(|writer| {
+            FSEventReader::initialize(index.clone(), &options).and_then(|reader| {
+                index.read().map_err(|lock_err| {
+                    io::Error::new(io::ErrorKind::Other, format!("failed to acquire index lock: {:?}", lock_err))
+                }).map(|idx| {
+                    let version_vec = idx.get_version_vector().clone();
+                    (writer, reader, version_vec)
                 })
             })
         })
@@ -110,6 +77,7 @@ mod test {
 
     #[test]
     fn storage_engine_initialized_from_preexisting_events() {
+        ::env_logger::init();
         let storage_dir = TempDir::new("events_are_written_and_read_from_preexisting_directory").unwrap();
         let storage_opts = StorageEngineOptions {
             storage_dir: storage_dir.path().to_owned(),
@@ -135,12 +103,12 @@ mod test {
         let event4 = OwnedFloEvent::new(FloEventId::new(1, 4), None, event_time(), "/yolo".to_owned(), "fourth event data".as_bytes().to_owned());
         writer.store(&event4).unwrap();
 
-        let mut event_iter = reader.load_range(FloEventId::new(2, 2), 55);
+        let mut event_iter = reader.load_range(FloEventId::new(2, 1), 55);
         let result = event_iter.next().expect("expected result to be Some").expect("failed to read event 3");
-        assert_eq!(event3, result);
+        assert_eq!(event2, result);
 
         let result = event_iter.next().expect("expected result to be Some").expect("failed to read event 4");
-        assert_eq!(event4, result);
+        assert_eq!(event3, result);
 
         assert!(event_iter.next().is_none());
 
