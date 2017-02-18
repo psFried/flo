@@ -208,11 +208,11 @@ impl <S: IoStream> SyncConnection<S> {
             match consumer_action {
                 ConsumerAction::Continue => {
                     error.take().map(|err| {
-                        info!("Consumer: '{}' - Continuing after error: {:?}", consumer.name(), err);
+                        debug!("Consumer: '{}' - Continuing after error: {:?}", consumer.name(), err);
                     });
                 }
                 ConsumerAction::Stop => {
-                    debug!("Stopping consumer '{}' after error: {:?}", consumer.name(), error);
+                    warn!("Stopping consumer '{}' after error: {:?}", consumer.name(), error);
                     break;
                 }
             }

@@ -43,6 +43,3 @@ impl FloCliCommand for Producer {
     }
 }
 
-
-//fn produce_events(namespace: String, parent_id: Option<FloEventId>, data: Vec<Vec<u8>>)
-

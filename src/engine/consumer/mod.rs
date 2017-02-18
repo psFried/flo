@@ -30,7 +30,7 @@ impl <R: EventReader + 'static> ConsumerManager<R> {
             event_reader: reader,
             consumers: ConsumerMap::new(),
             greatest_event_id: greatest_event_id,
-            cache: Cache::new(max_cached_events, max_cache_memory),
+            cache: Cache::new(max_cached_events, max_cache_memory, greatest_event_id),
         }
     }
 
@@ -216,16 +216,20 @@ impl ConsumerMap {
         self.0.get_mut(&connection_id).ok_or_else(|| {
             format!("Cannot send event to consumer because consumer: {} does not exist", connection_id)
         }).and_then(|mut client| {
-            client.send(ServerMessage::Event(event)).map_err(|err| {
-                format!("Error sending event to server channel: {:?}", err)
-            })
+            if client.event_namespace_matches(event.namespace()) {
+                client.send(ServerMessage::Event(event)).map_err(|err| {
+                    format!("Error sending event to server channel: {:?}", err)
+                })
+            } else {
+                Ok(())
+            }
         })
     }
 
     pub fn send_event_to_all(&mut self, event: Arc<OwnedFloEvent>) -> Result<(), String> {
         for client in self.0.values_mut() {
             trace!("Checking to send event: {:?}, to client: {}, {:?}", event.id(), client.connection_id(), client.is_awaiting_new_event());
-            if client.is_awaiting_new_event() {
+            if client.is_awaiting_new_event() && client.event_namespace_matches(event.namespace()) {
                 client.send(ServerMessage::Event(event.clone())).unwrap();
             }
         }

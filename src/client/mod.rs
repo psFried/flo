@@ -12,6 +12,15 @@ pub enum ClientError {
     UnexpectedMessage(ProtocolMessage),
 }
 
+impl ClientError {
+    pub fn is_timeout(&self) -> bool {
+        match *self {
+            ClientError::Io(ref io_err) if io_err.kind() == io::ErrorKind::WouldBlock => true,
+            _ => false
+        }
+    }
+}
+
 impl From<io::Error> for ClientError {
     fn from(err: io::Error) -> Self {
         ClientError::Io(err)

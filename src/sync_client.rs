@@ -29,4 +29,5 @@ pub mod serializer;
 pub mod event;
 
 pub use event::{FloEventId, FloEvent, OwnedFloEvent, ActorId, EventCounter, Timestamp};
-pub use client::sync::{SyncConnection, ConsumerAction};
+pub use client::sync::{SyncConnection, ConsumerAction, ConsumerContext, FloConsumer};
+pub use client::{ConsumerOptions, ClientError};

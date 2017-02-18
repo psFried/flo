@@ -1,8 +1,10 @@
 pub mod error;
 
 mod producer;
+mod consumer;
 
 pub use self::producer::{Producer, ProduceOptions};
+pub use self::consumer::{CliConsumerOptions, Consumer};
 
 use std::io::Write;
 use std::fmt::Display;
@@ -30,7 +32,7 @@ pub fn run<T: FloCliCommand>(input: T::Input, context: Context) {
 
 
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Copy, Clone)]
 pub enum Verbosity {
     Debug,
     Verbose,
@@ -68,15 +70,15 @@ impl Context {
     }
 
     pub fn debug<M: Display>(&self, message: M) {
-        self.write_stdout(message, Verbosity::Debug);
+        self.println(message, Verbosity::Debug);
     }
 
     pub fn verbose<M: Display>(&self, message: M) {
-        self.write_stdout(message, Verbosity::Verbose);
+        self.println(message, Verbosity::Verbose);
     }
 
     pub fn normal<M: Display>(&self, message: M) {
-        self.write_stdout(message, Verbosity::Normal);
+        self.println(message, Verbosity::Normal);
     }
 
     pub fn error<M: Display>(&self, message: M) {
@@ -85,14 +87,22 @@ impl Context {
 
     pub fn write_stdout<M: Display>(&self, message: M, verbosity: Verbosity) {
         if self.verbosity.is_greater_or_equal(verbosity) {
-            println!("{}", message);
+            let mut stdout = ::std::io::stdout();
+            write!(stdout, "{}", message);
+            stdout.flush().unwrap();
         }
+    }
+
+    pub fn println<M: Display>(&self, message: M, verbosity: Verbosity) {
+        self.write_stdout(message, verbosity);
+        self.write_stdout('\n', verbosity);
     }
 
     pub fn write_stderr<M: Display>(&self, message: M, verbosity: Verbosity) {
         if self.verbosity.is_greater_or_equal(verbosity) {
             let mut stderr = ::std::io::stderr();
             write!(stderr, "{}", message);
+            stderr.flush().unwrap();
         }
     }
 

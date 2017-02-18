@@ -9,9 +9,10 @@ mod client_cli;
 
 use flo_sync_client::FloEventId;
 use clap::{App, Arg, ArgMatches, SubCommand};
-use client_cli::{Producer, ProduceOptions, Verbosity, Context, Critical};
+use client_cli::{Producer, ProduceOptions, Verbosity, Context, Critical, Consumer, CliConsumerOptions};
 
 use std::net::{SocketAddr, ToSocketAddrs, IpAddr};
+use std::str::FromStr;
 
 
 mod args {
@@ -28,6 +29,11 @@ mod args {
     //produce options
     pub const EVENT_DATA: &'static str = "event-data";
     pub const PARENT_ID: &'static str = "parent-id";
+
+    //consume options
+    pub const CONSUME_LIMIT: &'static str = "consume-limit";
+    pub const CONSUME_AWAIT: &'static str = "consume-await";
+    pub const CONSUME_START_POSITION: &'static str = "consume-start-position";
 }
 
 fn create_app_args() -> App<'static, 'static> {
@@ -55,6 +61,7 @@ fn create_app_args() -> App<'static, 'static> {
                     .takes_value(true)
                     .required(true))
             .subcommand(SubCommand::with_name(args::PRODUCE)
+                    .help("Produce one or more events on the event stream")
                     .arg(Arg::with_name(args::EVENT_DATA)
                             .short("d")
                             .long("data")
@@ -66,31 +73,62 @@ fn create_app_args() -> App<'static, 'static> {
                             .long("parent")
                             .takes_value(true)
                             .value_name("PARENT-EVENT-ID")
-                            .help("The parent id of the event to be produced. Defaults to none")
-                    )
-            )
+                            .help("The parent id of the event to be produced. Defaults to none") ) )
+            .subcommand(SubCommand::with_name(args::CONSUME)
+                    .help("Read events from the event stream and print them to stdout")
+                    .arg(Arg::with_name(args::CONSUME_START_POSITION)
+                            .short("s")
+                            .long("start-after")
+                            .help("Sets the starting position in the event stream. The first event received will be the on directly AFTER this id")
+                            .value_name("EVENT_ID"))
+                    .arg(Arg::with_name(args::CONSUME_LIMIT)
+                            .short("l")
+                            .long("limit")
+                            .takes_value(true)
+                            .value_name("LIMIT")
+                            .help("The maximum number of events to read from the stream. Default behavior is unlimited read") )
+                    .arg(Arg::with_name(args::CONSUME_AWAIT)
+                            .short("t")
+                            .long("tail")
+                            .help("Works like tail -f to continuously await new events. Events will be printed as they are received")))
 }
 
 fn main() {
     let args = create_app_args().get_matches();
 
     let context = create_context(&args);
-    let host = args.value_of(args::HOST).or_abort_process(&context);
+    let host = args.value_of(args::HOST).or_abort_process(&context).to_owned();
     let port = args.value_of(args::PORT).or_abort_process(&context).parse::<u16>().or_abort_with_message("invalid port argument", &context);
-    let namespace = args.value_of(args::NAMESPACE).or_abort_with_message("Must supply a namespace", &context);
+    let namespace = args.value_of(args::NAMESPACE).or_abort_with_message("Must supply a namespace", &context).to_owned();
 
     match args.subcommand() {
         (args::PRODUCE, Some(produce_args)) => {
             let parent_id = get_parent_id(&produce_args, &context);
             let event_data = get_event_data(&produce_args);
             let produce_options = ProduceOptions {
-                host: host.to_owned(),
+                host: host,
                 port: port,
-                namespace: namespace.to_owned(),
+                namespace: namespace,
                 event_data: event_data,
                 parent_id: parent_id,
             };
             ::client_cli::run::<Producer>(produce_options, context);
+        }
+        (args::CONSUME, Some(consume_args)) => {
+            let start_position = parse_opt_or_exit::<FloEventId>(args::CONSUME_START_POSITION, &consume_args, &context);
+            let limit = parse_opt_or_exit::<u64>(args::CONSUME_LIMIT, &consume_args, &context);
+            let await = consume_args.is_present(args::CONSUME_AWAIT);
+
+            let consume_opts = CliConsumerOptions {
+                host: host,
+                port: port,
+                namespace: namespace,
+                start_position: start_position,
+                limit: limit,
+                await: await,
+            };
+
+            ::client_cli::run::<Consumer>(consume_opts, context);
         }
         (command, _) => {
             context.abort_process(format!("unknown command: '{}'", command));
@@ -98,6 +136,15 @@ fn main() {
     }
 
 }
+
+fn parse_opt_or_exit<T: FromStr>(arg_name: &'static str, args: &ArgMatches, context: &Context) -> Option<T> {
+    args.value_of(arg_name).map(|value| {
+        value.parse::<T>().map_err(|err| {
+            format!("Invalid argument: {}", arg_name)
+        }).or_abort_process(&context)
+    })
+}
+
 
 fn create_context(args: &ArgMatches) -> Context {
     let verbosity = match args.occurrences_of(args::VERBOSE) {

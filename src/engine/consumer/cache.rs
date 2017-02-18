@@ -15,11 +15,15 @@ pub struct Cache {
 }
 
 impl Cache {
-    pub fn new(max_events: usize, max_memory: MemoryLimit) -> Cache {
+
+    /// Ok, this is a little weird since caching is handled at higher level than storage...
+    /// When we initialize the cache, we need to know if there are pre-existing events that
+    /// aren't cached. This is the purpose of the `greatest_uncached_event` parameter.
+    pub fn new(max_events: usize, max_memory: MemoryLimit, greatest_uncached_event: FloEventId) -> Cache {
         Cache {
             entries: BTreeMap::new(),
             least_event_id: FloEventId::zero(),
-            last_evicted_id: FloEventId::zero(),
+            last_evicted_id: greatest_uncached_event,
             greatest_event_id: FloEventId::zero(),
             max_entries: max_events,
             max_memory: max_memory.as_bytes(),
