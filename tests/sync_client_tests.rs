@@ -1,5 +1,5 @@
-extern crate flo;
 extern crate flo_event;
+extern crate flo_sync_client;
 extern crate url;
 extern crate env_logger;
 extern crate tempdir;
@@ -12,9 +12,9 @@ extern crate nom;
 mod test_utils;
 
 use test_utils::*;
-use flo::client::sync::{SyncConnection, FloConsumer, ConsumerContext, ConsumerAction};
-use flo::protocol::ErrorKind;
-use flo::client::{ConsumerOptions, ClientError};
+use flo_sync_client::client::sync::{SyncConnection, FloConsumer, ConsumerContext, ConsumerAction};
+use flo_sync_client::protocol::ErrorKind;
+use flo_sync_client::client::{ConsumerOptions, ClientError};
 use flo_event::{FloEventId, OwnedFloEvent};
 use std::thread;
 use std::time::Duration;

@@ -20,3 +20,11 @@ chrono = "^0.2"
 tempdir = "*"
 env_logger = "*"
 url = "1.1"
+
+[[bin]]
+name = "flo"
+path = "src/main.rs"
+
+[lib]
+name = "flo_sync_client"
+path = "src/sync_client.rs"

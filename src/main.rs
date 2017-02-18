@@ -1,6 +1,6 @@
 #![feature(conservative_impl_trait)]
-
-extern crate flo;
+#![feature(collections_bound)]
+#![feature(btree_range)]
 
 #[macro_use]
 extern crate clap;
@@ -16,18 +16,31 @@ Since we want to use the one from the log crate, that has to go last.
 extern crate log;
 
 extern crate log4rs;
+extern crate num_cpus;
+extern crate byteorder;
+extern crate flo_event;
+extern crate tokio_core;
+extern crate futures;
+extern crate chrono;
+extern crate glob;
 
 #[cfg(test)]
 extern crate env_logger;
-extern crate num_cpus;
+#[cfg(test)]
+extern crate tempdir;
 
 mod logging;
+mod server;
+mod engine;
+mod time;
+mod protocol;
+mod serializer;
 
 use logging::{init_logging, LogLevelOption, LogFileOption};
 use clap::{App, Arg, ArgMatches};
 use std::str::FromStr;
 use std::path::{PathBuf, Path};
-use flo::server::{self, ServerOptions, MemoryLimit, MemoryUnit};
+use server::{ServerOptions, MemoryLimit, MemoryUnit};
 use std::net::{SocketAddr, ToSocketAddrs};
 
 const FLO_VERSION: &'static str = env!("CARGO_PKG_VERSION");

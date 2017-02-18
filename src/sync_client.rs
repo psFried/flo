@@ -1,6 +1,3 @@
-#![feature(conservative_impl_trait)]
-#![feature(collections_bound)]
-#![feature(btree_range)]
 
 extern crate flo_event;
 
@@ -28,9 +25,7 @@ extern crate env_logger;
 extern crate tempdir;
 
 pub mod client;
-pub mod engine;
 pub mod protocol;
-pub mod server;
 pub mod time;
 pub mod serializer;
 pub mod error;

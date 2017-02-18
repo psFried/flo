@@ -1,4 +1,3 @@
-extern crate flo;
 extern crate flo_event;
 extern crate url;
 extern crate env_logger;
