@@ -24,6 +24,10 @@ url = "1.1"
 name = "flo"
 path = "src/main.rs"
 
+[[bin]]
+name = "flo-client"
+path = "src/flo_client_cli.rs"
+
 [lib]
 name = "flo_sync_client"
 path = "src/sync_client.rs"

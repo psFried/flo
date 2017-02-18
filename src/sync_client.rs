@@ -26,7 +26,6 @@ pub mod client;
 pub mod protocol;
 pub mod time;
 pub mod serializer;
-pub mod error;
 pub mod event;
 
 pub use event::{FloEventId, FloEvent, OwnedFloEvent, ActorId, EventCounter, Timestamp};

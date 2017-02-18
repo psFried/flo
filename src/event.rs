@@ -2,7 +2,8 @@ extern crate chrono;
 
 use std::cmp::{Ord, PartialOrd, Ordering};
 use std::collections::HashMap;
-use std::fmt::Debug;
+use std::fmt::{self, Display, Debug};
+use std::str::FromStr;
 
 use chrono::{DateTime, UTC};
 
@@ -15,6 +16,44 @@ pub type EventCounter = u64;
 pub struct FloEventId {
     pub actor: ActorId,
     pub event_counter: EventCounter,
+}
+
+impl Display for FloEventId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(f, "{:020}{:05}", self.event_counter, self.actor)
+    }
+}
+
+impl FromStr for FloEventId {
+    type Err = &'static str;
+
+    fn from_str(input: &str) -> Result<Self, Self::Err> {
+        let err_message = "FloEventId must be a 25 character string with all numeric digits";
+        let counter_portion = input[..20].parse::<EventCounter>().map_err(|_| err_message)?;
+        let actor_portion = input[20..].parse::<ActorId>().map_err(|_| err_message)?;
+        Ok(FloEventId::new(actor_portion, counter_portion))
+    }
+}
+
+#[cfg(test)]
+mod event_id_test {
+    use super::*;
+
+    #[test]
+    fn flo_event_id_is_displayed_as_string() {
+        let id = FloEventId::new(7, 12345);
+        let result = format!("{}", id);
+        let expected = "0000000000000001234500007";
+        assert_eq!(expected, &result);
+    }
+
+    #[test]
+    fn flo_event_id_is_parsed_from_25_digit_string() {
+        let start = FloEventId::new(12345, 877655);
+        let as_str = format!("{}", start);
+        let result = as_str.parse::<FloEventId>().expect("failed to parse id");
+        assert_eq!(start, result);
+    }
 }
 
 pub const ZERO_EVENT_ID: FloEventId = FloEventId{event_counter: 0, actor: 0};
