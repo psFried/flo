@@ -1,5 +1,5 @@
 
-use flo_event::FloEventId;
+use event::FloEventId;
 use std::time::Duration;
 
 

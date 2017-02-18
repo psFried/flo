@@ -1,5 +1,5 @@
 use protocol::ServerMessage;
-use flo_event::{FloEventId, ActorId, EventCounter, OwnedFloEvent};
+use event::{FloEventId, ActorId, EventCounter, OwnedFloEvent};
 
 use futures::sync::mpsc::UnboundedSender;
 

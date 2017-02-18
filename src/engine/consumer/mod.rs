@@ -6,7 +6,7 @@ use self::client::NamespaceGlob;
 
 use engine::api::{ConnectionId, ConsumerMessage, ClientConnect, PeerVersionMap};
 use protocol::{ServerMessage, ProtocolMessage, ErrorMessage, ErrorKind};
-use flo_event::{FloEvent, OwnedFloEvent, FloEventId};
+use event::{FloEvent, OwnedFloEvent, FloEventId};
 use std::sync::{Arc, mpsc};
 use std::thread;
 use std::collections::HashMap;
@@ -237,7 +237,7 @@ impl ConsumerMap {
 #[cfg(test)]
 mod test {
     use super::*;
-    use flo_event::*;
+    use event::*;
     use engine::api::*;
     use protocol::*;
     use engine::event_store::EventReader;

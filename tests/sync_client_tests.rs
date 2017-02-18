@@ -1,4 +1,3 @@
-extern crate flo_event;
 extern crate flo_sync_client;
 extern crate url;
 extern crate env_logger;
@@ -15,7 +14,7 @@ use test_utils::*;
 use flo_sync_client::client::sync::{SyncConnection, FloConsumer, ConsumerContext, ConsumerAction};
 use flo_sync_client::protocol::ErrorKind;
 use flo_sync_client::client::{ConsumerOptions, ClientError};
-use flo_event::{FloEventId, OwnedFloEvent};
+use flo_sync_client::{FloEventId, OwnedFloEvent};
 use std::thread;
 use std::time::Duration;
 use std::net::{TcpStream, SocketAddr, SocketAddrV4, Ipv4Addr};

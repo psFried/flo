@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::collections::{BTreeMap, Bound};
 
-use flo_event::{FloEventId, FloEvent, OwnedFloEvent};
+use event::{FloEventId, FloEvent, OwnedFloEvent};
 use server::MemoryLimit;
 
 pub struct Cache {

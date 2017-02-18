@@ -1,5 +1,5 @@
 use nom::{be_u64, be_u32, be_u16, be_i64, IResult};
-use flo_event::{FloEventId, ActorId, Timestamp};
+use event::{FloEventId, ActorId, Timestamp};
 use serializer::Serializer;
 
 use std::io::{self, Read};
@@ -445,7 +445,7 @@ mod test {
     use super::*;
     use std::io::Read;
     use nom::IResult;
-    use flo_event::FloEventId;
+    use event::FloEventId;
 
     fn test_serialize_then_deserialize(mut message: ProtocolMessage) {
         let mut buffer = [0; 128];

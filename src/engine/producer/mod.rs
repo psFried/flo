@@ -4,7 +4,7 @@ use self::client_map::ClientMap;
 use engine::api::{ProduceEvent, ConsumerMessage, ProducerMessage, PeerVersionMap, ConnectionId};
 use engine::event_store::EventWriter;
 use engine::version_vec::VersionVector;
-use flo_event::{ActorId, OwnedFloEvent, EventCounter, FloEventId};
+use event::{ActorId, OwnedFloEvent, EventCounter, FloEventId};
 use protocol::{ProtocolMessage, EventAck};
 use server::metrics::ProducerMetrics;
 
@@ -137,7 +137,7 @@ mod test {
     use super::*;
     use engine::api::*;
     use protocol::*;
-    use flo_event::{FloEvent, OwnedFloEvent, ActorId};
+    use event::{FloEvent, OwnedFloEvent, ActorId};
     use engine::event_store::EventWriter;
     use engine::version_vec::VersionVector;
 

@@ -1,8 +1,8 @@
-extern crate flo_event;
 extern crate url;
 extern crate env_logger;
 extern crate tempdir;
 extern crate byteorder;
+extern crate flo_sync_client;
 
 use std::process::{Child, Command};
 use std::thread;

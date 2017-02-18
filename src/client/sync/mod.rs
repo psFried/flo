@@ -4,7 +4,7 @@ use std::io;
 use std::net::{TcpStream, ToSocketAddrs};
 
 use protocol::{ProtocolMessage, ProduceEventHeader, ReceiveEventHeader, ConsumerStart};
-use flo_event::{FloEventId, OwnedFloEvent};
+use event::{FloEventId, OwnedFloEvent};
 use super::{ClientError, ConsumerOptions};
 use std::collections::VecDeque;
 

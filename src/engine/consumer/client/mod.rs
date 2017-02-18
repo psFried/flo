@@ -2,7 +2,7 @@ mod namespace;
 
 pub use self::namespace::NamespaceGlob;
 
-use flo_event::{FloEvent, FloEventId};
+use event::{FloEvent, FloEventId};
 use engine::api::{ConnectionId, ClientConnect};
 use protocol::ServerMessage;
 

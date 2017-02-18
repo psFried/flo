@@ -1,6 +1,6 @@
 use engine::event_store::{StorageEngine, EventWriter, EventReader, StorageEngineOptions};
 use engine::version_vec::VersionVector;
-use flo_event::{FloEvent, FloEventId, OwnedFloEvent};
+use event::{FloEvent, FloEventId, OwnedFloEvent};
 
 use std::sync::{Arc, Mutex};
 use std::io;

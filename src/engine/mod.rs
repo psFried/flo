@@ -11,7 +11,7 @@ use self::consumer::ConsumerManager;
 use server::ServerOptions;
 use engine::event_store::{StorageEngine, EventReader, StorageEngineOptions};
 use engine::event_store::fs::{FSStorageEngine};
-use flo_event::ActorId;
+use event::ActorId;
 
 use futures::sync::mpsc::UnboundedSender;
 

@@ -2,7 +2,7 @@ pub mod sync;
 
 use std::io;
 use protocol::{ProtocolMessage, ErrorMessage};
-use flo_event::{FloEventId};
+use event::{FloEventId};
 
 
 #[derive(Debug)]

@@ -297,7 +297,7 @@ mod test {
     use futures::stream::Stream;
     use std::io::{self, Read, Cursor};
 
-    use flo_event::FloEventId;
+    use event::FloEventId;
     use server::engine::api::{ClientMessage, ConsumerMessage, ProducerMessage, ClientAuth};
     use protocol::{ClientProtocol, ClientProtocolImpl, ProtocolMessage, ProduceEventHeader};
     use nom::{IResult, Needed, ErrorKind};

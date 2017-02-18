@@ -18,7 +18,6 @@ extern crate log;
 extern crate log4rs;
 extern crate num_cpus;
 extern crate byteorder;
-extern crate flo_event;
 extern crate tokio_core;
 extern crate futures;
 extern crate chrono;
@@ -35,6 +34,7 @@ mod engine;
 mod time;
 mod protocol;
 mod serializer;
+mod event;
 
 use logging::{init_logging, LogLevelOption, LogFileOption};
 use clap::{App, Arg, ArgMatches};

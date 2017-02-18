@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use flo_event::{FloEventId, ActorId, EventCounter};
+use event::{FloEventId, ActorId, EventCounter};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct VersionVector(HashMap<ActorId, EventCounter>);
@@ -48,7 +48,7 @@ impl VersionVector {
 #[cfg(test)]
 mod test {
     use super::*;
-    use flo_event::FloEventId;
+    use event::FloEventId;
     use std::collections::HashSet;
 
     #[test]

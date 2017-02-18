@@ -1,4 +1,4 @@
-use flo_event::{FloEvent, OwnedFloEvent};
+use event::{FloEvent, OwnedFloEvent};
 use std::io::{self, Read};
 
 use protocol::ProtocolMessage;
@@ -118,7 +118,7 @@ mod test {
     use super::*;
     use nom::IResult;
     use std::io::Read;
-    use flo_event::{FloEventId, OwnedFloEvent};
+    use event::{FloEventId, OwnedFloEvent};
     use std::sync::Arc;
     use byteorder::{ByteOrder, BigEndian};
     use protocol::{ProtocolMessage, ClientProtocol, ClientProtocolImpl, ErrorMessage, ErrorKind, EventAck};

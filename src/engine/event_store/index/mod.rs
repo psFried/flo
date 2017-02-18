@@ -1,4 +1,4 @@
-use flo_event::{FloEventId, ActorId, EventCounter};
+use event::{FloEventId, ActorId, EventCounter};
 
 use engine::version_vec::VersionVector;
 use std::collections::{BTreeMap, Bound, HashMap};
@@ -104,7 +104,7 @@ impl EventIndex {
 #[cfg(test)]
 mod index_test {
     use super::*;
-    use flo_event::{FloEventId, ActorId, EventCounter};
+    use event::{FloEventId, ActorId, EventCounter};
 
     const ACTOR_ID: ActorId = 1;
 

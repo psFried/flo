@@ -5,7 +5,7 @@ pub mod fs;
 use std::path::PathBuf;
 use std::io;
 
-use flo_event::{FloEvent, OwnedFloEvent, FloEventId};
+use event::{FloEvent, OwnedFloEvent, FloEventId};
 use engine::version_vec::VersionVector;
 
 pub struct StorageEngineOptions {

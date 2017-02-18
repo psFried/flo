@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use engine::event_store::{EventWriter, StorageEngineOptions};
 use engine::event_store::index::EventIndex;
 
-use flo_event::{FloEvent, ActorId};
+use event::{FloEvent, ActorId};
 
 struct FileWriter {
     actor_id: ActorId,

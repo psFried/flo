@@ -8,7 +8,7 @@ use byteorder::{ByteOrder, BigEndian};
 
 use engine::event_store::index::{EventIndex, IndexEntry};
 use engine::event_store::{EventReader, StorageEngineOptions};
-use flo_event::{FloEventId, ActorId, OwnedFloEvent, Timestamp};
+use event::{FloEventId, ActorId, OwnedFloEvent, Timestamp};
 
 enum EventIterInner {
     Empty,

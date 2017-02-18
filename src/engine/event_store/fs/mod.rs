@@ -10,7 +10,7 @@ pub use self::reader::{FSEventReader, FSEventIter};
 use super::{StorageEngine, StorageEngineOptions};
 use engine::event_store::index::{EventIndex, IndexEntry};
 use engine::version_vec::VersionVector;
-use flo_event::{FloEvent, ActorId};
+use event::{FloEvent, ActorId};
 
 use std::sync::{Arc, RwLock};
 use std::path::{PathBuf, Path};
@@ -66,7 +66,7 @@ mod test {
     use super::*;
     use engine::event_store::{EventReader, EventWriter, StorageEngineOptions};
     use engine::event_store::index::EventIndex;
-    use flo_event::{FloEventId, OwnedFloEvent, Timestamp};
+    use event::{FloEventId, OwnedFloEvent, Timestamp};
     use std::io::Cursor;
 
     use tempdir::TempDir;

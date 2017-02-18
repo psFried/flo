@@ -1,4 +1,4 @@
-use flo_event::ActorId;
+use event::ActorId;
 use engine::api::{ConnectionId, ClientConnect};
 use protocol::{ServerMessage, ProtocolMessage};
 
