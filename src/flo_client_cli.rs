@@ -8,7 +8,7 @@ mod client_cli;
 
 
 use flo_sync_client::FloEventId;
-use clap::{App, Arg, ArgMatches, SubCommand};
+use clap::{App, Arg, ArgMatches, SubCommand, AppSettings};
 use client_cli::{Producer, ProduceOptions, Verbosity, Context, Critical, Consumer, CliConsumerOptions};
 
 use std::net::{SocketAddr, ToSocketAddrs, IpAddr};
@@ -40,12 +40,15 @@ fn create_app_args() -> App<'static, 'static> {
     App::new("flo")
             .version(crate_version!())
             .about("Command line tool for interacting with a flo server")
+            .setting(AppSettings::SubcommandRequired)
+            .setting(AppSettings::VersionlessSubcommands)
             .arg(Arg::with_name(args::VERBOSE)
                     .short("-v")
+                    .long("verbose")
                     .multiple(true)
                     .help("Increase the verbosity of output"))
             .arg(Arg::with_name(args::HOST)
-                    .short("h")
+                    .short("H")
                     .long("host")
                     .help("The hostname or ip address of the flo server")
                     .default_value("localhost"))
@@ -54,14 +57,14 @@ fn create_app_args() -> App<'static, 'static> {
                     .long("port")
                     .help("The port number of the flo server")
                     .default_value("3000"))
-            .arg(Arg::with_name("namespace")
-                    .short("n")
-                    .long("namespace")
-                    .help("The namespace to consume from or produce to")
-                    .takes_value(true)
-                    .required(true))
             .subcommand(SubCommand::with_name(args::PRODUCE)
-                    .help("Produce one or more events on the event stream")
+                    .about("Used to produce events onto the stream")
+                    .arg(Arg::with_name(args::NAMESPACE)
+                            .short("n")
+                            .long("namespace")
+                            .help("The namespace to produce the event in. By convention, this is slash separated path (/foo/bar/baz)")
+                            .takes_value(true)
+                            .required(true))
                     .arg(Arg::with_name(args::EVENT_DATA)
                             .short("d")
                             .long("data")
@@ -75,7 +78,13 @@ fn create_app_args() -> App<'static, 'static> {
                             .value_name("PARENT-EVENT-ID")
                             .help("The parent id of the event to be produced. Defaults to none") ) )
             .subcommand(SubCommand::with_name(args::CONSUME)
-                    .help("Read events from the event stream and print them to stdout")
+                    .about("Used to read events from the event stream")
+                    .arg(Arg::with_name(args::NAMESPACE)
+                            .short("n")
+                            .long("namespace")
+                            .help("The namespace to consume from. Supports glob syntax. Defaults to /**/* which returns all events")
+                            .takes_value(true)
+                            .default_value("/**/*"))
                     .arg(Arg::with_name(args::CONSUME_START_POSITION)
                             .short("s")
                             .long("start-after")
@@ -99,12 +108,12 @@ fn main() {
     let context = create_context(&args);
     let host = args.value_of(args::HOST).or_abort_process(&context).to_owned();
     let port = args.value_of(args::PORT).or_abort_process(&context).parse::<u16>().or_abort_with_message("invalid port argument", &context);
-    let namespace = args.value_of(args::NAMESPACE).or_abort_with_message("Must supply a namespace", &context).to_owned();
 
     match args.subcommand() {
         (args::PRODUCE, Some(produce_args)) => {
             let parent_id = get_parent_id(&produce_args, &context);
             let event_data = get_event_data(&produce_args);
+            let namespace = produce_args.value_of(args::NAMESPACE).or_abort_with_message("Must supply a namespace", &context).to_owned();
             let produce_options = ProduceOptions {
                 host: host,
                 port: port,
@@ -118,6 +127,7 @@ fn main() {
             let start_position = parse_opt_or_exit::<FloEventId>(args::CONSUME_START_POSITION, &consume_args, &context);
             let limit = parse_opt_or_exit::<u64>(args::CONSUME_LIMIT, &consume_args, &context);
             let await = consume_args.is_present(args::CONSUME_AWAIT);
+            let namespace = consume_args.value_of(args::NAMESPACE).or_abort_with_message("Must supply a namespace", &context).to_owned();
 
             let consume_opts = CliConsumerOptions {
                 host: host,
