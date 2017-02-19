@@ -3,6 +3,7 @@ mod server_message_stream;
 mod cluster_io;
 
 use std::net::SocketAddr;
+use std::sync::atomic;
 
 pub use self::client_message_stream::ClientMessageStream;
 pub use self::server_message_stream::ServerMessageStream;
@@ -19,10 +20,24 @@ use futures::{Future, Stream};
 
 pub use self::cluster_io::start_cluster_io;
 
+static OPEN_CONNECTION_COUNT: atomic::AtomicUsize = atomic::ATOMIC_USIZE_INIT;
+
+fn connection_opened() -> usize {
+    //fetch_add returns the previous value, so we need to add one to it
+    OPEN_CONNECTION_COUNT.fetch_add(1, atomic::Ordering::SeqCst) + 1
+}
+
+fn connection_closed() -> usize {
+    //fetch_sub returns the previous value, so we need to subtract one from it to get the current
+    OPEN_CONNECTION_COUNT.fetch_sub(1, atomic::Ordering::SeqCst) - 1
+}
+
+
 pub fn setup_message_streams(connection_id: ConnectionId, tcp_stream: TcpStream, client_addr: SocketAddr, mut engine: ChannelSender, remote_handle: &Remote) {
 
     remote_handle.spawn(move |_handle| {
-        debug!("Established new connection to: {:?} as connection_id: {}", client_addr, connection_id);
+        let current_connection_count = connection_opened();
+        info!("Established new connection to: {} as connection_id: {}, total active connections: {}", client_addr, connection_id, current_connection_count);
         let (server_tx, server_rx): (UnboundedSender<ServerMessage>, UnboundedReceiver<ServerMessage>) = unbounded();
         let (tcp_reader, tcp_writer) = tcp_stream.split();
 
@@ -44,19 +59,16 @@ pub fn setup_message_streams(connection_id: ConnectionId, tcp_stream: TcpStream,
             error!("Error writing to client: {:?}", err);
             format!("Error writing to client: {:?}", err)
         }).map(move |amount| {
-            info!("Wrote: {} bytes to client: {:?}, connection_id: {}, dropping connection", amount, client_addr, connection_id);
+            info!("Wrote: {} bytes to connection_id: {}, dropping connection", amount, connection_id);
             ()
         });
 
         client_to_server.select(server_to_client).then(move |res| {
-            match res {
-                Ok((compl, _fut)) => {
-                    info!("Finished with connection: {}, value: {:?}", connection_id, compl);
-                }
-                Err((err, _)) => {
-                    warn!("Error with connection: {}, err: {:?}", connection_id, err);
-                }
+            if let Err((err, _)) = res {
+                warn!("Closing connection: {} due to err: {:?}", connection_id, err);
             }
+            let current_connection_count = connection_closed();
+            info!("Closed connection_id: {} to address: {}, total active connections: {}", connection_id, client_addr, current_connection_count);
             Ok(())
         })
     });
