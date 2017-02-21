@@ -11,6 +11,7 @@ use std::str::FromStr;
 use std::path::PathBuf;
 
 const LOG_APPENDER: &'static str = "log_appender";
+const DEFAULT_LOG_MODULE: &'static str = "flo";
 
 pub enum LogFileOption {
     File(PathBuf),
@@ -54,9 +55,12 @@ pub fn init_logging(log_dest: LogFileOption, levels: Vec<LogLevelOption>) {
         }
     };
     let appender = Appender::builder().build(LOG_APPENDER.to_string(), appender);
-    //TODO: way to get name of module dynamically
-    let default_server_logger = Logger::builder().additive(true).build("flo".to_owned(), LogLevelFilter::Info);
-    let mut config = Config::builder().appender(appender).logger(default_server_logger);
+    let mut config = Config::builder().appender(appender);
+
+    let use_default = levels.iter().any(|level_opt| DEFAULT_LOG_MODULE == &level_opt.module);
+    if use_default {
+        config = config.logger(Logger::builder().additive(true).build("flo".to_owned(), LogLevelFilter::Info));
+    }
 
     for level_opt in levels {
         config = config.logger(Logger::builder().additive(true).build(level_opt.module, level_opt.log_level.to_log_level_filter()));

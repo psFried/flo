@@ -1,14 +1,13 @@
 mod writer;
 mod reader;
 
-pub const DATA_FILE_NAME: &'static str = "events";
 pub const DATA_FILE_EXTENSION: &'static str = ".events";
 pub const FLO_EVT: &'static str = "FLO_EVT\n";
 
 pub use self::writer::FSEventWriter;
 pub use self::reader::{FSEventReader, FSEventIter};
 use super::{StorageEngine, StorageEngineOptions};
-use engine::event_store::index::{EventIndex, IndexEntry};
+use engine::event_store::index::{EventIndex};
 use engine::version_vec::VersionVector;
 use event::{FloEvent, ActorId};
 
@@ -77,7 +76,6 @@ mod test {
 
     #[test]
     fn storage_engine_initialized_from_preexisting_events() {
-        ::env_logger::init();
         let storage_dir = TempDir::new("events_are_written_and_read_from_preexisting_directory").unwrap();
         let storage_opts = StorageEngineOptions {
             storage_dir: storage_dir.path().to_owned(),

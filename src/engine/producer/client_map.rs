@@ -1,4 +1,3 @@
-use event::ActorId;
 use engine::api::{ConnectionId, ClientConnect};
 use protocol::{ServerMessage, ProtocolMessage};
 

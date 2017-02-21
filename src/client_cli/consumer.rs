@@ -31,13 +31,7 @@ impl FloCliCommand for Consumer {
     fn run(input: Self::Input, output: &Context) -> Result<(), Self::Error> {
         let CliConsumerOptions { host, port, namespace, start_position, limit, await } = input;
 
-        let consumer_opts = ConsumerOptions {
-            namespace: namespace,
-            start_position: start_position,
-            max_events: limit.unwrap_or(::std::u64::MAX),
-            username: String::new(), // TODO: why the fuck did I have to add future-proofing fields to structs?
-            password: String::new(),
-        };
+        let consumer_opts = ConsumerOptions::simple(namespace, start_position, limit.unwrap_or(::std::u64::MAX));
 
         let address = format!("{}:{}", host, port);
 
@@ -79,7 +73,7 @@ impl <'a> FloConsumer for PrintingConsumer<'a> {
                 print_event(&self.context, event);
                 ConsumerAction::Continue
             }
-            Err(ref error) if error.is_timeout() && self.await => {
+            Err(ref error) if (error.is_timeout() || error.is_end_of_stream()) && self.await => {
                 self.context.write_stdout('.', Verbosity::Verbose);
                 ConsumerAction::Continue
             }
@@ -132,6 +126,9 @@ impl Display for ConsumerError {
             }
             ClientError::UnexpectedMessage(ref _message) => {
                 write!(f, "Received Unexpected message from flo server")
+            }
+            ClientError::EndOfStream => {
+                write!(f, "End of Stream")
             }
         }
     }

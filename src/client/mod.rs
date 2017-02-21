@@ -10,6 +10,7 @@ pub enum ClientError {
     Io(io::Error),
     FloError(ErrorMessage),
     UnexpectedMessage(ProtocolMessage),
+    EndOfStream,
 }
 
 impl ClientError {
@@ -17,6 +18,14 @@ impl ClientError {
         match *self {
             ClientError::Io(ref io_err) if io_err.kind() == io::ErrorKind::WouldBlock => true,
             _ => false
+        }
+    }
+
+    pub fn is_end_of_stream(&self) -> bool {
+        if let ClientError::EndOfStream = *self {
+            true
+        } else {
+            false
         }
     }
 }
@@ -41,6 +50,18 @@ pub struct ConsumerOptions {
     pub max_events: u64,
     pub username: String,
     pub password: String,
+}
+
+impl ConsumerOptions {
+    pub fn simple<S: ToString>(namespace: S, start_position: Option<FloEventId>, max_events: u64) -> ConsumerOptions {
+        ConsumerOptions {
+            namespace: namespace.to_string(),
+            start_position: start_position,
+            max_events: max_events,
+            username: String::new(),
+            password: String::new(),
+        }
+    }
 }
 
 

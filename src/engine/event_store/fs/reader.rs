@@ -26,7 +26,7 @@ struct WrappedIterator {
 }
 
 impl WrappedIterator {
-    fn new(mut iter: FSEventIter) -> WrappedIterator {
+    fn new(iter: FSEventIter) -> WrappedIterator {
         let mut wrapped_iter = WrappedIterator {
             iter: iter,
             next: None,
@@ -228,7 +228,7 @@ fn determine_existing_actors(storage_dir: &Path) -> Result<HashSet<ActorId>, io:
         let filename = filename_os_str.to_string_lossy();
         if let Some(actor_num_str) = filename.split_terminator(super::DATA_FILE_EXTENSION).next() {
             debug!("Found events file for actor: '{}'", actor_num_str);
-            let id = actor_num_str.parse::<ActorId>().map_err(|parse_err| {
+            let id = actor_num_str.parse::<ActorId>().map_err(|_parse_err| {
                 io::Error::new(io::ErrorKind::InvalidData, format!("The filename '{}' is invalid", filename))
             })?; // early return if the parse goes awry
             actors.insert(id);
@@ -263,7 +263,7 @@ impl FSEventReader {
         for &actor_id in existing_actors.iter() {
             debug!("Adding events to index from actor: {}", actor_id);
             let events_file = get_events_file(&storage_dir, actor_id);
-            let mut iter = FSEventIter::initialize(0, ::std::usize::MAX, &events_file, actor_id)?;
+            let iter = FSEventIter::initialize(0, ::std::usize::MAX, &events_file, actor_id)?;
 
             let mut num_events_for_actor = 0;
             let mut offset = 0;
@@ -291,7 +291,7 @@ impl EventReader for FSEventReader {
     type Error = io::Error;
 
     fn load_range(&mut self, range_start: FloEventId, limit: usize) -> Self::Iter {
-        let FSEventReader{ref mut index, ref mut storage_dir, ref mut existing_actors} = *self;
+        let FSEventReader{ref mut index, ref mut storage_dir, ..} = *self;
 
         let index = index.read().expect("Unable to acquire read lock on event index");
         let versions = index.get_version_vector().snapshot();

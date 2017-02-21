@@ -51,6 +51,10 @@ impl FloConsumer for TestConsumer {
                 self.events.push(event);
                 ConsumerAction::Continue
             },
+            Err(ref err) if err.is_end_of_stream() => {
+                println!("reached end of stream for: '{}'", &self.name);
+                ConsumerAction::Continue
+            }
             Err(err) => {
                 println!("Consumer: {} - Error reading event #{}: {:?}", &self.name, self.events.len() + 1, err);
                 ConsumerAction::Stop
@@ -79,13 +83,7 @@ fn consumer_transitions_from_reading_events_from_disk_to_reading_from_memory() {
     }
 
     let mut consumer = TestConsumer::new("consumer_transitions_from_reading_events_from_disk_to_reading_from_memory");
-    let options = ConsumerOptions {
-        namespace: "/the/namespace".to_owned(),
-        start_position: None,
-        max_events: 10,
-        username: String::new(),
-        password: String::new(),
-    };
+    let options = ConsumerOptions::simple("/the/namespace", None, 10);
     client.run_consumer(options, &mut consumer).expect("running consumer failed");
 
     assert_eq!(10, consumer.events.len());
@@ -117,23 +115,11 @@ integration_test!{consumer_responds_to_event, port, _tcp_stream, {
     let event_1_id = client.produce("/events", b"data").unwrap();
     let event_2_id = client.produce("/events", b"data 2").unwrap();
     let mut consumer = RespondingConsumer;
-    let options = ConsumerOptions {
-        namespace: "/events".to_owned(),
-        start_position: None,
-        max_events: 2,
-        username: String::new(),
-        password: String::new(),
-    };
+    let options = ConsumerOptions::simple("/events", None, 2);
     client.run_consumer(options, &mut consumer).expect("failed to run consumer");
 
     let mut consumer = TestConsumer::new("verify that response events exist");
-    let options = ConsumerOptions {
-        namespace: "/responses".to_owned(),
-        start_position: None,
-        max_events: 2,
-        username: String::new(),
-        password: String::new(),
-    };
+    let options = ConsumerOptions::simple("/responses", None, 2);
     client.run_consumer(options, &mut consumer).expect("failed to run second consumer");
 
     assert_eq!(2, consumer.events.len());
@@ -151,13 +137,7 @@ integration_test!{consumer_receives_error_after_starting_to_consume_with_invalid
 
     let mut consumer = TestConsumer::new("consumer_receives_error_after_starting_to_consume_with_invalid_namespace");
 
-    let options = ConsumerOptions{
-        namespace: "/***".to_owned(),
-        start_position: None,
-        max_events: 2,
-        username: String::new(),
-        password: String::new(),
-    };
+    let options = ConsumerOptions::simple("/***", None, 2);
     let result = client.run_consumer(options, &mut consumer);
 
     assert!(result.is_err());
@@ -182,13 +162,7 @@ integration_test!{consumer_reads_events_matching_glob_pattern, port, tcp_stream,
     client.produce("/animal/bird/magpie", b"data").expect("failed to produce event");
 
     let mut consumer = TestConsumer::new("consumer_reads_events_matching_glob_pattern");
-    let options = ConsumerOptions {
-        namespace: "/animal/mammal/*".to_owned(),
-        start_position: None,
-        max_events: 2,
-        username: String::new(),
-        password: String::new(),
-    };
+    let options = ConsumerOptions::simple("/animal/mammal/*", None, 2);
     client.run_consumer(options, &mut consumer).expect("failed to run consumer");
 
     assert_eq!(2, consumer.events.len());
@@ -210,13 +184,7 @@ integration_test!{consumer_only_receives_events_with_exactly_matching_namespace,
     client.produce(namespace, b"right data").expect("failed to produce event");
 
     let mut consumer = TestConsumer::new("consumer_only_receives_events_with_exactly_matching_namespace");
-    let options = ConsumerOptions {
-        namespace: namespace.to_owned(),
-        start_position: None,
-        max_events: 2,
-        username: String::new(),
-        password: String::new(),
-    };
+    let options = ConsumerOptions::simple(namespace, None, 2);
     client.run_consumer(options, &mut consumer).expect("failed to run consumer");
 
     assert_eq!(2, consumer.events.len());
@@ -230,15 +198,9 @@ integration_test!{consumer_only_receives_events_with_exactly_matching_namespace,
 integration_test!{clients_can_connect_and_disconnect_multiple_times_without_making_the_server_barf, port, tcp_stream, {
 
     let namespace = "/the/test/namespace";
-    fn opts(start: Option<FloEventId>, max_events: u64) -> ConsumerOptions {
-        ConsumerOptions {
-           namespace: "/the/test/namespace".to_owned(),
-           start_position: start,
-           max_events: max_events,
-           username: String::new(),
-           password: String::new(),
-        }
-    }
+    let opts = |start: Option<FloEventId>, max_events: u64| {
+        ConsumerOptions::simple(namespace, start, max_events)
+    };
 
 
     {
@@ -295,7 +257,7 @@ integration_test!{many_events_are_produced_using_sync_client, port, tcp_stream, 
 
 integration_test!{events_are_consumed_as_they_are_written, port, tcp_stream, {
 
-    let num_events = 3;
+    let num_events: usize = 3;
 
     let join_handle = thread::spawn(move || {
         let mut client = SyncConnection::connect(localhost(port)).expect("Failed to create client");
@@ -306,17 +268,10 @@ integration_test!{events_are_consumed_as_they_are_written, port, tcp_stream, {
         }).collect::<Vec<FloEventId>>()
     });
 
-    let mut consumer = TestConsumer::new("events are consumed after they are written");
+    let mut consumer = TestConsumer::new("events are consumed as they are written");
     let mut client = SyncConnection::from_tcp_stream(tcp_stream);
 
-    let options = ConsumerOptions {
-        namespace: "/the/test/namespace".to_owned(),
-        start_position: None,
-        max_events: num_events as u64,
-        username: String::new(),
-        password: String::new(),
-    };
-
+    let options = ConsumerOptions::simple("/the/test/namespace", None, num_events as u64);
     let result = client.run_consumer(options, &mut consumer);
 
     let produced_ids = join_handle.join().expect("Producer thread panicked!");

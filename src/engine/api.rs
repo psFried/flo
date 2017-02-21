@@ -1,12 +1,11 @@
 use protocol::ServerMessage;
-use event::{FloEventId, ActorId, EventCounter, OwnedFloEvent};
+use event::{FloEventId, ActorId, OwnedFloEvent};
 
 use futures::sync::mpsc::UnboundedSender;
 
 use std::time::Instant;
 use std::sync::atomic;
 use std::fmt::{self, Debug};
-use std::collections::HashMap;
 use std::net::SocketAddr;
 
 pub type ConnectionId = usize;
@@ -54,8 +53,8 @@ pub enum ConsumerMessage {
     ClientConnect(ClientConnect),
     ClientAuth(ClientAuth),
     UpdateMarker(ConnectionId, FloEventId),
-    StartConsuming(ConnectionId, String, i64),
-    ContinueConsuming(ConnectionId, FloEventId, String, i64),
+    StartConsuming(ConnectionId, String, u64),
+    ContinueConsuming(ConnectionId, FloEventId, String, u64),
     Disconnect(ConnectionId),
     EventPersisted(ConnectionId, OwnedFloEvent),
     EventLoaded(ConnectionId, OwnedFloEvent),

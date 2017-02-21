@@ -230,6 +230,7 @@ impl <S: IoStream> SyncConnection<S> {
                 Ok(event)
             },
             Ok(ClientMessage::Proto(ProtocolMessage::Error(error_msg))) => Err(ClientError::FloError(error_msg)),
+            Ok(ClientMessage::Proto(ProtocolMessage::AwaitingEvents)) => Err(ClientError::EndOfStream),
             Ok(ClientMessage::Proto(other)) => Err(ClientError::UnexpectedMessage(other)),
             Err(io_err) => Err(io_err.into())
         }
@@ -245,7 +246,7 @@ impl <S: IoStream> SyncConnection<S> {
     fn start_consuming(&mut self, namespace: String, max: u64) -> Result<(), ClientError> {
         let mut msg = ProtocolMessage::StartConsuming(ConsumerStart {
             namespace: namespace,
-            max_events: max as i64
+            max_events: max
         });
         self.stream.write(&mut msg).map_err(|e| e.into())
     }

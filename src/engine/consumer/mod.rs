@@ -86,7 +86,7 @@ impl <R: EventReader + 'static> ConsumerManager<R> {
         }
     }
 
-    fn start_peer_replication(&mut self, peer_version_info: PeerVersionMap) -> Result<(), String> {
+    fn start_peer_replication(&mut self, _peer_version_info: PeerVersionMap) -> Result<(), String> {
         //TODO: send events to peer
         Err("oh shit".to_owned())
     }
@@ -97,7 +97,7 @@ impl <R: EventReader + 'static> ConsumerManager<R> {
         }
     }
 
-    fn start_consuming(&mut self, connection_id: ConnectionId, namespace: String, limit: i64) -> Result<(), String> {
+    fn start_consuming(&mut self, connection_id: ConnectionId, namespace: String, limit: u64) -> Result<(), String> {
         let ConsumerManager{ref mut consumers, ref mut event_reader, ref mut my_sender, ref cache, ..} = *self;
 
         consumers.get_mut(connection_id).map(|mut client| {
@@ -127,6 +127,8 @@ impl <R: EventReader + 'static> ConsumerManager<R> {
                                 true
                             }
                         });
+                        debug!("Sent all existing events for connection_id: {}, Awaiting new Events", connection_id);
+                        client.send(ServerMessage::Other(ProtocolMessage::AwaitingEvents)).unwrap();
                     }
                 }
                 Err(ns_err) => {
@@ -149,11 +151,11 @@ fn namespace_glob_error(description: String) -> ServerMessage {
     ServerMessage::Other(ProtocolMessage::Error(err))
 }
 
-fn consume_from_file<R: EventReader + 'static>(event_sender: mpsc::Sender<ConsumerMessage>, client: &mut Client, event_reader: &mut R, start_id: FloEventId, namespace_glob: NamespaceGlob, namespace_glob_string: String, limit: i64) {
+fn consume_from_file<R: EventReader + 'static>(event_sender: mpsc::Sender<ConsumerMessage>, client: &mut Client, event_reader: &mut R, start_id: FloEventId, namespace_glob: NamespaceGlob, namespace_glob_string: String, limit: u64) {
     let connection_id = client.connection_id;
     // need to read event from disk since it isn't in the cache
     let event_iter = event_reader.load_range(start_id, limit as usize);
-    client.start_consuming(ConsumingState::forward_from_file(start_id, namespace_glob, limit as u64));
+    client.start_consuming(ConsumingState::forward_from_file(start_id, namespace_glob, limit));
 
     thread::spawn(move || {
         let mut sent_events = 0;
@@ -176,7 +178,7 @@ fn consume_from_file<R: EventReader + 'static>(event_sender: mpsc::Sender<Consum
         }
         debug!("Finished reader thread for connection_id: {}, sent_events: {}, last_send_event: {:?}", connection_id, sent_events, last_sent_id);
         if sent_events < limit as usize {
-            let continue_message = ConsumerMessage::ContinueConsuming(connection_id, last_sent_id, namespace_glob_string, limit - sent_events as i64);
+            let continue_message = ConsumerMessage::ContinueConsuming(connection_id, last_sent_id, namespace_glob_string, limit - sent_events as u64);
             event_sender.send(continue_message).expect("Failed to send continue_message");
         }
         //TODO: else send ConsumerCompleted message
@@ -245,7 +247,6 @@ mod test {
     use engine::api::*;
     use protocol::*;
     use engine::event_store::EventReader;
-    use engine::version_vec::VersionVector;
     use server::{MemoryLimit, MemoryUnit};
     use std::sync::mpsc::{channel, Receiver};
 

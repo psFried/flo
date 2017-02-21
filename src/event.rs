@@ -1,7 +1,6 @@
 extern crate chrono;
 
 use std::cmp::{Ord, PartialOrd, Ordering};
-use std::collections::HashMap;
 use std::fmt::{self, Display, Debug};
 use std::str::FromStr;
 

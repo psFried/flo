@@ -11,10 +11,6 @@ impl VersionVector {
         VersionVector(HashMap::new())
     }
 
-    pub fn with_capacity(initial_capacity: usize) -> VersionVector {
-        VersionVector(HashMap::with_capacity(initial_capacity))
-    }
-
     pub fn from_vec(ids: Vec<FloEventId>) -> Result<VersionVector, String> {
         let mut map = HashMap::with_capacity(ids.len());
         for id in ids {

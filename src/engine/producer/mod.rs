@@ -171,7 +171,7 @@ mod test {
     fn when_client_produces_event_then_version_vec_is_updated() {
         let (mut subject, mut consumer_manager) = setup();
         let client_connection_id  = 7;
-        let (client, mut client_receiver) = client_connects(client_connection_id, &mut subject);
+        let (_client, mut client_receiver) = client_connects(client_connection_id, &mut subject);
 
         let start_counter = subject.version_vec.get(SUBJECT_ACTOR_ID);
 

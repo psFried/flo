@@ -24,7 +24,6 @@ pub struct EventIndex {
     max_entries: usize,
     least_entry: FloEventId,
     greatest_entry: FloEventId,
-    max_event_counter_per_actor: HashMap<ActorId, EventCounter>,
     version_vec: VersionVector,
     max_actor_id: ActorId,
 }
@@ -36,14 +35,15 @@ impl EventIndex {
             max_entries: max_events,
             least_entry: FloEventId::new(0, 0),
             greatest_entry: FloEventId::new(0, 0),
-            max_event_counter_per_actor: HashMap::new(),
             version_vec: VersionVector::new(),
             max_actor_id: 0,
         }
     }
 
     pub fn add(&mut self, new_entry: IndexEntry) -> Option<IndexEntry> {
-        self.version_vec.update(new_entry.id);
+        //If this returns error, that just means there was already a greater entry in the version vector for that actor
+        // That's fine, as far as the index is concerned
+        let _ = self.version_vec.update(new_entry.id);
         self.max_actor_id = max(self.max_actor_id, new_entry.id.actor);
 
         let mut to_return = None;
@@ -85,10 +85,6 @@ impl EventIndex {
                     id.actor == actor_id
                 }).next()
                 .map(|(_id, entry)| entry)
-    }
-
-    pub fn contains(&self, event_id: FloEventId) -> bool {
-        self.entries.contains_key(&event_id)
     }
 
     pub fn get_greatest_event_id(&self) -> FloEventId {

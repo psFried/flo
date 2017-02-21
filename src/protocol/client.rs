@@ -10,6 +10,7 @@ pub mod headers {
     pub const RECEIVE_EVENT: &'static str = "FLO_EVT\n";
     pub const UPDATE_MARKER: &'static str = "FLO_UMK\n";
     pub const START_CONSUMING: &'static str = "FLO_CNS\n";
+    pub const AWAITING_EVENTS: &'static str = "FLO_AWT\n";
     pub const PEER_ANNOUNCE: &'static str = "FLO_PAN\n";
     pub const PEER_UPDATE: &'static str = "FLO_PUD\n";
     pub const EVENT_DELTA_HEADER: &'static str = "FLO_DEL\n";
@@ -142,7 +143,7 @@ named!{parse_start_consuming<ProtocolMessage>,
     chain!(
         _tag: tag!(START_CONSUMING) ~
         namespace: parse_str ~
-        count: be_i64,
+        count: be_u64,
         || {
             ProtocolMessage::StartConsuming(ConsumerStart {
                 namespace: namespace,
@@ -214,6 +215,8 @@ named!{parse_error_message<ProtocolMessage>,
     )
 }
 
+named!{parse_awaiting_events<ProtocolMessage>, map!(tag!(AWAITING_EVENTS), |_| {ProtocolMessage::AwaitingEvents})}
+
 named!{pub parse_any<ProtocolMessage>, alt!(
         parse_producer_event |
         parse_event_ack |
@@ -224,7 +227,8 @@ named!{pub parse_any<ProtocolMessage>, alt!(
         parse_update_marker |
         parse_start_consuming |
         parse_auth |
-        parse_error_message
+        parse_error_message |
+        parse_awaiting_events
 )}
 
 // Error message
@@ -283,7 +287,7 @@ pub struct ReceiveEventHeader {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct ConsumerStart {
-    pub max_events: i64,
+    pub max_events: u64,
     pub namespace: String,
 }
 
@@ -295,6 +299,7 @@ pub enum ProtocolMessage {
     ReceiveEvent(ReceiveEventHeader),
     UpdateMarker(FloEventId),
     StartConsuming(ConsumerStart),
+    AwaitingEvents,
     PeerAnnounce(ActorId),
     PeerUpdate{
         actor_id: ActorId,
@@ -362,6 +367,9 @@ impl ProtocolMessage {
 
     pub fn serialize(&self, buf: &mut [u8]) -> usize {
         match *self {
+            ProtocolMessage::AwaitingEvents => {
+                Serializer::new(buf).write_bytes(AWAITING_EVENTS).finish()
+            }
             ProtocolMessage::ProduceEvent(ref header) => {
                 serialize_produce_header(header, buf)
             }
@@ -371,7 +379,7 @@ impl ProtocolMessage {
             ProtocolMessage::StartConsuming(ConsumerStart{ref namespace, ref max_events}) => {
                 Serializer::new(buf).write_bytes(START_CONSUMING)
                                     .newline_term_string(namespace)
-                                    .write_i64(*max_events)
+                                    .write_u64(*max_events)
                                     .finish()
             }
             ProtocolMessage::UpdateMarker(id) => {
@@ -466,6 +474,11 @@ mod test {
                 panic!("Got incomplete: {:?}", need)
             }
         }
+    }
+
+    #[test]
+    fn awaiting_events_message_is_serialized_and_parsed() {
+        test_serialize_then_deserialize(ProtocolMessage::AwaitingEvents);
     }
 
     #[test]

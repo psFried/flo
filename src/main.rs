@@ -2,7 +2,6 @@
 #![feature(collections_bound)]
 #![feature(btree_range)]
 
-#[macro_use]
 extern crate clap;
 
 #[macro_use]

@@ -10,9 +10,10 @@ use engine::event_store::index::EventIndex;
 
 use event::{FloEvent, ActorId};
 
+//Actor and file_path are here so we can re-open files later
 struct FileWriter {
-    actor_id: ActorId,
-    file_path: PathBuf,
+    _actor_id: ActorId,
+    _file_path: PathBuf,
     writer: BufWriter<File>,
     current_offset: u64,
 }
@@ -28,8 +29,8 @@ impl FileWriter {
                 let writer = BufWriter::new(file);
 
                 FileWriter{
-                    actor_id: actor,
-                    file_path: events_file,
+                    _actor_id: actor,
+                    _file_path: events_file,
                     writer: writer,
                     current_offset: file_offset,
                 }
