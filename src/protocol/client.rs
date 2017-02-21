@@ -1,4 +1,16 @@
-use nom::{be_u64, be_u32, be_u16, be_i64, IResult};
+//! This is the wire protocol used to communicate between the server and client. Communication is done by sending and
+//! receiving series' of distinct messages. Each message begins with an 8 byte header that identifies the type of message.
+//! This is rather wasteful, but useful for the early stages when there's still a fair bit of debugging via manual inspection
+//! of buffers. Messages are parsed using nom parser combinators, and serialized using simple a wrapper around a writer.
+//!
+//! The special cases in the protocol are for sending/receiving the events themselves. Since events can be quite large, they
+//! are not actually implemented as a single message in the protocol, but rather as just a header. The header has all the basic
+//! information as well as the length of the data portion (the body of the event). The event is read by first reading the
+//! header and then reading however many bytes are indicated by the header for the body of the event.
+//!
+//! All numbers use big endian byte order.
+//! All Strings are newline terminated.
+use nom::{be_u64, be_u32, be_u16, IResult};
 use event::{FloEventId, ActorId, Timestamp};
 use serializer::Serializer;
 
@@ -21,6 +33,146 @@ pub mod headers {
 use self::headers::*;
 pub const ERROR_INVALID_NAMESPACE: u8 = 15;
 
+/// Describes the type of error. This gets serialized a u8
+#[derive(Debug, PartialEq, Clone)]
+pub enum ErrorKind {
+    /// Indicates that the namespace provided by a consumer was an invalid glob pattern
+    InvalidNamespaceGlob,
+}
+unsafe impl Send for ErrorKind {}
+
+/// Represents a response to any request that results in an error
+#[derive(Debug, PartialEq, Clone)]
+pub struct ErrorMessage {
+    /// The op_id of the request to make it easier to correlate request/response pairs
+    pub op_id: u32,
+
+    /// The type of error
+    pub kind: ErrorKind,
+
+    /// A human-readable description of the error
+    pub description: String,
+}
+
+impl ErrorKind {
+    /// Converts from the serialized u8 to an ErrorKind
+    pub fn from_u8(byte: u8) -> Result<ErrorKind, u8> {
+        match byte {
+            ERROR_INVALID_NAMESPACE => Ok(ErrorKind::InvalidNamespaceGlob),
+            other => Err(other)
+        }
+    }
+
+    /// Converts the ErrorKind to it's serialized u8 value
+    pub fn u8_value(&self) -> u8 {
+        match self {
+            &ErrorKind::InvalidNamespaceGlob => ERROR_INVALID_NAMESPACE,
+        }
+    }
+}
+
+/// The header of an event that a client (producer) wishes to add to the stream. This message MUST always be directly
+/// followed by the entire body of the event.
+#[derive(Debug, PartialEq, Clone)]
+pub struct ProduceEventHeader {
+    /// An opaque, client-generated number that can be used to correlate request/response pairs. The response to producing
+    /// an event will always be either an EventAck or an ErrorMessage with the same `op_id` as was sent in the header
+    pub op_id: u32,
+
+    /// The namespace to produce the event onto. Technically, a namespace can be any valid utf-8 string (except it cannot
+    /// contain any newline `\n` characters), but by convention they take the form of a path with segments separated by
+    /// forward slash `/` characters.
+    pub namespace: String,
+
+    /// Technically, this can be any FloEventId, but the convention is to set it to the id of the event that was being processed
+    /// when this event was produced. This allows correlation of request and response, as well as more sophisticated things
+    /// like tracing events through a complex system of services.
+    pub parent_id: Option<FloEventId>,
+
+    /// The length of the event data (body). This is the number of bytes that will be read immediately following the header.
+    /// This _can_ be 0, as events with no extra data (just a header) are totally valid.
+    pub data_length: u32,
+}
+
+/// Sent by the server to the producer of an event to acknowledge that the event was successfully persisted to the stream.
+#[derive(Debug, PartialEq, Clone)]
+pub struct EventAck {
+    /// This will be set to the `op_id` that was sent in the `ProduceEventHeader`
+    pub op_id: u32,
+
+    /// The id that was assigned to the event. This id is immutable and must be the same across all servers in a flo cluster.
+    pub event_id: FloEventId,
+}
+unsafe impl Send for EventAck {}
+
+/// Works the same as the `ProduceEventHeader`, except for receiving events from the server. This header must be directly
+/// followed by the event body
+#[derive(Debug, PartialEq, Clone)]
+pub struct ReceiveEventHeader {
+    /// The id (primary key) of the event
+    pub id: FloEventId,
+
+    /// The parent_id of the event. Used to correlate events
+    pub parent_id: Option<FloEventId>,
+
+    /// The namespace that the event was produced in
+    pub namespace: String,
+
+    /// The UTC timestamp associated with the event. Note that this is NOT monotonic. Timestamps are sent over the wire
+    /// as a u64 representing the number of milliseconds since the unix epoch.
+    pub timestamp: Timestamp,
+
+    /// The length of the event data immediately following the header
+    pub data_length: u32,
+}
+
+/// Sent by a client to the server to begin reading events from the stream.
+#[derive(Debug, PartialEq, Clone)]
+pub struct ConsumerStart {
+    /// The maximum number of events to consume. Set to `u64::MAX` if you want unlimited.
+    pub max_events: u64,
+
+    /// The namespace to consume from. This can be any valid glob pattern, to allow reading from multiple namespaces.
+    pub namespace: String,
+}
+
+
+/// Defines all the distinct messages that can be sent over the wire between client and server.
+#[derive(Debug, PartialEq, Clone)]
+pub enum ProtocolMessage {
+    /// Sent from a client (producer) to the server as a request to produce an event. See `ProduceEventHeader` docs for more.
+    ProduceEvent(ProduceEventHeader),
+    /// Sent from the server to client to acknowledge that an event was persisted successfully.
+    AckEvent(EventAck),
+    /// Functions similarly to `ProduceEventHeader`, except for sending complete events from the server to the client.
+    ReceiveEvent(ReceiveEventHeader),
+    /// Sent by a client to set it's current position in the event stream
+    UpdateMarker(FloEventId),
+    /// sent by a client to start reading events from the stream
+    StartConsuming(ConsumerStart),
+    /// Sent by the server to an active consumer to indicate that it has reached the end of the stream. The server will
+    /// continue to send events as more come in, but this just lets the client know that it may be some time before more
+    /// events are available. This message will only be sent at most once to a given consumer.
+    AwaitingEvents,
+    /// Sent between flo servers to announce their presence. Essentially makes a claim that the given server represents
+    /// the given `ActorId`
+    PeerAnnounce(ActorId),
+    /// Sent between flo servers to provide the version vector of the peer
+    PeerUpdate{
+        /// The ActorId of the peer that is claiming to have the versions listed
+        actor_id: ActorId,
+        /// For each actor that this peer has knowledge of, this will contain the highest `EventCounter` currently known.
+        version_vec: Vec<FloEventId>,
+    },
+    /// This is just a bit of speculative engineering, honestly. Just don't even bother using it.
+    ClientAuth {
+        namespace: String,
+        username: String,
+        password: String,
+    },
+    /// Represents an error response to any other message
+    Error(ErrorMessage),
+}
 
 named!{pub parse_str<String>,
     map_res!(
@@ -181,22 +333,6 @@ named!{parse_peer_update<ProtocolMessage>,
     )
 }
 
-named!{parse_event_delta_header<ProtocolMessage>,
-    chain!(
-        _tag: tag!(EVENT_DELTA_HEADER) ~
-        actor_id: be_u16 ~
-        versions: parse_version_vec ~
-        event_count: be_u32,
-        || {
-            ProtocolMessage::EventDeltaHeader{
-                actor_id: actor_id,
-                version_vec: versions,
-                event_count: event_count,
-            }
-        }
-    )
-}
-
 named!{parse_error_message<ProtocolMessage>,
     chain!(
         _tag: tag!(ERROR_HEADER) ~
@@ -222,7 +358,6 @@ named!{pub parse_any<ProtocolMessage>, alt!(
         parse_event_ack |
         parse_receive_event_header |
         parse_peer_update |
-        parse_event_delta_header |
         parse_peer_announce |
         parse_update_marker |
         parse_start_consuming |
@@ -231,92 +366,6 @@ named!{pub parse_any<ProtocolMessage>, alt!(
         parse_awaiting_events
 )}
 
-// Error message
-#[derive(Debug, PartialEq, Clone)]
-pub enum ErrorKind {
-    InvalidNamespaceGlob,
-}
-unsafe impl Send for ErrorKind {}
-
-#[derive(Debug, PartialEq, Clone)]
-pub struct ErrorMessage {
-    pub op_id: u32,
-    pub kind: ErrorKind,
-    pub description: String,
-}
-
-impl ErrorKind {
-    pub fn from_u8(byte: u8) -> Result<ErrorKind, u8> {
-        match byte {
-            ERROR_INVALID_NAMESPACE => Ok(ErrorKind::InvalidNamespaceGlob),
-            other => Err(other)
-        }
-    }
-
-    pub fn u8_value(&self) -> u8 {
-        match self {
-            &ErrorKind::InvalidNamespaceGlob => ERROR_INVALID_NAMESPACE,
-        }
-    }
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub struct ProduceEventHeader {
-    pub op_id: u32,
-    pub namespace: String,
-    pub parent_id: Option<FloEventId>,
-    pub data_length: u32,
-}
-
-// Event Acknowledged
-#[derive(Debug, PartialEq, Clone)]
-pub struct EventAck {
-    pub op_id: u32,
-    pub event_id: FloEventId,
-}
-unsafe impl Send for EventAck {}
-
-#[derive(Debug, PartialEq, Clone)]
-pub struct ReceiveEventHeader {
-    pub id: FloEventId,
-    pub parent_id: Option<FloEventId>,
-    pub namespace: String,
-    pub timestamp: Timestamp,
-    pub data_length: u32,
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub struct ConsumerStart {
-    pub max_events: u64,
-    pub namespace: String,
-}
-
-
-#[derive(Debug, PartialEq, Clone)]
-pub enum ProtocolMessage {
-    ProduceEvent(ProduceEventHeader),
-    AckEvent(EventAck),
-    ReceiveEvent(ReceiveEventHeader),
-    UpdateMarker(FloEventId),
-    StartConsuming(ConsumerStart),
-    AwaitingEvents,
-    PeerAnnounce(ActorId),
-    PeerUpdate{
-        actor_id: ActorId,
-        version_vec: Vec<FloEventId>,
-    },
-    EventDeltaHeader{
-        actor_id: ActorId,
-        version_vec: Vec<FloEventId>,
-        event_count: u32,
-    },
-    ClientAuth {
-        namespace: String,
-        username: String,
-        password: String,
-    },
-    Error(ErrorMessage),
-}
 
 fn serialize_produce_header(header: &ProduceEventHeader, mut buf: &mut [u8]) -> usize {
 
@@ -408,17 +457,6 @@ impl ProtocolMessage {
             ProtocolMessage::PeerAnnounce(actor_id) => {
                 Serializer::new(buf).write_bytes(headers::PEER_ANNOUNCE.as_bytes()).write_u16(actor_id).finish()
             }
-            ProtocolMessage::EventDeltaHeader {ref actor_id, ref version_vec, ref event_count} => {
-                let mut serializer = Serializer::new(buf)
-                        .write_bytes(headers::EVENT_DELTA_HEADER.as_bytes())
-                        .write_u16(*actor_id)
-                        .write_u16(version_vec.len() as u16); //safe cast since we should never have more than 2^16 actors in the system
-
-                for id in version_vec.iter() {
-                    serializer = serializer.write_u64(id.event_counter).write_u16(id.actor);
-                }
-                serializer.write_u32(*event_count).finish()
-            }
             ProtocolMessage::AckEvent(ref ack) => {
                 serialize_event_ack(ack, buf)
             }
@@ -497,21 +535,6 @@ mod test {
             op_id: 2345667,
             event_id: FloEventId::new(123, 456),
         }));
-    }
-
-    #[test]
-    fn event_delta_header_is_parsed() {
-        let version_vec = vec![
-            FloEventId::new(1, 3),
-            FloEventId::new(3, 88),
-            FloEventId::new(4, 72)
-        ];
-        let header = ProtocolMessage::EventDeltaHeader {
-            actor_id: 123,
-            version_vec: version_vec,
-            event_count: 3,
-        };
-        test_serialize_then_deserialize(header);
     }
 
     #[test]
