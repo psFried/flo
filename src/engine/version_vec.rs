@@ -21,6 +21,8 @@ impl VersionVector {
         Ok(VersionVector(map))
     }
 
+    /// Updates the version vector with the given id, returning an error if the given id has an event counter that's
+    /// smaller than the counter already contained in the version vector
     pub fn update(&mut self, id: FloEventId) -> Result<(), String> {
         let current = *self.0.entry(id.actor).or_insert(0);
         if id.event_counter <= current {
@@ -31,12 +33,26 @@ impl VersionVector {
         }
     }
 
+    /// updates the version vector with the given id, only if the id is greater than the one already contained in the vector
+    /// does nothing if the given id is smaller
+    pub fn update_if_greater(&mut self, id: FloEventId) {
+        let value: &mut EventCounter = self.0.entry(id.actor).or_insert(0);
+        *value = ::std::cmp::max(*value, id.event_counter);
+    }
+
+    /// returns the EventCounter for the given actor, or the default of 0 if an entry for that actor is not present
     pub fn get(&self, actor: ActorId) -> EventCounter {
         self.0.get(&actor).map(|c| *c).unwrap_or(0)
     }
 
+    /// Returns a clone of all the entries in the version vector as a vector of FloEventIds
     pub fn snapshot(&self) -> Vec<FloEventId> {
         self.0.iter().map(|(actor, counter)| FloEventId::new(*actor, *counter)).collect()
+    }
+
+    /// returns the smallest value in the version vector
+    pub fn min(&self) -> FloEventId {
+        self.0.iter().map(|(k, v)| FloEventId::new(*k, *v)).min().unwrap_or(FloEventId::zero())
     }
 }
 
@@ -46,6 +62,39 @@ mod test {
     use super::*;
     use event::FloEventId;
     use std::collections::HashSet;
+
+    #[test]
+    fn min_returns_zero_when_the_version_vector_is_empty() {
+        let mut subject = VersionVector::new();
+
+        let result = subject.min();
+        assert_eq!(FloEventId::zero(), result);
+    }
+
+    #[test]
+    fn min_returns_the_smallest_value_in_the_version_vector() {
+        let mut subject = VersionVector::new();
+        let min_value = FloEventId::new(9, 1);
+        subject.update_if_greater(FloEventId::new(5, 6));
+        subject.update_if_greater(min_value);
+        subject.update_if_greater(FloEventId::new(4, 6));
+
+        let result = subject.min();
+        assert_eq!(min_value, result);
+    }
+
+    #[test]
+    fn update_if_greater_updates_the_counter_when_it_is_greater_than_the_existing_one() {
+        let mut subject = VersionVector::new();
+        subject.update_if_greater(FloEventId::new(5, 6));
+        assert_eq!(6, subject.get(5));
+
+        subject.update_if_greater(FloEventId::new(5, 4));
+        assert_eq!(6, subject.get(5));
+
+        subject.update_if_greater(FloEventId::new(5, 7));
+        assert_eq!(7, subject.get(5));
+    }
 
     #[test]
     fn from_vec_returns_error_when_there_are_multiple_entries_for_the_same_actor() {

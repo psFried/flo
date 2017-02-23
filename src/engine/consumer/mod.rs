@@ -1,7 +1,7 @@
 mod client;
 mod cache;
 
-pub use self::client::{Client, ClientState, ClientSendError, ConsumingState};
+pub use self::client::{ClientImpl, ClientState, ClientSendError, ConsumingState};
 use self::client::NamespaceGlob;
 
 use engine::api::{ConnectionId, ConsumerMessage, ClientConnect, PeerVersionMap};
@@ -47,6 +47,9 @@ impl <R: EventReader + 'static> ConsumerManager<R> {
                 self.start_consuming(connection_id, namespace, limit)
             }
             ConsumerMessage::ContinueConsuming(connection_id, event_id, namespace, limit) => {
+                self.require_client(connection_id, |client| {
+
+                })
                 match self.consumers.update_consumer_position(connection_id, event_id) {
                     Ok(()) => self.start_consuming(connection_id, namespace, limit),
                     Err(_ignore) => {
@@ -97,65 +100,83 @@ impl <R: EventReader + 'static> ConsumerManager<R> {
         }
     }
 
-    fn start_consuming(&mut self, connection_id: ConnectionId, namespace: String, limit: u64) -> Result<(), String> {
-        let ConsumerManager{ref mut consumers, ref mut event_reader, ref mut my_sender, ref cache, ..} = *self;
+    fn require_client<F>(&mut self, connection_id: ConnectionId, with_client: F) -> Result<(), String>
+            where F: Fn(&mut ClientImpl) -> Result<(), ErrorMessage> {
 
-        consumers.get_mut(connection_id).map(|mut client| {
-            let start_id = client.get_current_position();
+        self.consumers.get_mut(connection_id).and_then(|client| {
 
-            match NamespaceGlob::new(&namespace) {
-                Ok(namespace_glob) => {
-                    let last_cache_evicted = cache.last_evicted_id();
-                    debug!("Client: {} starting to consume starting at: {:?}, cache last evicted id: {:?}", connection_id, start_id, last_cache_evicted);
-                    if start_id < cache.last_evicted_id() {
-
-                        consume_from_file(my_sender.clone(), client, event_reader, start_id, namespace_glob, namespace, limit);
-
-                    } else {
-                        debug!("Sending events from cache for connection: {}", connection_id);
-                        client.start_consuming(ConsumingState::forward_from_memory(start_id, namespace_glob, limit as u64));
-
-                        let mut remaining = limit;
-                        cache.do_with_range(start_id, |id, event| {
-                            if client.event_namespace_matches((*event).namespace()) {
-                                trace!("Sending event from cache. connection_id: {}, event_id: {:?}", connection_id, id);
-                                remaining -= 1;
-                                client.send(ServerMessage::Event((*event).clone())).unwrap(); //TODO: something better than unwrap
-                                remaining > 0
-                            } else {
-                                trace!("Not sending event: {:?} to client: {} due to mismatched namespace", id, connection_id);
-                                true
-                            }
-                        });
-                        debug!("Sent all existing events for connection_id: {}, Awaiting new Events", connection_id);
-                        client.send(ServerMessage::Other(ProtocolMessage::AwaitingEvents)).unwrap();
-                    }
-                }
-                Err(ns_err) => {
-                    debug!("Client: {} send invalid namespace glob pattern. Sending error", connection_id);
-                    let message = namespace_glob_error(ns_err);
-                    client.send(message).unwrap();
-                }
+            if let Err(message) = with_client(client) {
+                debug!("Sending error message to connection_id: {} - {:?}", connection_id, message);
+                client.send_message(ProtocolMessage::Error(message))
+            } else {
+                Ok(())
             }
         })
     }
 
+    fn start_consuming(&mut self, client: &mut ClientImpl, namespace: String, limit: u64) -> Result<(), ErrorMessage> {
+        let ConsumerManager{ref mut consumers, ref mut event_reader, ref mut my_sender, ref cache, ..} = *self;
+
+        let namespace_glob = NamespaceGlob::new(&namespace).map_err(|description| {
+            ErrorMessage{
+                op_id: 0,
+                kind: ErrorKind::InvalidNamespaceGlob,
+                description: description
+            }
+        })?;
+        let start_id = {
+            let version_vec = client.consume_from_namespace(namespace_glob, limit).map_err(|description| {
+                ErrorMessage{
+                    op_id: 0,
+                    kind: ErrorKind::InvalidConsumerState,
+                    description: description
+                }
+            })?;
+            version_vec.min()
+        };
+
+        self.send_events(client, start_id, limit);
+        Ok(())
+    }
+
+    fn send_events(&mut self, client: &mut ClientImpl, start_id: FloEventId, limit: u64) {
+        let ConsumerManager{ref mut consumers, ref mut event_reader, ref mut my_sender, ref cache, ..} = *self;
+        let last_cache_evicted = cache.last_evicted_id();
+        debug!("connection_id: {} starting to consume starting at: {:?}, cache last evicted id: {:?}", connection_id, start_id, last_cache_evicted);
+        if start_id < cache.last_evicted_id() {
+
+            consume_from_file(my_sender.clone(), client.connection_id, event_reader, start_id, limit);
+
+        } else {
+            debug!("Sending events from cache for connection_id: {}", connection_id);
+            let mut remaining = limit;
+            cache.do_with_range(start_id, |id, event| {
+                if client.should_send_event(&*event) {
+                    trace!("Sending event from cache. connection_id: {}, event_id: {:?}", connection_id, id);
+                    remaining -= 1;
+                    let result = client.send_event(event.clone());
+                    result.is_ok() && remaining > 0
+                } else {
+                    trace!("Not sending event: {:?} to connection_id: {} due to mismatched namespace", id, connection_id);
+                    true
+                }
+            });
+            debug!("Sent all existing events for connection_id: {}, Awaiting new Events", connection_id);
+            client.send(ServerMessage::Other(ProtocolMessage::AwaitingEvents)).unwrap();
+        }
+    }
+
+
 }
 
-fn namespace_glob_error(description: String) -> ServerMessage {
-    let err = ErrorMessage {
-        op_id: 0,
-        kind: ErrorKind::InvalidNamespaceGlob,
-        description: description,
-    };
-    ServerMessage::Other(ProtocolMessage::Error(err))
-}
+fn consume_from_file<R: EventReader + 'static>(event_sender: mpsc::Sender<ConsumerMessage>,
+                                               connection_id: ConnectionId,
+                                               event_reader: &mut R,
+                                               start_id: FloEventId,
+                                               limit: u64) {
 
-fn consume_from_file<R: EventReader + 'static>(event_sender: mpsc::Sender<ConsumerMessage>, client: &mut Client, event_reader: &mut R, start_id: FloEventId, namespace_glob: NamespaceGlob, namespace_glob_string: String, limit: u64) {
-    let connection_id = client.connection_id;
     // need to read event from disk since it isn't in the cache
     let event_iter = event_reader.load_range(start_id, limit as usize);
-    client.start_consuming(ConsumingState::forward_from_file(start_id, namespace_glob, limit));
 
     thread::spawn(move || {
         let mut sent_events = 0;
@@ -178,14 +199,13 @@ fn consume_from_file<R: EventReader + 'static>(event_sender: mpsc::Sender<Consum
         }
         debug!("Finished reader thread for connection_id: {}, sent_events: {}, last_send_event: {:?}", connection_id, sent_events, last_sent_id);
         if sent_events < limit as usize {
-            let continue_message = ConsumerMessage::ContinueConsuming(connection_id, last_sent_id, namespace_glob_string, limit - sent_events as u64);
+            let continue_message = ConsumerMessage::ContinueConsuming(connection_id, last_sent_id, limit - sent_events as u64);
             event_sender.send(continue_message).expect("Failed to send continue_message");
         }
-        //TODO: else send ConsumerCompleted message
     });
 }
 
-pub struct ConsumerMap(HashMap<ConnectionId, Client>);
+pub struct ConsumerMap(HashMap<ConnectionId, ClientImpl>);
 impl ConsumerMap {
     pub fn new() -> ConsumerMap {
         ConsumerMap(HashMap::with_capacity(32))
@@ -193,14 +213,14 @@ impl ConsumerMap {
 
     pub fn add(&mut self, connect: ClientConnect) {
         let connection_id = connect.connection_id;
-        self.0.insert(connection_id, Client::from_client_connect(connect));
+        self.0.insert(connection_id, ClientImpl::from_client_connect(connect));
     }
 
     pub fn remove(&mut self, connection_id: ConnectionId) {
         self.0.remove(&connection_id);
     }
 
-    pub fn get_mut(&mut self, connection_id: ConnectionId) -> Result<&mut Client, String> {
+    pub fn get_mut(&mut self, connection_id: ConnectionId) -> Result<&mut ClientImpl, String> {
         self.0.get_mut(&connection_id).ok_or_else(|| {
             format!("No Client exists for connection id: {}", connection_id)
         })

@@ -10,7 +10,7 @@
 //! domain. Consider the example of modeling the operations in a restaurant. The namespaces in your domain might look
 //! something like:
 //!
-//! ```
+//! <pre>
 //! restaurant/
 //!    ├── dining-room
 //!    │   ├── bar
@@ -25,7 +25,7 @@
 //!    └── staff
 //!        ├── Jen
 //!        └── Robbie
-//! ```
+//! </pre>
 //! So, an event pertaining to the dishwasher would be in the namespace `/restaurant/kitchen/dishwasher`, while an event
 //! related just to table 1 would be in `/restaurant/dining-room/tables/1`. If a consumer was interested in events
 //! related to _all tables_, then they would read events from `/restaurant/dining-room/tables/*`, or if they were interested

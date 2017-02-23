@@ -32,12 +32,15 @@ pub mod headers {
 
 use self::headers::*;
 pub const ERROR_INVALID_NAMESPACE: u8 = 15;
+pub const ERROR_INVALID_CONSUMER_STATE: u8 = 16;
 
 /// Describes the type of error. This gets serialized a u8
 #[derive(Debug, PartialEq, Clone)]
 pub enum ErrorKind {
     /// Indicates that the namespace provided by a consumer was an invalid glob pattern
     InvalidNamespaceGlob,
+    /// Indicates that the client connection was in an invalid state when it attempted some consumer operation
+    InvalidConsumerState,
 }
 unsafe impl Send for ErrorKind {}
 
@@ -67,6 +70,7 @@ impl ErrorKind {
     pub fn u8_value(&self) -> u8 {
         match self {
             &ErrorKind::InvalidNamespaceGlob => ERROR_INVALID_NAMESPACE,
+            &ErrorKind::InvalidConsumerState => ERROR_INVALID_CONSUMER_STATE
         }
     }
 }

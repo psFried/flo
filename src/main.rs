@@ -34,6 +34,7 @@ mod time;
 mod protocol;
 mod serializer;
 mod event;
+mod channels;
 
 use logging::{init_logging, LogLevelOption, LogFileOption};
 use clap::{App, Arg, ArgMatches};
