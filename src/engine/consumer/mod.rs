@@ -1,8 +1,7 @@
 mod client;
 mod cache;
 
-pub use self::client::{ClientImpl, ClientState, ClientSendError, ConsumingState};
-use self::client::NamespaceGlob;
+pub use self::client::{ClientImpl, NamespaceGlob};
 
 use engine::api::{ConnectionId, ConsumerMessage, ClientConnect, PeerVersionMap};
 use protocol::{ServerMessage, ProtocolMessage, ErrorMessage, ErrorKind};
@@ -15,22 +14,37 @@ use self::cache::Cache;
 use server::MemoryLimit;
 use engine::event_store::EventReader;
 
-pub struct ConsumerManager<R: EventReader + 'static> {
+struct ManagerState<R: EventReader + 'static> {
     event_reader: R,
     my_sender: mpsc::Sender<ConsumerMessage>,
-    consumers: ConsumerMap,
     greatest_event_id: FloEventId,
-    cache: Cache
+    cache: Cache,
+}
+
+impl <R: EventReader + 'static> ManagerState<R> {
+
+    fn update_greatest_event(&mut self, id: FloEventId) {
+        if id > self.greatest_event_id {
+            self.greatest_event_id = id;
+        }
+    }
+}
+
+pub struct ConsumerManager<R: EventReader + 'static> {
+    consumers: ConsumerMap,
+    state: ManagerState<R>,
 }
 
 impl <R: EventReader + 'static> ConsumerManager<R> {
     pub fn new(reader: R, sender: mpsc::Sender<ConsumerMessage>, greatest_event_id: FloEventId, max_cached_events: usize, max_cache_memory: MemoryLimit) -> Self {
         ConsumerManager {
-            my_sender: sender,
-            event_reader: reader,
             consumers: ConsumerMap::new(),
-            greatest_event_id: greatest_event_id,
-            cache: Cache::new(max_cached_events, max_cache_memory, greatest_event_id),
+            state: ManagerState {
+                my_sender: sender,
+                event_reader: reader,
+                greatest_event_id: greatest_event_id,
+                cache: Cache::new(max_cached_events, max_cache_memory, greatest_event_id),
+            },
         }
     }
 
@@ -44,31 +58,30 @@ impl <R: EventReader + 'static> ConsumerManager<R> {
                 Ok(())
             }
             ConsumerMessage::StartConsuming(connection_id, namespace, limit) => {
-                self.start_consuming(connection_id, namespace, limit)
-            }
-            ConsumerMessage::ContinueConsuming(connection_id, event_id, namespace, limit) => {
-                self.require_client(connection_id, |client| {
-
+                self.require_client(connection_id, move |mut client, mut state| {
+                    ConsumerManager::start_consuming(state, client, namespace, limit)
                 })
-                match self.consumers.update_consumer_position(connection_id, event_id) {
-                    Ok(()) => self.start_consuming(connection_id, namespace, limit),
-                    Err(_ignore) => {
-                        /*
-                        If we reach this block, it's because the connection was disconnected prior to the reader thread completing.
-                        This probably isn't a server error, but is probably an unexpected disconnect.
-                        */
-                        warn!("cannot ContinueConsuming for Consumer: {} because the client has been disconnected", connection_id);
-                        Ok(())
-                    }
+            }
+            ConsumerMessage::ContinueConsuming(connection_id, event_id, limit) => {
+                let result = self.require_client(connection_id, move |mut client, mut state| {
+                    //TODO: remove limit from continueConsuming message, since the reader thread has no idea which ones actually match the namespace
+                    ConsumerManager::send_events(state, client, event_id, limit);
+                    Ok(())
+                });
+                // This condition is a little weird, but not necessarily an error from the server's perspective
+                if let Err(_) = result {
+                    warn!("connection_id: {} was disconnected, so ContinueConsuming will not be processed", connection_id);
                 }
+                Ok(())
             }
             ConsumerMessage::EventLoaded(connection_id, event) => {
-                self.update_greatest_event(event.id);
+                //TODO: think about caching events as they are loaded from disk. Currently we prefer to only cache the most recent events
+                self.state.update_greatest_event(event.id);
                 self.consumers.send_event(connection_id, Arc::new(event))
             }
             ConsumerMessage::EventPersisted(_connection_id, event) => {
-                self.update_greatest_event(event.id);
-                let event_rc = self.cache.insert(event);
+                self.state.update_greatest_event(event.id);
+                let event_rc = self.state.cache.insert(event);
                 self.consumers.send_event_to_all(event_rc)
             }
             ConsumerMessage::UpdateMarker(connection_id, event_id) => {
@@ -94,18 +107,15 @@ impl <R: EventReader + 'static> ConsumerManager<R> {
         Err("oh shit".to_owned())
     }
 
-    fn update_greatest_event(&mut self, id: FloEventId) {
-        if id > self.greatest_event_id {
-            self.greatest_event_id = id;
-        }
-    }
 
     fn require_client<F>(&mut self, connection_id: ConnectionId, with_client: F) -> Result<(), String>
-            where F: Fn(&mut ClientImpl) -> Result<(), ErrorMessage> {
+            where F: FnOnce(&mut ClientImpl, &mut ManagerState<R>) -> Result<(), ErrorMessage> {
 
-        self.consumers.get_mut(connection_id).and_then(|client| {
+        let ConsumerManager{ref mut consumers, ref mut state, ..} = *self;
 
-            if let Err(message) = with_client(client) {
+        consumers.get_mut(connection_id).and_then(|client| {
+
+            if let Err(message) = with_client(client, state) {
                 debug!("Sending error message to connection_id: {} - {:?}", connection_id, message);
                 client.send_message(ProtocolMessage::Error(message))
             } else {
@@ -114,8 +124,7 @@ impl <R: EventReader + 'static> ConsumerManager<R> {
         })
     }
 
-    fn start_consuming(&mut self, client: &mut ClientImpl, namespace: String, limit: u64) -> Result<(), ErrorMessage> {
-        let ConsumerManager{ref mut consumers, ref mut event_reader, ref mut my_sender, ref cache, ..} = *self;
+    fn start_consuming(state: &mut ManagerState<R>, client: &mut ClientImpl, namespace: String, limit: u64) -> Result<(), ErrorMessage> {
 
         let namespace_glob = NamespaceGlob::new(&namespace).map_err(|description| {
             ErrorMessage{
@@ -123,7 +132,8 @@ impl <R: EventReader + 'static> ConsumerManager<R> {
                 kind: ErrorKind::InvalidNamespaceGlob,
                 description: description
             }
-        })?;
+        })?; // early return if namespace glob parse fails
+
         let start_id = {
             let version_vec = client.consume_from_namespace(namespace_glob, limit).map_err(|description| {
                 ErrorMessage{
@@ -131,26 +141,26 @@ impl <R: EventReader + 'static> ConsumerManager<R> {
                     kind: ErrorKind::InvalidConsumerState,
                     description: description
                 }
-            })?;
+            })?; // early return if the client is not in a valid state to start consuming
             version_vec.min()
         };
 
-        self.send_events(client, start_id, limit);
+        ConsumerManager::send_events(state, client, start_id, limit);
         Ok(())
     }
 
-    fn send_events(&mut self, client: &mut ClientImpl, start_id: FloEventId, limit: u64) {
-        let ConsumerManager{ref mut consumers, ref mut event_reader, ref mut my_sender, ref cache, ..} = *self;
-        let last_cache_evicted = cache.last_evicted_id();
+    fn send_events(state: &mut ManagerState<R>, client: &mut ClientImpl, start_id: FloEventId, limit: u64) {
+        let last_cache_evicted = state.cache.last_evicted_id();
+        let connection_id = client.connection_id;
         debug!("connection_id: {} starting to consume starting at: {:?}, cache last evicted id: {:?}", connection_id, start_id, last_cache_evicted);
-        if start_id < cache.last_evicted_id() {
+        if start_id < last_cache_evicted {
 
-            consume_from_file(my_sender.clone(), client.connection_id, event_reader, start_id, limit);
+            consume_from_file(state.my_sender.clone(), connection_id, &mut state.event_reader, start_id, limit);
 
         } else {
             debug!("Sending events from cache for connection_id: {}", connection_id);
             let mut remaining = limit;
-            cache.do_with_range(start_id, |id, event| {
+            state.cache.do_with_range(start_id, |id, event| {
                 if client.should_send_event(&*event) {
                     trace!("Sending event from cache. connection_id: {}, event_id: {:?}", connection_id, id);
                     remaining -= 1;
@@ -161,12 +171,15 @@ impl <R: EventReader + 'static> ConsumerManager<R> {
                     true
                 }
             });
-            debug!("Sent all existing events for connection_id: {}, Awaiting new Events", connection_id);
-            client.send(ServerMessage::Other(ProtocolMessage::AwaitingEvents)).unwrap();
+
+            if remaining > 0 {
+                debug!("Sent all existing events for connection_id: {}, Awaiting new Events", connection_id);
+                client.send_message(ProtocolMessage::AwaitingEvents);
+            } else {
+                debug!("Finished sending requested number of events for conenction_id: {}, not awaiting more", connection_id);
+            }
         }
     }
-
-
 }
 
 fn consume_from_file<R: EventReader + 'static>(event_sender: mpsc::Sender<ConsumerMessage>,
@@ -230,7 +243,7 @@ impl ConsumerMap {
         self.0.get_mut(&connection_id).ok_or_else(|| {
             format!("Consumer: {} does not exist. Cannot update position", connection_id)
         }).map(|consumer| {
-            consumer.set_position(new_position);
+            consumer.update_version_vector(new_position);
         })
     }
 
@@ -238,24 +251,28 @@ impl ConsumerMap {
         self.0.get_mut(&connection_id).ok_or_else(|| {
             format!("Cannot send event to consumer because consumer: {} does not exist", connection_id)
         }).and_then(|mut client| {
-            if client.event_namespace_matches(event.namespace()) {
-                client.send(ServerMessage::Event(event)).map_err(|err| {
-                    format!("Error sending event to server channel: {:?}", err)
-                })
-            } else {
-                Ok(())
-            }
+            ConsumerMap::maybe_send_event_to_client(client, &event)
         })
     }
 
     pub fn send_event_to_all(&mut self, event: Arc<OwnedFloEvent>) -> Result<(), String> {
         for client in self.0.values_mut() {
-            trace!("Checking to send event: {:?}, to client: {}, {:?}", event.id(), client.connection_id(), client.is_awaiting_new_event());
-            if client.is_awaiting_new_event() && client.event_namespace_matches(event.namespace()) {
-                client.send(ServerMessage::Event(event.clone())).unwrap();
+            let result = ConsumerMap::maybe_send_event_to_client(client, &event);
+            if let Err(message) = result {
+                warn!("Failed to send event: {} to connection_id: {} due to error: '{}'", event.id(), client.connection_id, message);
             }
         }
         Ok(())
+    }
+
+    fn maybe_send_event_to_client(client: &mut ClientImpl, event: &Arc<OwnedFloEvent>) -> Result<(), String> {
+        let should_send = client.should_send_event(&**event);
+        trace!("Checking to send event: {:?}, to connection_id: {}, {:?}", event.id(), client.connection_id(), should_send);
+        if should_send {
+            client.send_event(event.clone())
+        } else {
+            Ok(())
+        }
     }
 }
 

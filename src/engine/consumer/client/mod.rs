@@ -32,73 +32,10 @@ impl ::std::fmt::Display for ClientSendError {
     }
 }
 
-#[derive(Debug, PartialEq)]
-pub enum ConsumeType {
-    File,
-    Memory,
-}
-
-pub struct ConsumingState {
-    pub last_event_id: FloEventId,
-    pub consume_type: ConsumeType,
-    pub remaining: u64,
-    pub namespace: NamespaceGlob,
-}
-
-impl ConsumingState {
-    pub fn forward_from_file(id: FloEventId, namespace: NamespaceGlob, limit: u64) -> ConsumingState {
-        ConsumingState {
-            last_event_id: id,
-            consume_type: ConsumeType::File,
-            remaining: limit,
-            namespace: namespace
-        }
-    }
-
-    pub fn forward_from_memory(id: FloEventId, namespace: NamespaceGlob, limit: u64) -> ConsumingState {
-        ConsumingState {
-            namespace: namespace,
-            last_event_id: id,
-            consume_type: ConsumeType::Memory,
-            remaining: limit,
-        }
-    }
-}
-
-pub enum ClientState {
-    NotConsuming(FloEventId),
-    Consuming(ConsumingState),
-}
-
-impl ClientState {
-    fn update_event_sent(&mut self, id: FloEventId, connection_id: ConnectionId) {
-        let mut new_state: Option<ClientState> = None;
-
-        match self {
-            &mut ClientState::Consuming(ref state) if state.remaining == 1 => {
-                // this is the last event, so transition to NotConsuming
-                new_state = Some(ClientState::NotConsuming(state.last_event_id));
-            }
-            &mut ClientState::Consuming(ref mut state) => {
-                trace!("updating connection_id: {}, last_event_id: {:?}, remaining: {}", connection_id, state.last_event_id, state.remaining);
-                state.last_event_id = id;
-                state.remaining -= 1;
-            }
-            &mut ClientState::NotConsuming(_) => {
-                unreachable!() //TODO: maybe redesign this to provide a better guarantee that no event will be sent while in NotConsuming state
-            }
-        }
-
-        if let Some(state) = new_state {
-            *self = state;
-        }
-    }
-}
-
 pub type ClientImpl = Client<UnboundedSender<ServerMessage>>;
 
-#[derive(Debug)]
-enum NewConsumerState {
+#[derive(Debug, PartialEq)]
+enum ConsumerState {
     Consumer{
         namespace: NamespaceGlob,
         remaining_events: u64,
@@ -107,9 +44,9 @@ enum NewConsumerState {
     NotConsuming,
 }
 
-impl NewConsumerState {
+impl ConsumerState {
     fn is_not_consuming(&self) -> bool {
-        if let NewConsumerState::NotConsuming = *self {
+        if let ConsumerState::NotConsuming = *self {
             true
         } else {
             false
@@ -122,9 +59,7 @@ pub struct Client<T: Sender<ServerMessage>> {
     pub addr: SocketAddr,
     sender: T,
     version_vector: VersionVector,
-    new_consumer_state: NewConsumerState,
-    // TODO: deprecate this field
-    consumer_state: ClientState,
+    new_consumer_state: ConsumerState,
 }
 
 impl Client<UnboundedSender<ServerMessage>> {
@@ -134,9 +69,7 @@ impl Client<UnboundedSender<ServerMessage>> {
             addr: connect_message.client_addr,
             sender: connect_message.message_sender,
             version_vector: VersionVector::new(),
-            new_consumer_state: NewConsumerState::NotConsuming,
-
-            consumer_state: ClientState::NotConsuming(FloEventId::new(0, 0)),
+            new_consumer_state: ConsumerState::NotConsuming,
         }
     }
 }
@@ -149,9 +82,7 @@ impl <T: Sender<ServerMessage>> Client<T> {
             addr: addr,
             sender: sender,
             version_vector: VersionVector::new(),
-            new_consumer_state: NewConsumerState::NotConsuming,
-
-            consumer_state: ClientState::NotConsuming(FloEventId::zero())
+            new_consumer_state: ConsumerState::NotConsuming,
         }
     }
 
@@ -163,8 +94,8 @@ impl <T: Sender<ServerMessage>> Client<T> {
         let current_id = self.version_vector.get(event.id().actor);
         if event.id().event_counter > current_id {
             match &self.new_consumer_state {
-                &NewConsumerState::Consumer { ref namespace, .. } => namespace.matches(event.namespace()),
-                &NewConsumerState::Peer => true,
+                &ConsumerState::Consumer { ref namespace, .. } => namespace.matches(event.namespace()),
+                &ConsumerState::Peer => true,
                 _ => false
             }
         } else {
@@ -176,9 +107,16 @@ impl <T: Sender<ServerMessage>> Client<T> {
         self.version_vector.update_if_greater(id);
     }
 
+    pub fn continue_consuming(&self) -> Option<u64> {
+        match self.new_consumer_state {
+            ConsumerState::Consumer {remaining_events, ..} => Some(remaining_events),
+            _ => None
+        }
+    }
+
     pub fn consume_from_namespace(&mut self, namespace: NamespaceGlob, limit: u64) -> Result<&VersionVector, String> {
         if self.new_consumer_state.is_not_consuming() {
-            self.new_consumer_state = NewConsumerState::Consumer {
+            self.new_consumer_state = ConsumerState::Consumer {
                 namespace: namespace,
                 remaining_events: limit,
             };
@@ -192,7 +130,7 @@ impl <T: Sender<ServerMessage>> Client<T> {
 
     pub fn start_peer_replication(&mut self, version_vec: VersionVector) -> Result<(), String> {
         if self.new_consumer_state.is_not_consuming() {
-            self.new_consumer_state = NewConsumerState::Peer;
+            self.new_consumer_state = ConsumerState::Peer;
             Ok(())
         } else {
             Err(format!("Cannot start peer replication for connection_id: {} because state is already: {:?}",
@@ -202,7 +140,7 @@ impl <T: Sender<ServerMessage>> Client<T> {
     }
 
     pub fn stop_consuming(&mut self) {
-        self.new_consumer_state = NewConsumerState::NotConsuming;
+        self.new_consumer_state = ConsumerState::NotConsuming;
     }
 
     pub fn send_message(&self, message: ProtocolMessage) -> Result<(), String> {
@@ -210,6 +148,21 @@ impl <T: Sender<ServerMessage>> Client<T> {
     }
 
     pub fn send_event(&mut self, event: Arc<OwnedFloEvent>) -> Result<(), String> {
+        let stop_consuming = match self.new_consumer_state {
+            ConsumerState::NotConsuming => {
+                return Err(format!("Tried to send an event to connection_id: {} while in NotConsuming state", self.connection_id));
+            }
+            ConsumerState::Consumer {ref mut remaining_events, ..} => {
+                *remaining_events -= 1;
+                *remaining_events == 0
+            }
+            _ => false
+        };
+
+        if stop_consuming {
+            debug!("connection_id: {} transitioning from consuming to NotConsuming", self.connection_id);
+            self.new_consumer_state = ConsumerState::NotConsuming;
+        }
         self.version_vector.update(event.id).and_then(|()| {
             self.do_send(ServerMessage::Event(event))
         })
@@ -221,56 +174,6 @@ impl <T: Sender<ServerMessage>> Client<T> {
         })
     }
 
-
-
-    ///// Old Client api below; replacing these shit methods with better ones above
-
-    pub fn start_consuming(&mut self, state: ConsumingState) {
-        self.consumer_state = ClientState::Consuming(state);
-    }
-
-    pub fn event_namespace_matches(&self, event_namespace: &str) -> bool {
-        if let ClientState::Consuming(ref state) = self.consumer_state {
-            state.namespace.matches(event_namespace)
-        } else {
-            false
-        }
-    }
-
-    pub fn send(&mut self, message: ServerMessage) -> Result<(), ClientSendError> {
-        let conn_id = self.connection_id;
-        trace!("Sending message to client: {} : {:?}", conn_id, message);
-        if let &ServerMessage::Event(ref event) = &message {
-            self.consumer_state.update_event_sent(*event.id(), self.connection_id);
-        }
-        self.sender.send(message).map_err(|send_err| {
-            ClientSendError(send_err.into_message())
-        })
-    }
-
-    pub fn is_awaiting_new_event(&self) -> bool {
-        match self.consumer_state {
-            ClientState::Consuming(ref state) if state.consume_type == ConsumeType::Memory => true,
-            _ => false
-        }
-    }
-
-    pub fn get_current_position(&self) -> FloEventId {
-        match self.consumer_state {
-            ClientState::NotConsuming(id) => id,
-            ClientState::Consuming(ref state) => state.last_event_id
-        }
-    }
-
-    pub fn set_position(&mut self, new_position: FloEventId) {
-        match self.consumer_state {
-            ClientState::NotConsuming(ref mut id) => *id = new_position,
-            ClientState::Consuming(ref mut state) => {
-                debug!("Client: {} moving position from {:?} to {:?} while in consuming state", self.connection_id, state.last_event_id, new_position);
-                state.last_event_id = new_position;
-            }
-        }
-    }
 }
 
 
@@ -285,6 +188,45 @@ mod test {
 
     fn globAll() -> NamespaceGlob {
         NamespaceGlob::new("/**/*").unwrap()
+    }
+
+    #[test]
+    fn continue_consuming_returns_none_when_client_has_not_started_consuming() {
+        let mut subject = subject();
+        assert!(subject.continue_consuming().is_none());
+    }
+
+    #[test]
+    fn consumer_returns_to_not_consuming_state_when_event_limit_is_reached() {
+        let limit = 3;
+        let mut subject = subject();
+
+        subject.consume_from_namespace(NamespaceGlob::new("/**/*").unwrap(), limit);
+
+        for i in 0..(limit) {
+            let expected_remaining = limit - i;
+            assert_eq!(Some(expected_remaining), subject.continue_consuming());
+
+            let event = event(5, i + 1, "/internet/porn");
+            subject.send_event(event).unwrap();
+        }
+        assert!(subject.continue_consuming().is_none());
+        assert_eq!(ConsumerState::NotConsuming, subject.new_consumer_state);
+    }
+
+    #[test]
+    fn continue_consuming_returns_none_when_client_has_been_sent_number_limit_of_events() {
+        let limit = 3;
+        let mut subject = subject();
+
+        subject.consume_from_namespace(NamespaceGlob::new("/**/*").unwrap(), limit);
+
+        for i in 0..limit {
+            let event = event(5, i + 1, "/internet/porn");
+            subject.send_event(event).unwrap();
+        }
+
+        assert!(subject.continue_consuming().is_none());
     }
 
     #[test]
@@ -374,7 +316,7 @@ mod test {
     }
 
     #[test]
-    fn should_update_version_vector_when_event_is_sent() {
+    fn send_event_updates_the_version_vector() {
         let mut subject = subject();
         subject.consume_from_namespace(NamespaceGlob::new("/**/*").unwrap(), 999).unwrap();
         let actor = 5;
@@ -387,6 +329,27 @@ mod test {
 
         let result = subject.version_vector.get(actor);
         assert_eq!(counter, result);
+    }
+
+    #[test]
+    fn send_event_returns_error_when_client_is_in_initial_state() {
+        let mut subject = subject();
+        let result = subject.send_event(event(3, 4, "/ns"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn send_event_returns_err_when_event_id_is_less_than_or_equal_to_the_one_in_the_version_vector_for_that_actor() {
+        let mut subject = subject();
+        subject.consume_from_namespace(NamespaceGlob::new("/**/*").unwrap(), 999).unwrap();
+        let actor = 5;
+        let counter = 8;
+        let event = event(actor, counter, "/the/ns");
+        subject.send_event(event.clone()).expect("failed to send event");
+
+        //send the same event twice
+        let result = subject.send_event(event);
+        assert!(result.is_err());
     }
 
     fn event(actor: ActorId, counter: EventCounter, namespace: &str) -> Arc<OwnedFloEvent> {

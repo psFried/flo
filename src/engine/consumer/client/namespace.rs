@@ -7,7 +7,7 @@ static MATCH_OPTIONS: MatchOptions = MatchOptions {
     require_literal_leading_dot: true,
 };
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct NamespaceGlob {
     pattern: Pattern,
 }
