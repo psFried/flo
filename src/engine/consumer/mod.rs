@@ -4,7 +4,8 @@ mod cache;
 pub use self::client::{ClientImpl, NamespaceGlob};
 
 use engine::api::{ConnectionId, ConsumerMessage, ClientConnect, PeerVersionMap};
-use protocol::{ServerMessage, ProtocolMessage, ErrorMessage, ErrorKind};
+use engine::version_vec::VersionVector;
+use protocol::{ProtocolMessage, ErrorMessage, ErrorKind};
 use event::{FloEvent, OwnedFloEvent, FloEventId};
 use std::sync::{Arc, mpsc};
 use std::thread;
@@ -65,7 +66,11 @@ impl <R: EventReader + 'static> ConsumerManager<R> {
             ConsumerMessage::ContinueConsuming(connection_id, event_id, limit) => {
                 let result = self.require_client(connection_id, move |mut client, mut state| {
                     //TODO: remove limit from continueConsuming message, since the reader thread has no idea which ones actually match the namespace
-                    ConsumerManager::send_events(state, client, event_id, limit);
+                    if let Some(remaining) = client.continue_consuming() {
+                        ConsumerManager::send_events(state, client, event_id, remaining);
+                    } else {
+                        warn!("Got ContinueConsuming message for connection_id: {} but client has since be moved to NotConsuming state", connection_id);
+                    }
                     Ok(())
                 });
                 // This condition is a little weird, but not necessarily an error from the server's perspective
@@ -102,7 +107,9 @@ impl <R: EventReader + 'static> ConsumerManager<R> {
         }
     }
 
-    fn start_peer_replication(&mut self, _peer_version_info: PeerVersionMap) -> Result<(), String> {
+    fn start_peer_replication(&mut self, peer_version_info: PeerVersionMap) -> Result<(), String> {
+        let PeerVersionMap{connection_id, from_actor, actor_versions} = peer_version_info;
+        let version_vec_result = VersionVector::from_vec(actor_versions);
         //TODO: send events to peer
         Err("oh shit".to_owned())
     }
@@ -174,9 +181,9 @@ impl <R: EventReader + 'static> ConsumerManager<R> {
 
             if remaining > 0 {
                 debug!("Sent all existing events for connection_id: {}, Awaiting new Events", connection_id);
-                client.send_message(ProtocolMessage::AwaitingEvents);
+                client.send_message_log_error(ProtocolMessage::AwaitingEvents, "AwaitingEvents");
             } else {
-                debug!("Finished sending requested number of events for conenction_id: {}, not awaiting more", connection_id);
+                debug!("Finished sending requested number of events for connection_id: {}, not awaiting more", connection_id);
             }
         }
     }
@@ -277,6 +284,7 @@ impl ConsumerMap {
 }
 
 
+#[allow(dead_code, unused_variables)]
 #[cfg(test)]
 mod test {
     use super::*;

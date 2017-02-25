@@ -16,6 +16,7 @@ use std::net::{SocketAddr, Ipv4Addr, SocketAddrV4};
 use engine;
 
 #[derive(Copy, Clone, PartialEq, Debug)]
+#[allow(dead_code)]
 pub enum MemoryUnit {
     Megabyte,
     Kilobyte,

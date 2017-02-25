@@ -42,13 +42,6 @@ impl <'a> Serializer<'a> {
         self
     }
 
-    pub fn write_i64(mut self, n: i64) -> Self {
-        let pos = self.position;
-        BigEndian::write_i64(&mut self.buffer[pos..(pos+8)], n);
-        self.position += 8;
-        self
-    }
-
     pub fn write_bytes<T: AsRef<[u8]>>(mut self, bytes: T) -> Self {
         let pos = self.position;
         let write_len = bytes.as_ref().len();

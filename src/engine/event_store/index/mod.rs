@@ -1,7 +1,7 @@
-use event::{FloEventId, ActorId, EventCounter};
+use event::{FloEventId, ActorId};
 
 use engine::version_vec::VersionVector;
-use std::collections::{BTreeMap, Bound, HashMap};
+use std::collections::{BTreeMap, Bound};
 use std::cmp::max;
 
 #[derive(PartialEq, Debug, Clone)]

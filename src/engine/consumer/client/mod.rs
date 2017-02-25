@@ -2,10 +2,10 @@ mod namespace;
 
 pub use self::namespace::NamespaceGlob;
 
-use event::{FloEvent, FloEventId, OwnedFloEvent, ActorId, EventCounter};
+use event::{FloEvent, FloEventId, OwnedFloEvent};
 use engine::api::{ConnectionId, ClientConnect};
 use protocol::{ServerMessage, ProtocolMessage};
-use channels::{Sender, SendError};
+use channels::Sender;
 use engine::version_vec::VersionVector;
 
 use futures::sync::mpsc::UnboundedSender;
@@ -76,7 +76,8 @@ impl Client<UnboundedSender<ServerMessage>> {
 
 impl <T: Sender<ServerMessage>> Client<T> {
 
-    pub fn new(connection_id: ConnectionId, addr: SocketAddr, sender: T) -> Client<T> {
+    #[cfg(test)]
+    fn new(connection_id: ConnectionId, addr: SocketAddr, sender: T) -> Client<T> {
         Client {
             connection_id: connection_id,
             addr: addr,
@@ -147,6 +148,12 @@ impl <T: Sender<ServerMessage>> Client<T> {
         self.do_send(ServerMessage::Other(message))
     }
 
+    pub fn send_message_log_error(&self, message: ProtocolMessage, log_if_failure: &'static str) {
+        if let Err(err) = self.do_send(ServerMessage::Other(message)) {
+            warn!("Failed to send message to connection_id: {} - {} caused by: {}", self.connection_id, log_if_failure, err);
+        }
+    }
+
     pub fn send_event(&mut self, event: Arc<OwnedFloEvent>) -> Result<(), String> {
         let stop_consuming = match self.new_consumer_state {
             ConsumerState::NotConsuming => {
@@ -183,16 +190,16 @@ mod test {
     use super::namespace::NamespaceGlob;
     use engine::version_vec::VersionVector;
     use event::{OwnedFloEvent, ActorId, EventCounter, FloEventId};
-    use channels::{Sender, MockSender};
+    use channels::MockSender;
     use std::sync::Arc;
 
-    fn globAll() -> NamespaceGlob {
+    fn glob_all() -> NamespaceGlob {
         NamespaceGlob::new("/**/*").unwrap()
     }
 
     #[test]
     fn continue_consuming_returns_none_when_client_has_not_started_consuming() {
-        let mut subject = subject();
+        let subject = subject();
         assert!(subject.continue_consuming().is_none());
     }
 
@@ -201,7 +208,7 @@ mod test {
         let limit = 3;
         let mut subject = subject();
 
-        subject.consume_from_namespace(NamespaceGlob::new("/**/*").unwrap(), limit);
+        subject.consume_from_namespace(NamespaceGlob::new("/**/*").unwrap(), limit).unwrap();
 
         for i in 0..(limit) {
             let expected_remaining = limit - i;
@@ -219,7 +226,7 @@ mod test {
         let limit = 3;
         let mut subject = subject();
 
-        subject.consume_from_namespace(NamespaceGlob::new("/**/*").unwrap(), limit);
+        subject.consume_from_namespace(NamespaceGlob::new("/**/*").unwrap(), limit).unwrap();
 
         for i in 0..limit {
             let event = event(5, i + 1, "/internet/porn");
@@ -251,7 +258,7 @@ mod test {
     fn should_send_event_returns_true_when_event_id_is_greater_than_the_one_in_version_vec() {
         let actor = 1;
         let mut subject = subject();
-        subject.consume_from_namespace(globAll(), 8888).unwrap();
+        subject.consume_from_namespace(glob_all(), 8888).unwrap();
         subject.update_version_vector(FloEventId::new(actor, 8));
 
         let event = event(actor, 9, "/what/evar");
@@ -262,32 +269,32 @@ mod test {
     fn should_send_event_returns_false_when_event_id_is_less_than_or_equal_to_the_id_in_the_version_vec() {
         let actor = 1;
         let mut subject = subject();
-        subject.consume_from_namespace(globAll(), 8888).unwrap();
+        subject.consume_from_namespace(glob_all(), 8888).unwrap();
         subject.update_version_vector(FloEventId::new(actor, 8));
 
-        let lessThan = event(actor, 7, "/what/evar");
-        assert!(!subject.should_send_event(&*lessThan));
+        let less_than = event(actor, 7, "/what/evar");
+        assert!(!subject.should_send_event(&*less_than));
 
-        let equalTo = event(actor, 8, "/what/evar");
-        assert!(!subject.should_send_event(&*equalTo));
+        let equal_to = event(actor, 8, "/what/evar");
+        assert!(!subject.should_send_event(&*equal_to));
     }
 
     #[test]
     fn should_send_event_returns_false_when_namespace_does_not_match() {
         let actor = 1;
         let mut subject = subject();
-        let namespaceGlob = NamespaceGlob::new("/this").unwrap();
-        subject.consume_from_namespace(namespaceGlob, 8888).unwrap();
+        let ns_glob = NamespaceGlob::new("/this").unwrap();
+        subject.consume_from_namespace(ns_glob, 8888).unwrap();
         subject.update_version_vector(FloEventId::new(actor, 8));
 
-        let greaterThan = event(actor, 9999, "/what/evar");
-        assert!(!subject.should_send_event(&*greaterThan));
+        let wrong_namespace = event(actor, 9999, "/what/evar");
+        assert!(!subject.should_send_event(&*wrong_namespace));
     }
 
     #[test]
     fn should_send_event_returns_false_when_client_has_not_started_consuming() {
         let actor = 1;
-        let mut subject = subject();
+        let subject = subject();
 
         let event = event(actor, 9999, "/what/evar");
         assert!(!subject.should_send_event(&*event));

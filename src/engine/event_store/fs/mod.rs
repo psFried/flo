@@ -33,10 +33,6 @@ fn get_events_file(storage_dir: &Path, actor_id: ActorId) -> PathBuf {
     storage_dir.join(format!("{}.events", actor_id))
 }
 
-fn events_dir(storage_opts: &StorageEngineOptions) -> PathBuf {
-    storage_opts.storage_dir.as_path().join(&storage_opts.root_namespace)
-}
-
 impl StorageEngine for FSStorageEngine {
     type Writer = FSEventWriter;
     type Reader = FSEventReader;

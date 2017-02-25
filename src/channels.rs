@@ -7,6 +7,7 @@ use std::fmt;
 #[derive(Debug)]
 pub struct SendError<T: Sized>(T);
 impl <T> SendError<T> {
+    #[allow(dead_code)]
     pub fn into_message(self) -> T {
         self.0
     }
@@ -55,6 +56,7 @@ impl <T> Sender<T> for stdchannels::Sender<T> where T: Send {
 pub use self::test_util::MockSender;
 
 #[cfg(test)]
+#[allow(dead_code)]
 mod test_util {
     use super::*;
     use std::sync::{Arc, Mutex};

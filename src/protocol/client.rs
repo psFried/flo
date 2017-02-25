@@ -25,7 +25,6 @@ pub mod headers {
     pub const AWAITING_EVENTS: &'static str = "FLO_AWT\n";
     pub const PEER_ANNOUNCE: &'static str = "FLO_PAN\n";
     pub const PEER_UPDATE: &'static str = "FLO_PUD\n";
-    pub const EVENT_DELTA_HEADER: &'static str = "FLO_DEL\n";
     pub const ACK_HEADER: &'static [u8; 8] = b"FLO_ACK\n";
     pub const ERROR_HEADER: &'static [u8; 8] = b"FLO_ERR\n";
 }

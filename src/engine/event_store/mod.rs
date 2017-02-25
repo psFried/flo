@@ -1,6 +1,9 @@
 mod index;
-pub mod test_util;
 pub mod fs;
+
+#[cfg(test)]
+#[allow(dead_code)]
+pub mod test_util;
 
 use std::path::PathBuf;
 use std::io;

@@ -65,7 +65,7 @@ mod test {
 
     #[test]
     fn min_returns_zero_when_the_version_vector_is_empty() {
-        let mut subject = VersionVector::new();
+        let subject = VersionVector::new();
 
         let result = subject.min();
         assert_eq!(FloEventId::zero(), result);
