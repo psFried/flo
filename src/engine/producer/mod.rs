@@ -1,6 +1,7 @@
 mod client_map;
 mod cluster;
 
+use self::cluster::ClusterState;
 use self::client_map::ClientMap;
 use engine::api::{ProduceEvent, ConsumerMessage, ProducerMessage, PeerVersionMap, ConnectionId};
 use engine::event_store::EventWriter;
@@ -24,10 +25,11 @@ pub struct ProducerManager<S: EventWriter> {
     consumer_manager_channel: Sender<ConsumerMessage>,
     clients: ClientMap,
     metrics: ProducerMetrics,
+    cluster_state: ClusterState,
 }
 
 impl <S: EventWriter> ProducerManager<S> {
-    pub fn new(storage: S, consumer_manager_channel: Sender<ConsumerMessage>, actor_id: ActorId, my_version_vec: VersionVector) -> ProducerManager<S> {
+    pub fn new(storage: S, consumer_manager_channel: Sender<ConsumerMessage>, actor_id: ActorId, my_version_vec: VersionVector, peer_addresses: Vec<SocketAddr>) -> ProducerManager<S> {
         let highest_event_id = my_version_vec.get(actor_id);
         ProducerManager {
             actor_id: actor_id,
@@ -37,6 +39,7 @@ impl <S: EventWriter> ProducerManager<S> {
             consumer_manager_channel: consumer_manager_channel,
             clients: ClientMap::new(),
             metrics: ProducerMetrics::new(),
+            cluster_state: ClusterState::new(peer_addresses),
         }
     }
 
@@ -365,7 +368,7 @@ mod test {
             stored: Vec::new()
         };
         let (tx, rx) = channel();
-        let subject = ProducerManager::new(writer, tx, SUBJECT_ACTOR_ID, map);
+        let subject = ProducerManager::new(writer, tx, SUBJECT_ACTOR_ID, map, Vec::new());
 
         (subject, rx)
     }

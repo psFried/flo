@@ -29,7 +29,7 @@ pub fn run(options: ServerOptions, cluster_sender: UnboundedSender<SocketAddr>) 
     let (producer_tx, producer_rx) = mpsc::channel::<ProducerMessage>();
     let (consumer_tx, consumer_rx) = mpsc::channel::<ConsumerMessage>();
 
-    let ServerOptions{data_dir, default_namespace, max_events, max_cached_events, max_cache_memory, ..} = options;
+    let ServerOptions{data_dir, default_namespace, max_events, max_cached_events, max_cache_memory, cluster_addresses, ..} = options;
 
     let storage_options = StorageEngineOptions {
         storage_dir: data_dir,
@@ -45,7 +45,8 @@ pub fn run(options: ServerOptions, cluster_sender: UnboundedSender<SocketAddr>) 
 
     let consumer_manager_sender = consumer_tx.clone();
     thread::Builder::new().name("Producer-Manager-thread".to_owned()).spawn(move || {
-        let mut producer_manager = ProducerManager::new(event_writer, consumer_manager_sender, actor_id, version_vec);
+        let peer_addresses = cluster_addresses.unwrap_or(Vec::new());
+        let mut producer_manager = ProducerManager::new(event_writer, consumer_manager_sender, actor_id, version_vec, peer_addresses);
         loop {
             match producer_rx.recv() {
                 Ok(msg) => {

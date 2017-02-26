@@ -76,7 +76,7 @@ pub struct ClusterState {
 }
 
 impl ClusterState {
-    fn new(peer_addresses: Vec<SocketAddr>) -> ClusterState {
+    pub fn new(peer_addresses: Vec<SocketAddr>) -> ClusterState {
         let new_peers = peer_addresses.into_iter().map(|addr| (addr.clone(), DisconnectedPeer::new(addr))).collect();
         ClusterState {
             connected_peers: HashMap::new(),
