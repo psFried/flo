@@ -57,7 +57,7 @@ impl Cache {
         }
 
         self.current_memory += event_size;
-        trace!("Cache inserted event: {:?}, cache memory usage: {:?}", event.id, self.current_memory);
+        trace!("Cache inserted event: {}, cache memory usage: {} bytes", event.id, self.current_memory);
         let event_rc = Arc::new(event);
         self.entries.insert(event_id, event_rc.clone());
         event_rc
@@ -72,7 +72,7 @@ impl Cache {
             self.entries.remove(&id).map(|event| {
                 self.current_memory -= size_of(&*event);
                 self.last_evicted_id = event.id;
-                trace!("Cache evicted event: {:?}", id);
+                trace!("Cache evicted event: {}", id);
             });
         });
     }

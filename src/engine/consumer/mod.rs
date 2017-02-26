@@ -109,9 +109,28 @@ impl <R: EventReader + 'static> ConsumerManager<R> {
 
     fn start_peer_replication(&mut self, peer_version_info: PeerVersionMap) -> Result<(), String> {
         let PeerVersionMap{connection_id, from_actor, actor_versions} = peer_version_info;
-        let version_vec_result = VersionVector::from_vec(actor_versions);
-        //TODO: send events to peer
-        Err("oh shit".to_owned())
+
+        debug!("Attempting to start peer replication to connection_id: {}, actor_id: {}", connection_id, from_actor);
+        self.require_client(connection_id, |client, manager_state|{
+            VersionVector::from_vec(actor_versions).map_err(|err| {
+                ErrorMessage {
+                    op_id: 0,
+                    kind: ErrorKind::InvalidVersionVector,
+                    description: err,
+                }
+            }).and_then(|version_vec| {
+                let start_id = version_vec.min();
+                client.start_peer_replication(version_vec).map_err(|err| {
+                    ErrorMessage {
+                        op_id: 0,
+                        kind: ErrorKind::InvalidConsumerState,
+                        description: err,
+                    }
+                }).map(|()| start_id)
+            }).map(|start_id| {
+                ConsumerManager::send_events(manager_state, client, start_id, ::std::u64::MAX);
+            })
+        })
     }
 
 
@@ -292,8 +311,10 @@ mod test {
     use engine::api::*;
     use protocol::*;
     use engine::event_store::EventReader;
+    use engine::consumer::cache::Cache;
     use server::{MemoryLimit, MemoryUnit};
     use std::sync::mpsc::{channel, Receiver};
+    use std::sync::{Arc, Mutex};
 
     use futures::sync::mpsc::{unbounded, UnboundedReceiver};
 
@@ -301,9 +322,22 @@ mod test {
 
     fn subject_with_existing_events(events: Vec<OwnedFloEvent>) -> (ConsumerManager<MockEventReader>, Receiver<ConsumerMessage>) {
         let (tx, rx) = channel();
+        let max_event_id = events.iter().map(|e| *e.id()).max().unwrap_or(FloEventId::zero());
         let mem_limit = MemoryLimit::new(10, MemoryUnit::Megabyte);
+        let mut cache = Cache::new(100, mem_limit, FloEventId::zero());
+        for event in events.iter() {
+            cache.insert(event.clone());
+        }
         let reader = MockEventReader::new(events);
-        let consumer_manager = ConsumerManager::new(reader, tx, FloEventId::zero(), 100, mem_limit);
+        let consumer_manager = ConsumerManager {
+            consumers: ConsumerMap::new(),
+            state: ManagerState {
+                event_reader: reader,
+                my_sender: tx,
+                greatest_event_id: max_event_id,
+                cache: cache,
+            },
+        };
         (consumer_manager, rx)
     }
 
@@ -317,7 +351,7 @@ mod test {
         }
     }
 
-//    #[test] TODO: apparently, we're still a ways off from being able to get this test passing
+    #[test]
     fn client_is_sent_all_events_greater_than_those_in_version_map_after_upgrading_to_peer() {
         let peer_actor_id = 2;
         let existing_events = vec![
@@ -333,14 +367,14 @@ mod test {
         let connection_id = 7;
         let mut client_receiver = client_connect(&mut subject, connection_id);
 
-        let peer_versions = vec![id(SUBJECT_ACTOR_ID, 1), id(3, 2)];
+        let peer_versions = vec![id(SUBJECT_ACTOR_ID, 1), id(peer_actor_id, 3)];
         let input = ConsumerMessage::StartPeerReplication(PeerVersionMap{
             connection_id: connection_id,
             from_actor: peer_actor_id,
             actor_versions: peer_versions,
         });
 
-        subject.process(input).expect("failed to processs startPeerReplication");
+        subject.process(input).expect("failed to process startPeerReplication");
 
         assert_event_sent(&mut client_receiver, id(SUBJECT_ACTOR_ID, 2));
         assert_event_sent(&mut client_receiver, id(3, 2));
@@ -354,7 +388,7 @@ mod test {
                     assert_eq!(expected_id, event_arc.id);
                 }
                 other @ _ => {
-                    panic!("expected event, got: {:?}", other);
+                    panic!("expected event with id: {}, got: {:?}", expected_id, other);
                 }
             }
         })
@@ -362,10 +396,24 @@ mod test {
 
     fn assert_client_message_sent<F: Fn(ServerMessage)>(client: &mut UnboundedReceiver<ServerMessage>, fun: F) {
         use futures::{Async, Stream};
-        match client.poll().expect("failed to receive message") {
-            Async::Ready(Some(message)) => fun(message),
-            _ => {
-                panic!("Expected to receive a message, got none")
+        use std::time::{Duration, Instant};
+        let timeout = Duration::from_millis(500);
+        let start_time = Instant::now();
+        loop {
+            match client.poll().expect("failed to receive message") {
+                Async::Ready(Some(message)) => {
+                    fun(message);
+                    break
+                },
+                _ => {
+                    let duration = Instant::now() - start_time;
+                    if duration >= timeout {
+                        panic!("Expected to receive a message, got none")
+                    } else {
+                        ::std::thread::sleep(Duration::from_millis(75));
+                        println!("retrying polling of client channel");
+                    }
+                }
             }
         }
     }
@@ -406,13 +454,13 @@ mod test {
     }
 
     struct MockEventReader {
-        stored_events: Vec<OwnedFloEvent>
+        stored_events: Arc<Mutex<Vec<OwnedFloEvent>>>
     }
 
     impl MockEventReader {
         pub fn new(events: Vec<OwnedFloEvent>) -> MockEventReader {
             MockEventReader {
-                stored_events: events,
+                stored_events: Arc::new(Mutex::new(events)),
             }
         }
 
@@ -425,7 +473,7 @@ mod test {
         type Iter = MockReaderIter;
         type Error = String;
         fn load_range(&mut self, range_start: FloEventId, limit: usize) -> Self::Iter {
-            let events = self.stored_events.iter()
+            let events = self.stored_events.lock().unwrap().iter()
                     .filter(|evt| evt.id > range_start)
                     .take(limit)
                     .cloned()
@@ -436,7 +484,7 @@ mod test {
         }
 
         fn get_highest_event_id(&mut self) -> FloEventId {
-            self.stored_events.iter().map(|evt| evt.id).max().unwrap_or(FloEventId::new(0, 0))
+            self.stored_events.lock().unwrap().iter().map(|evt| evt.id).max().unwrap_or(FloEventId::new(0, 0))
         }
     }
 

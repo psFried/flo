@@ -32,6 +32,7 @@ pub mod headers {
 use self::headers::*;
 pub const ERROR_INVALID_NAMESPACE: u8 = 15;
 pub const ERROR_INVALID_CONSUMER_STATE: u8 = 16;
+pub const ERROR_INVALID_VERSION_VECTOR: u8 = 17;
 
 /// Describes the type of error. This gets serialized a u8
 #[derive(Debug, PartialEq, Clone)]
@@ -40,6 +41,8 @@ pub enum ErrorKind {
     InvalidNamespaceGlob,
     /// Indicates that the client connection was in an invalid state when it attempted some consumer operation
     InvalidConsumerState,
+    /// Indicates that the provided version vector was invalid (contained more than one entry for at least one actor id)
+    InvalidVersionVector
 }
 unsafe impl Send for ErrorKind {}
 
@@ -61,6 +64,8 @@ impl ErrorKind {
     pub fn from_u8(byte: u8) -> Result<ErrorKind, u8> {
         match byte {
             ERROR_INVALID_NAMESPACE => Ok(ErrorKind::InvalidNamespaceGlob),
+            ERROR_INVALID_CONSUMER_STATE => Ok(ErrorKind::InvalidConsumerState),
+            ERROR_INVALID_VERSION_VECTOR => Ok(ErrorKind::InvalidVersionVector),
             other => Err(other)
         }
     }
@@ -69,7 +74,8 @@ impl ErrorKind {
     pub fn u8_value(&self) -> u8 {
         match self {
             &ErrorKind::InvalidNamespaceGlob => ERROR_INVALID_NAMESPACE,
-            &ErrorKind::InvalidConsumerState => ERROR_INVALID_CONSUMER_STATE
+            &ErrorKind::InvalidConsumerState => ERROR_INVALID_CONSUMER_STATE,
+            &ErrorKind::InvalidVersionVector => ERROR_INVALID_VERSION_VECTOR,
         }
     }
 }

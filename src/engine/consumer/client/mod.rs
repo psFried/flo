@@ -132,6 +132,7 @@ impl <T: Sender<ServerMessage>> Client<T> {
     pub fn start_peer_replication(&mut self, version_vec: VersionVector) -> Result<(), String> {
         if self.new_consumer_state.is_not_consuming() {
             self.new_consumer_state = ConsumerState::Peer;
+            self.version_vector = version_vec;
             Ok(())
         } else {
             Err(format!("Cannot start peer replication for connection_id: {} because state is already: {:?}",
