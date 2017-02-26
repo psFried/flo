@@ -11,11 +11,15 @@ use protocol::{ProtocolMessage, EventAck};
 use server::metrics::ProducerMetrics;
 
 use std::sync::mpsc::Sender;
-use std::time::Instant;
+use std::time::{Instant, Duration};
 use std::net::SocketAddr;
 use std::cmp::max;
 
 use futures::sync::mpsc::UnboundedSender;
+
+pub fn tick_duration() -> Duration {
+    Duration::from_secs(2)
+}
 
 pub struct ProducerManager<S: EventWriter> {
     actor_id: ActorId,
@@ -26,10 +30,16 @@ pub struct ProducerManager<S: EventWriter> {
     clients: ClientMap,
     metrics: ProducerMetrics,
     cluster_state: ClusterState,
+    cluster_connect_sender: UnboundedSender<SocketAddr>,
 }
 
 impl <S: EventWriter> ProducerManager<S> {
-    pub fn new(storage: S, consumer_manager_channel: Sender<ConsumerMessage>, actor_id: ActorId, my_version_vec: VersionVector, peer_addresses: Vec<SocketAddr>) -> ProducerManager<S> {
+    pub fn new(storage: S,
+               consumer_manager_channel: Sender<ConsumerMessage>,
+               actor_id: ActorId,
+               my_version_vec: VersionVector,
+               peer_addresses: Vec<SocketAddr>,
+               cluster_connect_sender: UnboundedSender<SocketAddr>) -> ProducerManager<S> {
         let highest_event_id = my_version_vec.get(actor_id);
         ProducerManager {
             actor_id: actor_id,
@@ -40,6 +50,7 @@ impl <S: EventWriter> ProducerManager<S> {
             clients: ClientMap::new(),
             metrics: ProducerMetrics::new(),
             cluster_state: ClusterState::new(peer_addresses),
+            cluster_connect_sender: cluster_connect_sender,
         }
     }
 
@@ -63,8 +74,27 @@ impl <S: EventWriter> ProducerManager<S> {
             ProducerMessage::ReplicateEvent(connection_id, event, message_recv_time) => {
                 self.replicate_event(connection_id, event, message_recv_time)
             }
+            ProducerMessage::Tick => {
+                self.on_tick()
+            }
+            ProducerMessage::PeerConnectFailed(address) => {
+                self.cluster_state.connect_failed(address);
+                Ok(())
+            }
             msg @ _ => Err(format!("No ProducerManager handling for client message: {:?}", msg))
         }
+    }
+
+    fn on_tick(&mut self) -> Result<(), String> {
+        let disconnected_peers = self.cluster_state.attempt_connections(Instant::now());
+        if !disconnected_peers.is_empty() {
+            for peer_address in disconnected_peers {
+                self.cluster_connect_sender.send(peer_address).map_err(|err| {
+                    format!("Failed to send message to cluster connect sender: {}", err)
+                })?; // Early return if this fails
+            }
+        }
+        Ok(())
     }
 
     fn replicate_event(&mut self, connection_id: ConnectionId, event: OwnedFloEvent, message_recv_time: Instant) -> Result<(), String> {
@@ -368,7 +398,8 @@ mod test {
             stored: Vec::new()
         };
         let (tx, rx) = channel();
-        let subject = ProducerManager::new(writer, tx, SUBJECT_ACTOR_ID, map, Vec::new());
+        let (cluster_sender, _rx) = ::futures::sync::mpsc::unbounded();
+        let subject = ProducerManager::new(writer, tx, SUBJECT_ACTOR_ID, map, Vec::new(), cluster_sender);
 
         (subject, rx)
     }

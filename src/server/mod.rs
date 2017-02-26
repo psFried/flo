@@ -5,14 +5,17 @@ mod event_loops;
 
 use futures::stream::Stream;
 use tokio_core::net::{TcpStream, TcpListener};
+use tokio_core::reactor::Interval;
 
 use self::channel_sender::ChannelSender;
-use server::engine::BackendChannels;
 use self::engine::api::next_connection_id;
+use server::engine::BackendChannels;
+use event::ActorId;
 
 use futures::sync::mpsc::unbounded;
 use std::path::PathBuf;
 use std::net::{SocketAddr, Ipv4Addr, SocketAddrV4};
+use std::io;
 use engine;
 
 #[derive(Copy, Clone, PartialEq, Debug)]
@@ -57,12 +60,13 @@ pub struct ServerOptions {
     pub max_cached_events: usize,
     pub max_cache_memory: MemoryLimit,
     pub cluster_addresses: Option<Vec<SocketAddr>>,
+    pub actor_id: ActorId,
 }
 
 
 
 pub fn run(options: ServerOptions) {
-    let (join_handle, event_loop_handles) = self::event_loops::spawn_default_event_loops().unwrap();
+    let (join_handle, mut event_loop_handles) = self::event_loops::spawn_default_event_loops().unwrap();
 
     let server_port = options.port;
     let address: SocketAddr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), server_port));
@@ -96,7 +100,19 @@ pub fn run(options: ServerOptions) {
         producer_manager: producer_manager.clone(),
         consumer_manager: consumer_manager.clone(),
     };
-    flo_io::start_cluster_io(cluster_rx, event_loop_handles, engine_sender);
+    flo_io::start_cluster_io(cluster_rx, event_loop_handles.clone(), engine_sender);
+
+    event_loop_handles.next_handle().spawn(move |handle| {
+        let channel =producer_manager.clone();
+        let interval = Interval::new_at(::std::time::Instant::now(), engine::tick_duration(), handle).unwrap();
+        interval.map_err(|err| {
+            error!("Failed to start engine tick interval: {}", err);
+        }).for_each(move |_| {
+            channel.send(::engine::api::ProducerMessage::Tick).map_err(|send_err| {
+                error!("Failed to send engine tick message: {}", send_err);
+            })
+        })
+    });
 
     join_handle.join();
 }

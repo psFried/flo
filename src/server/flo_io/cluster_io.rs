@@ -16,11 +16,12 @@ fn connect(address: SocketAddr, handle: &Handle, remote: Remote, engine: Channel
         match result {
             Ok(tcp_stream) => {
                 let connection_id = next_connection_id();
+                debug!("established connection to peer at: {} with connection_id: {}", address, connection_id);
                 setup_message_streams(connection_id, tcp_stream, address, engine, &remote);
                 Ok(())
             }
             Err(io_err) => {
-                error!("Failed to connect to peer address: {:?}, err: {}", address, io_err);
+                debug!("Failed to connect to peer address: {:?}, err: {}", address, io_err);
                 let fail = ProducerMessage::PeerConnectFailed(address);
                 engine.send(ClientMessage::Producer(fail)).expect("Failed to send PeerConnectFailed message to producer manager");
                 Err(())

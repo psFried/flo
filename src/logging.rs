@@ -57,8 +57,8 @@ pub fn init_logging(log_dest: LogFileOption, levels: Vec<LogLevelOption>) {
     let appender = Appender::builder().build(LOG_APPENDER.to_string(), appender);
     let mut config = Config::builder().appender(appender);
 
-    let use_default = levels.iter().any(|level_opt| DEFAULT_LOG_MODULE == &level_opt.module);
-    if use_default {
+    let override_default = levels.iter().any(|level_opt| DEFAULT_LOG_MODULE == &level_opt.module);
+    if !override_default {
         config = config.logger(Logger::builder().additive(true).build("flo".to_owned(), LogLevelFilter::Info));
     }
 

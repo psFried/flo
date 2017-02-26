@@ -36,6 +36,7 @@ mod serializer;
 mod event;
 mod channels;
 
+use event::ActorId;
 use logging::{init_logging, LogLevelOption, LogFileOption};
 use clap::{App, Arg, ArgMatches};
 use std::str::FromStr;
@@ -91,11 +92,17 @@ fn app_args() -> App<'static, 'static> {
                     .default_value("512")
                     .help("Maximum amount of memory in megabytes to use for the event cache"))
             .arg(Arg::with_name("join-cluster-address")
-                    .long("cluster-addr")
-                    .short("c")
+                    .requires("actor-id")
+                    .long("peer-addr")
+                    .short("P")
                     .multiple(true)
                     .value_name("HOST:PORT")
                     .help("address of another Flo instance to join a cluster; this argument may be supplied multiple times"))
+            .arg(Arg::with_name("actor-id")
+                    .long("actor-id")
+                    .short("A")
+                    .takes_value(true)
+                    .help("The id to assign to this node in the cluster. This MUST be unique within the cluster. Will be removed once cluster support doesn't suck so bad"))
 }
 
 fn main() {
@@ -112,6 +119,7 @@ fn main() {
     let max_cached_events = parse_arg_or_exit(&args, "max-cached-events", ::std::usize::MAX);
     let max_cache_memory = get_max_cache_mem_amount(&args);
     let cluster_addresses = get_cluster_addresses(&args);
+    let actor_id = args.value_of("actor-id").unwrap_or("1").parse::<ActorId>().expect("ActorId must be an unsigned 16 bit integer");
 
     let server_options = ServerOptions {
         default_namespace: default_ns,
@@ -121,6 +129,7 @@ fn main() {
         max_cached_events: max_cached_events,
         max_cache_memory: max_cache_memory,
         cluster_addresses: cluster_addresses,
+        actor_id: actor_id,
     };
     server::run(server_options);
     info!("Shutdown server");

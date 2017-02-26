@@ -67,6 +67,28 @@ impl DisconnectedPeer {
         let DisconnectedPeer{address, actor_id, last_message_received, ..} = self;
         ConnectedPeer::new(address, connection_id, actor_id, last_message_received)
     }
+
+    fn should_attempt_connection(&self, current_time: Instant) -> bool {
+        if self.connection_attempt_start.is_none() {
+            self.last_failure_time.map(|last_failure| {
+                let min_duration = self.get_reconnect_interval();
+                current_time - last_failure >= min_duration
+            }).unwrap_or(true)
+        } else {
+            false
+        }
+    }
+
+    fn get_reconnect_interval(&self) -> Duration {
+        let seconds = match self.connection_attempts {
+            0 => 0,
+            1...4 => 1,
+            5...9 => 3,
+            10...19 => 10,
+            _ => 30
+        };
+        Duration::from_secs(seconds)
+    }
 }
 
 
@@ -102,12 +124,13 @@ impl ClusterState {
         self.connected_peers.insert(connection_id, connected_peer);
     }
 
-    pub fn attempt_connections(&mut self) -> Vec<SocketAddr> {
+    pub fn attempt_connections(&mut self, current_time: Instant) -> Vec<SocketAddr> {
         self.disconnected_peers.values_mut().filter(|peer| {
-            peer.connection_attempt_start.is_none()
+            peer.should_attempt_connection(current_time)
         }).map(|peer| {
-            peer.connection_attempt_start = Some(Instant::now());
+            peer.connection_attempt_start = Some(current_time);
             peer.connection_attempts += 1;
+            info!("Attempting connection to peer at: {} - attempt #{}", peer.address, peer.connection_attempts);
             peer.address.clone()
         }).collect()
     }
@@ -140,6 +163,72 @@ mod test {
     fn localhost(port: u16) -> SocketAddr {
         let addr_string = format!("127.0.0.1:{}", port);
         addr_string.parse().unwrap()
+    }
+
+    fn test_should_attempt_reconnection(prev_attempts: u64, seconds_since_last: u64, expected_result: bool) {
+        let time = Instant::now();
+        let last_failure_time = time - Duration::from_secs(seconds_since_last);
+        let subject = DisconnectedPeer{
+            address: localhost(45),
+            actor_id: None,
+            last_message_received: None,
+            connection_attempt_start: None,
+            connection_attempts: prev_attempts,
+            last_failure_time: Some(last_failure_time),
+        };
+
+        assert_eq!(expected_result, subject.should_attempt_connection(time),
+                   "Expected result: {} after {} previous attempts and {} seconds",
+                   expected_result,
+                   prev_attempts,
+                   seconds_since_last);
+    }
+
+    #[test]
+    fn disconnected_peer_reconnect_interval_increases_with_connection_attempts() {
+        fn test(prev_attempts: u64, expected_interval_secs: u64) {
+            let mut peer = DisconnectedPeer::new(localhost(7777));
+            peer.connection_attempts = prev_attempts;
+
+            assert_eq!(expected_interval_secs, peer.get_reconnect_interval().as_secs());
+        }
+
+        test(0, 0);
+        test(1, 1);
+        test(4, 1);
+        test(5, 3);
+        test(9, 3);
+        test(10, 10);
+        test(19, 10);
+        test(20, 30);
+        test(99999999, 30);
+    }
+
+    #[test]
+    fn peer_should_attempt_connection_has_an_incremental_backoff() {
+        // args are: previous connection attempts, seconds since last failure, expected result
+        test_should_attempt_reconnection(0, 1, true);
+        test_should_attempt_reconnection(1, 1, true);
+        test_should_attempt_reconnection(1, 0, false);
+        test_should_attempt_reconnection(3, 1, true);
+
+        test_should_attempt_reconnection(5, 1, false);
+        test_should_attempt_reconnection(5, 5, true);
+
+        test_should_attempt_reconnection(10, 9, false);
+        test_should_attempt_reconnection(10, 10, true);
+        test_should_attempt_reconnection(19, 10, true);
+
+        test_should_attempt_reconnection(20, 29, false);
+        test_should_attempt_reconnection(20, 31, true);
+        test_should_attempt_reconnection(99999, 31, true);
+    }
+
+    #[test]
+    fn peer_should_attempt_connection_returns_true_for_first_attempt() {
+        let now = Instant::now();
+        let peer = DisconnectedPeer::new(localhost(3333));
+        assert!(peer.should_attempt_connection(now));
     }
 
     #[test]
@@ -187,10 +276,11 @@ mod test {
         let addresses = vec![localhost(1234), localhost(5678), localhost(4321)];
         let mut subject = ClusterState::new(addresses.clone());
 
-        let _ = subject.attempt_connections();
+        let _ = subject.attempt_connections(Instant::now());
         subject.connect_failed(localhost(1234));
 
-        let result = subject.attempt_connections();
+        let future = Instant::now() + Duration::from_secs(120);
+        let result = subject.attempt_connections(future);
 
         assert_sets_equal(vec![localhost(1234)], result);
     }
@@ -200,7 +290,7 @@ mod test {
         let addresses = vec![localhost(1234), localhost(5678), localhost(4321)];
         let mut subject = ClusterState::new(addresses.clone());
 
-        let result = subject.attempt_connections();
+        let result = subject.attempt_connections(Instant::now());
         assert_sets_equal(addresses, result);
     }
 
