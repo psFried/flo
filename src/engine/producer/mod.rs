@@ -1,4 +1,5 @@
 mod client_map;
+mod cluster;
 
 use self::client_map::ClientMap;
 use engine::api::{ProduceEvent, ConsumerMessage, ProducerMessage, PeerVersionMap, ConnectionId};
