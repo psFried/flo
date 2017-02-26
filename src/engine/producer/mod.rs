@@ -10,7 +10,10 @@ use server::metrics::ProducerMetrics;
 
 use std::sync::mpsc::Sender;
 use std::time::Instant;
+use std::net::SocketAddr;
 use std::cmp::max;
+
+use futures::sync::mpsc::UnboundedSender;
 
 pub struct ProducerManager<S: EventWriter> {
     actor_id: ActorId,
@@ -45,8 +48,8 @@ impl <S: EventWriter> ProducerManager<S> {
             ProducerMessage::Produce(produce_event) => {
                 self.produce_event(produce_event)
             }
-            ProducerMessage::Disconnect(connection_id) => {
-                debug!("removing producer: {}", connection_id);
+            ProducerMessage::Disconnect(connection_id, address) => {
+                debug!("removing producer: {} at address: {}", connection_id, address);
                 self.clients.remove(connection_id);
                 Ok(())
             }

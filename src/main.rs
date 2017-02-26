@@ -94,7 +94,7 @@ fn app_args() -> App<'static, 'static> {
                     .long("cluster-addr")
                     .short("c")
                     .multiple(true)
-                    .value_name("host:port")
+                    .value_name("HOST:PORT")
                     .help("address of another Flo instance to join a cluster; this argument may be supplied multiple times"))
 }
 

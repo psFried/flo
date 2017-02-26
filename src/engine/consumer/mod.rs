@@ -92,8 +92,8 @@ impl <R: EventReader + 'static> ConsumerManager<R> {
             ConsumerMessage::UpdateMarker(connection_id, event_id) => {
                 self.consumers.update_consumer_position(connection_id, event_id)
             }
-            ConsumerMessage::Disconnect(connection_id) => {
-                debug!("Removing client: {}", connection_id);
+            ConsumerMessage::Disconnect(connection_id, client_address) => {
+                debug!("Removing client: {} at address: {}", connection_id, client_address);
                 self.consumers.remove(connection_id);
                 Ok(())
             }

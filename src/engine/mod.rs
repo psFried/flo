@@ -25,7 +25,7 @@ pub struct BackendChannels {
 }
 
 //TODO: use the cluster sender to setup peer connections
-pub fn run(options: ServerOptions, _cluster_sender: UnboundedSender<SocketAddr>) -> BackendChannels {
+pub fn run(options: ServerOptions, cluster_sender: UnboundedSender<SocketAddr>) -> BackendChannels {
     let (producer_tx, producer_rx) = mpsc::channel::<ProducerMessage>();
     let (consumer_tx, consumer_rx) = mpsc::channel::<ConsumerMessage>();
 

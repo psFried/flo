@@ -2,6 +2,7 @@ use futures::{Poll, Async};
 use futures::stream::Stream;
 use std::io::Read;
 use std::time::{Instant};
+use std::net::SocketAddr;
 
 use server::engine::api::{self, ClientMessage, ProducerMessage, ConsumerMessage, ConnectionId};
 use protocol::{ClientProtocol, ProtocolMessage, ProduceEventHeader, ConsumerStart};
@@ -41,6 +42,7 @@ impl MessageStreamState {
 
 pub struct ClientMessageStream<R: Read, P: ClientProtocol> {
     connection_id: ConnectionId,
+    client_address: SocketAddr,
     tcp_reader: R,
     protocol: P,
     buffer: Vec<u8>,
@@ -50,9 +52,10 @@ pub struct ClientMessageStream<R: Read, P: ClientProtocol> {
 }
 
 impl <R: Read, P: ClientProtocol> ClientMessageStream<R, P> {
-    pub fn new(connection_id: ConnectionId, reader: R, protocol: P) -> ClientMessageStream<R, P> {
+    pub fn new(connection_id: ConnectionId, client_address: SocketAddr, reader: R, protocol: P) -> ClientMessageStream<R, P> {
         ClientMessageStream {
             connection_id: connection_id,
+            client_address: client_address,
             tcp_reader: reader,
             protocol: protocol,
             buffer: vec![0; BUFFER_SIZE],
@@ -63,7 +66,8 @@ impl <R: Read, P: ClientProtocol> ClientMessageStream<R, P> {
     }
 
     fn disconnect_message(&self) -> ClientMessage {
-        ClientMessage::Both(ConsumerMessage::Disconnect(self.connection_id), ProducerMessage::Disconnect(self.connection_id))
+        ClientMessage::Both(ConsumerMessage::Disconnect(self.connection_id, self.client_address.clone()),
+                            ProducerMessage::Disconnect(self.connection_id, self.client_address.clone()))
     }
 
     fn requires_read(&self) -> bool {
@@ -302,6 +306,10 @@ mod test {
     use protocol::{ClientProtocol, ClientProtocolImpl, ProtocolMessage, ProduceEventHeader};
     use nom::{IResult, Needed, ErrorKind};
 
+    fn address() -> SocketAddr {
+        "127.0.0.1:3000".parse().unwrap()
+    }
+
     #[test]
     fn multiple_events_are_read_in_sequence() {
         let reader = {
@@ -321,7 +329,7 @@ mod test {
             Cursor::new(b)
         };
 
-        let mut subject = ClientMessageStream::new(123, reader, ClientProtocolImpl);
+        let mut subject = ClientMessageStream::new(123, address(), reader, ClientProtocolImpl);
 
         let result = subject.poll();
         if let Ok(Async::Ready(Some(ClientMessage::Producer(ProducerMessage::Produce(event))))) = result {
@@ -383,9 +391,9 @@ mod test {
             }
         }
 
-        let mut subject = ClientMessageStream::new(123, Reader, Proto);
+        let mut subject = ClientMessageStream::new(123, address(), Reader, Proto);
 
-        let disconnect = ClientMessage::Both(ConsumerMessage::Disconnect(123), ProducerMessage::Disconnect(123));
+        let disconnect = ClientMessage::Both(ConsumerMessage::Disconnect(123, address()), ProducerMessage::Disconnect(123, address()));
         let expected = Ok(Async::Ready(Some(disconnect)));
         let result = subject.poll();
         assert_eq!(expected, result);
@@ -411,11 +419,11 @@ mod test {
             }
         }
 
-        let mut subject = ClientMessageStream::new(123, Reader, Proto);
+        let mut subject = ClientMessageStream::new(123, address(), Reader, Proto);
 
         let result = subject.poll();
 
-        let disconnect = ClientMessage::Both(ConsumerMessage::Disconnect(123), ProducerMessage::Disconnect(123));
+        let disconnect = ClientMessage::Both(ConsumerMessage::Disconnect(123, address()), ProducerMessage::Disconnect(123, address()));
         let expected = Ok(Async::Ready(Some(disconnect)));
         assert_eq!(expected, result);
 
@@ -453,7 +461,7 @@ mod test {
         let input_bytes = b"00000000the event data is a little bit longer and will be consumed in three reads";
         let reader = Reader(input_bytes.to_vec(), 0);
 
-        let mut subject = ClientMessageStream::new(123, reader, Proto);
+        let mut subject = ClientMessageStream::new(123, address(), reader, Proto);
 
         let result = subject.poll().expect("Expected Ok, got Err");
         assert_eq!(Async::NotReady, result);
@@ -488,7 +496,7 @@ mod test {
             }
         }
 
-        let mut subject = ClientMessageStream::new(123, reader, Proto);
+        let mut subject = ClientMessageStream::new(123, address(), reader, Proto);
 
         let result = subject.poll().expect("Expected Ok, got Err");
 
@@ -523,7 +531,7 @@ mod test {
                 })
             }
         }
-        let mut subject = ClientMessageStream::new(123, reader, Proto);
+        let mut subject = ClientMessageStream::new(123, address(), reader, Proto);
 
         let result = subject.poll().expect("Expected Ok, got Err");
 
@@ -554,7 +562,7 @@ mod test {
 
     #[test]
     fn poll_returns_not_ready_when_reader_would_block() {
-        let mut subject = ClientMessageStream::new(123, WouldBlockRead, FailProtocol);
+        let mut subject = ClientMessageStream::new(123, address(), WouldBlockRead, FailProtocol);
 
         let result = subject.poll();
         assert_eq!(Ok(Async::NotReady), result);
