@@ -70,7 +70,14 @@ pub enum ProducerMessage {
     Disconnect(ConnectionId, SocketAddr),
     PeerAnnounce(PeerVersionMap),
     ReplicateEvent(ConnectionId, OwnedFloEvent, Instant),
+
+    /// Sent when an outgoing connection to a peer has been established. This message should be sent immediately after
+    /// the `ClientConnect`.
+    PeerConnectSuccess(ConnectionId, SocketAddr),
+
+    /// Sent when an attempt to make an outgoing connection to a peer has failed
     PeerConnectFailed(SocketAddr),
+
     /// This message is sent at some regular interval to act as a sort of heartbeat for the ProducerManager
     /// It kicks off the processes in the ProducerManager that check up on cluster members and such
     Tick,

@@ -81,8 +81,18 @@ impl <S: EventWriter> ProducerManager<S> {
                 self.cluster_state.connect_failed(address);
                 Ok(())
             }
+            ProducerMessage::PeerConnectSuccess(connection_id, address) => {
+                self.outgoing_peer_connection(connection_id, address)
+            }
             msg @ _ => Err(format!("No ProducerManager handling for client message: {:?}", msg))
         }
+    }
+
+    fn outgoing_peer_connection(&mut self, connection_id: ConnectionId, address: SocketAddr) -> Result<(), String> {
+        self.cluster_state.peer_connected(address, connection_id);
+//        let announce_message = ProtocolMessage::PeerAnnounce()
+        // Send outgoing message to peer to announce and request event replication
+        Ok(())
     }
 
     fn on_tick(&mut self) -> Result<(), String> {

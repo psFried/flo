@@ -165,7 +165,7 @@ pub enum ProtocolMessage {
     AwaitingEvents,
     /// Sent between flo servers to announce their presence. Essentially makes a claim that the given server represents
     /// the given `ActorId`
-    PeerAnnounce(ActorId),
+    PeerAnnounce(ActorId, Vec<FloEventId>),
     /// Sent between flo servers to provide the version vector of the peer
     PeerUpdate{
         /// The ActorId of the peer that is claiming to have the versions listed
@@ -317,9 +317,10 @@ named!{parse_start_consuming<ProtocolMessage>,
 named!{parse_peer_announce<ProtocolMessage>,
     chain!(
         _tag: tag!(PEER_ANNOUNCE) ~
-        actor_id: be_u16,
+        actor_id: be_u16 ~
+        versions: parse_version_vec,
         || {
-            ProtocolMessage::PeerAnnounce(actor_id)
+            ProtocolMessage::PeerAnnounce(actor_id, versions)
         }
     )
 }
@@ -463,8 +464,15 @@ impl ProtocolMessage {
                 }
                 serializer.finish()
             }
-            ProtocolMessage::PeerAnnounce(actor_id) => {
-                Serializer::new(buf).write_bytes(headers::PEER_ANNOUNCE.as_bytes()).write_u16(actor_id).finish()
+            ProtocolMessage::PeerAnnounce(actor_id, ref version_vec) => {
+                let mut serializer = Serializer::new(buf)
+                        .write_bytes(headers::PEER_ANNOUNCE.as_bytes())
+                        .write_u16(actor_id)
+                        .write_u16(version_vec.len() as u16); // safe cast since we can never have more than 2^16 actors
+                for id in version_vec.iter() {
+                    serializer = serializer.write_u64(id.event_counter).write_u16(id.actor);
+                }
+                serializer.finish()
             }
             ProtocolMessage::AckEvent(ref ack) => {
                 serialize_event_ack(ack, buf)
@@ -548,7 +556,8 @@ mod test {
 
     #[test]
     fn peer_announce_is_parsed() {
-        test_serialize_then_deserialize(ProtocolMessage::PeerAnnounce(1234));
+        let ids = vec![FloEventId::new(3, 4), FloEventId::new(87, 65), FloEventId::new(33, 1)];
+        test_serialize_then_deserialize(ProtocolMessage::PeerAnnounce(1234, ids));
     }
 
     #[test]

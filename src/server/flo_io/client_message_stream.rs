@@ -4,7 +4,7 @@ use std::io::Read;
 use std::time::{Instant};
 use std::net::SocketAddr;
 
-use server::engine::api::{self, ClientMessage, ProducerMessage, ConsumerMessage, ConnectionId};
+use server::engine::api::{self, ClientMessage, ProducerMessage, ConsumerMessage, ConnectionId, PeerVersionMap};
 use protocol::{ClientProtocol, ProtocolMessage, ProduceEventHeader, ConsumerStart};
 use nom::IResult;
 
@@ -288,6 +288,14 @@ fn to_engine_api_message(protocol_message: ProtocolMessage, connection_id: Conne
         ProtocolMessage::UpdateMarker(event_id) => {
             ClientMessage::Consumer(ConsumerMessage::UpdateMarker(connection_id, event_id))
         },
+        ProtocolMessage::PeerAnnounce(actor_id, version_vec) => {
+            let peer_versions = PeerVersionMap {
+                connection_id: connection_id,
+                from_actor: actor_id,
+                actor_versions: version_vec,
+            };
+            ClientMessage::Producer(ProducerMessage::PeerAnnounce(peer_versions))
+        }
         m @ _ => {
             panic!("Unexpected protocol message: {:?}", m)
         }

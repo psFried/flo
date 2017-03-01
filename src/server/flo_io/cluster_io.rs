@@ -17,8 +17,11 @@ fn connect(address: SocketAddr, handle: &Handle, remote: Remote, engine: Channel
             Ok(tcp_stream) => {
                 let connection_id = next_connection_id();
                 debug!("established connection to peer at: {} with connection_id: {}", address, connection_id);
-                setup_message_streams(connection_id, tcp_stream, address, engine, &remote);
-                Ok(())
+                setup_message_streams(connection_id, tcp_stream, address, engine.clone(), &remote);
+                let peer_connect_msg = ClientMessage::Producer(ProducerMessage::PeerConnectSuccess(connection_id, address));
+                engine.send(peer_connect_msg).map_err(|send_err| {
+                    error!("Error sending peer connect to engine: {:?}", send_err); // map err to ()
+                })
             }
             Err(io_err) => {
                 debug!("Failed to connect to peer address: {:?}, err: {}", address, io_err);
