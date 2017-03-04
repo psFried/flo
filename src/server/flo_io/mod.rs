@@ -43,7 +43,7 @@ pub fn setup_message_streams(connection_id: ConnectionId, tcp_stream: TcpStream,
 
         send_client_connect(&mut engine, connection_id, client_addr.clone(), &server_tx);
 
-        let client_stream = ClientMessageStream::new(connection_id, client_addr, tcp_reader, ClientProtocolImpl);
+        let client_stream = ClientMessageStream::new(connection_id, client_addr, tcp_reader);
         let client_to_server = client_stream.map_err(|err| {
             format!("Error parsing client stream: {:?}", err)
         }).for_each(move |client_message| {

@@ -82,6 +82,16 @@ pub struct MessageReader<T> {
     current_message: Option<InProgressMessage>,
 }
 
+impl <T> MessageReader<T> {
+    pub fn new(io: T) -> MessageReader<T> {
+        MessageReader {
+            io: io,
+            buffer: Buffer::new(),
+            current_message: None,
+        }
+    }
+}
+
 impl <T> MessageReader<T> where T: Read {
 
     pub fn read_next(&mut self) -> io::Result<ProtocolMessage> {
