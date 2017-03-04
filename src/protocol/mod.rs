@@ -92,6 +92,13 @@ impl <T> MessageReader<T> {
     }
 }
 
+// TODO: It's really stupid to have a method called write_all on a struct called MessageReader!
+impl <T> MessageReader<T> where T: Write {
+    pub fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
+        self.io.write_all(bytes)
+    }
+}
+
 impl <T> MessageReader<T> where T: Read {
 
     pub fn read_next(&mut self) -> io::Result<ProtocolMessage> {

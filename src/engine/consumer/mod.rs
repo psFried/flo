@@ -3,10 +3,10 @@ mod cache;
 
 pub use self::client::{ClientImpl, NamespaceGlob};
 
-use engine::api::{ConnectionId, ConsumerMessage, ClientConnect, PeerVersionMap};
+use engine::api::{ConnectionId, ConsumerMessage, ClientConnect, PeerVersionMap, ConsumerManagerMessage, ReceivedMessage};
 use engine::version_vec::VersionVector;
-use protocol::{ProtocolMessage, ErrorMessage, ErrorKind};
-use event::{FloEvent, OwnedFloEvent, FloEventId};
+use protocol::{ProtocolMessage, ErrorMessage, ErrorKind, ConsumerStart};
+use event::{FloEvent, OwnedFloEvent, FloEventId, ActorId};
 use std::sync::{Arc, mpsc};
 use std::thread;
 use std::collections::HashMap;
@@ -17,7 +17,7 @@ use engine::event_store::EventReader;
 
 struct ManagerState<R: EventReader + 'static> {
     event_reader: R,
-    my_sender: mpsc::Sender<ConsumerMessage>,
+    my_sender: mpsc::Sender<ConsumerManagerMessage>,
     greatest_event_id: FloEventId,
     cache: Cache,
 }
@@ -37,7 +37,7 @@ pub struct ConsumerManager<R: EventReader + 'static> {
 }
 
 impl <R: EventReader + 'static> ConsumerManager<R> {
-    pub fn new(reader: R, sender: mpsc::Sender<ConsumerMessage>, greatest_event_id: FloEventId, max_cached_events: usize, max_cache_memory: MemoryLimit) -> Self {
+    pub fn new(reader: R, sender: mpsc::Sender<ConsumerManagerMessage>, greatest_event_id: FloEventId, max_cached_events: usize, max_cache_memory: MemoryLimit) -> Self {
         ConsumerManager {
             consumers: ConsumerMap::new(),
             state: ManagerState {
@@ -49,9 +49,73 @@ impl <R: EventReader + 'static> ConsumerManager<R> {
         }
     }
 
-    /// Process a message, which involves sending out any responses directly over client channels
+    pub fn process(&mut self, message: ConsumerManagerMessage) -> Result<(), String> {
+        match message {
+            ConsumerManagerMessage::Connect(connect) => {
+                self.consumers.add(connect);
+                Ok(())
+            }
+            ConsumerManagerMessage::Disconnect(connection_id, client_address) => {
+                debug!("Removing client: {} at address: {}", connection_id, client_address);
+                self.consumers.remove(connection_id);
+                Ok(())
+            }
+            ConsumerManagerMessage::ContinueConsuming(connection_id, last_event_id, limit) => {
+                let result = self.require_client(connection_id, move |mut client, mut state| {
+                    //TODO: remove limit from continueConsuming message, since the reader thread has no idea which ones actually match the namespace
+                    if let Some(remaining) = client.continue_consuming() {
+                        ConsumerManager::send_events(state, client, last_event_id, remaining);
+                    } else {
+                        warn!("Got ContinueConsuming message for connection_id: {} but client has since be moved to NotConsuming state", connection_id);
+                    }
+                    Ok(())
+                });
+                // This condition is a little weird, but not necessarily an error from the server's perspective
+                if let Err(_) = result {
+                    warn!("connection_id: {} was disconnected, so ContinueConsuming will not be processed", connection_id);
+                }
+                Ok(())
+            }
+            ConsumerManagerMessage::StartPeerReplication(connection_id, actor_id, peer_versions) => {
+                self.start_peer_replication(connection_id, actor_id, peer_versions)
+            }
+            ConsumerManagerMessage::EventPersisted(connection_id, event) => {
+                self.state.update_greatest_event(event.id);
+                let event_rc = self.state.cache.insert(event);
+                self.consumers.send_event_to_all(event_rc)
+            }
+            ConsumerManagerMessage::EventLoaded(connection_id, event) => {
+                //TODO: think about caching events as they are loaded from disk. Currently we prefer to only cache the most recent events
+                self.state.update_greatest_event(event.id);
+                self.consumers.send_event(connection_id, Arc::new(event))
+            }
+            ConsumerManagerMessage::Receive(received_message) => {
+                self.process_received_message(received_message)
+            }
+        }
+    }
+
+    fn process_received_message(&mut self, ReceivedMessage{sender, recv_time, message}: ReceivedMessage) -> Result<(), String> {
+        match message {
+            ProtocolMessage::UpdateMarker(event_id) => {
+                self.consumers.update_consumer_position(sender, event_id)
+            }
+            ProtocolMessage::StartConsuming(ConsumerStart{max_events, namespace}) => {
+                self.require_client(sender, move |mut client, mut state| {
+                    ConsumerManager::start_consuming(state, client, namespace, max_events)
+                })
+            }
+            other @ _ => {
+                error!("Unexpected message: {:?}", other);
+                Err(format!("Unexpected message: {:?}", other))
+            }
+        }
+    }
+
+
+/*    /// Process a message, which involves sending out any responses directly over client channels
     /// Returning an error from this method is considered a fatal error, and the consumer manager will be shutdown
-    pub fn process(&mut self, message: ConsumerMessage) -> Result<(), String> {
+    pub fn _process(&mut self, message: ConsumerMessage) -> Result<(), String> {
         trace!("Got message: {:?}", message);
         match message {
             ConsumerMessage::ClientConnect(connect) => {
@@ -105,11 +169,9 @@ impl <R: EventReader + 'static> ConsumerManager<R> {
                 panic!("Got unhandled message: {:?}", m);
             }
         }
-    }
+    }*/
 
-    fn start_peer_replication(&mut self, peer_version_info: PeerVersionMap) -> Result<(), String> {
-        let PeerVersionMap{connection_id, from_actor, actor_versions} = peer_version_info;
-
+    fn start_peer_replication(&mut self, connection_id: ConnectionId, from_actor: ActorId, actor_versions: Vec<FloEventId>) -> Result<(), String> {
         debug!("Attempting to start peer replication to connection_id: {}, actor_id: {}", connection_id, from_actor);
         self.require_client(connection_id, |client, manager_state|{
             VersionVector::from_vec(actor_versions).map_err(|err| {
@@ -208,7 +270,7 @@ impl <R: EventReader + 'static> ConsumerManager<R> {
     }
 }
 
-fn consume_from_file<R: EventReader + 'static>(event_sender: mpsc::Sender<ConsumerMessage>,
+fn consume_from_file<R: EventReader + 'static>(event_sender: mpsc::Sender<ConsumerManagerMessage>,
                                                connection_id: ConnectionId,
                                                event_reader: &mut R,
                                                start_id: FloEventId,
@@ -226,7 +288,7 @@ fn consume_from_file<R: EventReader + 'static>(event_sender: mpsc::Sender<Consum
                     trace!("Reader thread sending event: {:?} to consumer manager", owned_event.id());
                     //TODO: is unwrap the right thing here?
                     last_sent_id = *owned_event.id();
-                    event_sender.send(ConsumerMessage::EventLoaded(connection_id, owned_event)).expect("Failed to send EventLoaded message");
+                    event_sender.send(ConsumerManagerMessage::EventLoaded(connection_id, owned_event)).expect("Failed to send EventLoaded message");
                     sent_events += 1;
                 }
                 Err(err) => {
@@ -238,7 +300,7 @@ fn consume_from_file<R: EventReader + 'static>(event_sender: mpsc::Sender<Consum
         }
         debug!("Finished reader thread for connection_id: {}, sent_events: {}, last_send_event: {:?}", connection_id, sent_events, last_sent_id);
         if sent_events < limit as usize {
-            let continue_message = ConsumerMessage::ContinueConsuming(connection_id, last_sent_id, limit - sent_events as u64);
+            let continue_message = ConsumerManagerMessage::ContinueConsuming(connection_id, last_sent_id, limit - sent_events as u64);
             event_sender.send(continue_message).expect("Failed to send continue_message");
         }
     });
@@ -320,7 +382,7 @@ mod test {
 
     const SUBJECT_ACTOR_ID: ActorId = 1;
 
-    fn subject_with_existing_events(events: Vec<OwnedFloEvent>) -> (ConsumerManager<MockEventReader>, Receiver<ConsumerMessage>) {
+    fn subject_with_existing_events(events: Vec<OwnedFloEvent>) -> (ConsumerManager<MockEventReader>, Receiver<ConsumerManagerMessage>) {
         let (tx, rx) = channel();
         let max_event_id = events.iter().map(|e| *e.id()).max().unwrap_or(FloEventId::zero());
         let mem_limit = MemoryLimit::new(10, MemoryUnit::Megabyte);
@@ -368,11 +430,7 @@ mod test {
         let mut client_receiver = client_connect(&mut subject, connection_id);
 
         let peer_versions = vec![id(SUBJECT_ACTOR_ID, 1), id(peer_actor_id, 3)];
-        let input = ConsumerMessage::StartPeerReplication(PeerVersionMap{
-            connection_id: connection_id,
-            from_actor: peer_actor_id,
-            actor_versions: peer_versions,
-        });
+        let input = ConsumerManagerMessage::StartPeerReplication(connection_id, peer_actor_id, peer_versions);
 
         subject.process(input).expect("failed to process startPeerReplication");
 
@@ -434,7 +492,7 @@ mod test {
 
     fn event_persisted(client_id: ConnectionId, event: OwnedFloEvent, subject: &mut ConsumerManager<MockEventReader>) {
         let event_id = event.id;
-        let message = ConsumerMessage::EventPersisted(client_id, event);
+        let message = ConsumerManagerMessage::EventPersisted(client_id, event);
         subject.process(message).expect("failed to process event persisted");
     }
 
@@ -449,7 +507,7 @@ mod test {
             client_addr: addr,
             message_sender: tx,
         };
-        subject.process(ConsumerMessage::ClientConnect(connect)).expect("Failed to process client connect");
+        subject.process(ConsumerManagerMessage::Connect(connect)).expect("Failed to process client connect");
         rx
     }
 

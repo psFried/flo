@@ -25,16 +25,10 @@ impl <R: Read> ClientMessageStream<R> {
         }
     }
 
-    fn disconnect_message(&self) -> ClientMessage {
-        ClientMessage::Both(ConsumerMessage::Disconnect(self.connection_id, self.client_address.clone()),
-                            ProducerMessage::Disconnect(self.connection_id, self.client_address.clone()))
-    }
-
-
     fn disconnect(&mut self) -> Poll<Option<ClientMessage>, String> {
         if self.connected {
             self.connected = false;
-            Ok(Async::Ready(Some(self.disconnect_message())))
+            Ok(Async::Ready(Some(ClientMessage::disconnect(self.connection_id, self.client_address))))
         } else {
             Ok(Async::Ready(None))
         }
@@ -54,8 +48,7 @@ impl <R: Read> Stream for ClientMessageStream<R> {
 
         match self.message_reader.read_next() {
             Ok(message) => {
-                let api_message = to_engine_api_message(message, self.connection_id);
-                Ok(Async::Ready(Some(api_message)))
+                Ok(Async::Ready(Some(ClientMessage::from_protocol_message(self.connection_id, message))))
             }
             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => Ok(Async::NotReady),
             Err(ref e) if e.kind() == io::ErrorKind::UnexpectedEof => {
@@ -69,36 +62,6 @@ impl <R: Read> Stream for ClientMessageStream<R> {
     }
 }
 
-fn to_engine_api_message(protocol_message: ProtocolMessage, connection_id: ConnectionId) -> ClientMessage {
-    match protocol_message {
-        ProtocolMessage::StartConsuming(ConsumerStart {namespace, max_events}) => {
-            ClientMessage::Consumer(ConsumerMessage::StartConsuming(connection_id, namespace, max_events))
-        },
-        ProtocolMessage::ClientAuth {namespace, username, password} => {
-            let auth = api::ClientAuth {
-                connection_id: connection_id,
-                namespace: namespace,
-                username: username,
-                password: password,
-            };
-            ClientMessage::Both(ConsumerMessage::ClientAuth(auth.clone()), ProducerMessage::ClientAuth(auth))
-        }
-        ProtocolMessage::UpdateMarker(event_id) => {
-            ClientMessage::Consumer(ConsumerMessage::UpdateMarker(connection_id, event_id))
-        },
-        ProtocolMessage::PeerAnnounce(actor_id, version_vec) => {
-            let peer_versions = PeerVersionMap {
-                connection_id: connection_id,
-                from_actor: actor_id,
-                actor_versions: version_vec,
-            };
-            ClientMessage::Producer(ProducerMessage::PeerAnnounce(peer_versions))
-        }
-        m @ _ => {
-            panic!("Unexpected protocol message: {:?}", m)
-        }
-    }
-}
 
 #[cfg(test)]
 mod test {
@@ -108,7 +71,7 @@ mod test {
     use std::io::{self, Read, Cursor};
 
     use event::FloEventId;
-    use server::engine::api::{ClientMessage, ConsumerMessage, ProducerMessage, ClientAuth};
+    use server::engine::api::{ClientMessage, ConsumerManagerMessage, ProducerManagerMessage, ClientAuth};
     use protocol::{ClientProtocol, ClientProtocolImpl, ProtocolMessage, ProduceEventHeader};
     use nom::{IResult, Needed, ErrorKind};
 
@@ -138,42 +101,47 @@ mod test {
         let mut subject = ClientMessageStream::new(123, address(), reader);
 
         let result = subject.poll();
-        if let Ok(Async::Ready(Some(ClientMessage::Producer(ProducerMessage::Produce(event))))) = result {
-            assert_eq!("/foo/bar", &event.namespace);
-            assert_eq!(4, event.op_id);
-            assert_eq!(Some(FloEventId::new(5, 9)), event.parent_id);
-            assert_eq!(123, event.connection_id);
-            assert_eq!("evt_one".as_bytes().to_owned(), event.event_data);
+        if let Ok(Async::Ready(Some(ClientMessage::Producer(ProducerManagerMessage::Receive(received))))) = result {
+            assert_eq!(123, received.sender);
+            if let ProtocolMessage::NewProduceEvent(event) = received.message {
+                assert_eq!("/foo/bar", &event.namespace);
+                assert_eq!(4, event.op_id);
+                assert_eq!(Some(FloEventId::new(5, 9)), event.parent_id);
+                assert_eq!("evt_one".as_bytes().to_owned(), event.data);
+            } else {
+                panic!("wrong message: {:?}", received);
+            }
         } else {
             panic!("this result sucks: {:?}", result);
         }
 
         let result = subject.poll();
-        let expected_auth = ClientAuth {
-            connection_id: 123,
+        let expected_auth = ProtocolMessage::ClientAuth {
             namespace: "the namespace".to_owned(),
             username: "the username".to_owned(),
             password: "the password".to_owned()
         };
-        let expected = Ok(Async::Ready(Some(ClientMessage::Both(
-                ConsumerMessage::ClientAuth(expected_auth.clone()),
-                ProducerMessage::ClientAuth(expected_auth.clone())
-        ))));
+
+        let expected = Ok(Async::Ready(Some(ClientMessage::from_protocol_message(123, expected_auth))));
         assert_eq!(expected, result);
 
         let result = subject.poll();
-        if let Ok(Async::Ready(Some(ClientMessage::Producer(ProducerMessage::Produce(event))))) = result {
-            assert_eq!("/baz", &event.namespace);
-            assert_eq!(5, event.op_id);
-            assert_eq!(Some(FloEventId::new(5, 9)), event.parent_id);
-            assert_eq!(123, event.connection_id);
-            assert_eq!("evt_two".as_bytes().to_owned(), event.event_data);
+        if let Ok(Async::Ready(Some(ClientMessage::Producer(ProducerManagerMessage::Receive(received))))) = result {
+            assert_eq!(123, received.sender);
+            if let ProtocolMessage::NewProduceEvent(event) = received.message {
+                assert_eq!("/baz", &event.namespace);
+                assert_eq!(5, event.op_id);
+                assert_eq!(Some(FloEventId::new(5, 9)), event.parent_id);
+                assert_eq!("evt_two".as_bytes().to_owned(), event.data);
+            } else {
+                panic!("received the wrong message: {:?}", received);
+            }
         } else {
             panic!("this result sucks: {:?}", result);
         }
 
         let result = subject.poll();
-        let expected = Ok(Async::Ready(Some(subject.disconnect_message())));
+        let expected = Ok(Async::Ready(Some(ClientMessage::disconnect(123, address()))));
         assert_eq!(expected, result);
 
         let result = subject.poll();

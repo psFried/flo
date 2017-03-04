@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 
 use server::event_loops::LoopHandles;
-use server::engine::api::{next_connection_id, ProducerMessage, ClientMessage};
+use server::engine::api::{next_connection_id, ProducerManagerMessage, ClientMessage};
 use super::setup_message_streams;
 use server::channel_sender::ChannelSender;
 
@@ -18,14 +18,16 @@ fn connect(address: SocketAddr, handle: &Handle, remote: Remote, engine: Channel
                 let connection_id = next_connection_id();
                 debug!("established connection to peer at: {} with connection_id: {}", address, connection_id);
                 setup_message_streams(connection_id, tcp_stream, address, engine.clone(), &remote);
-                let peer_connect_msg = ClientMessage::Producer(ProducerMessage::PeerConnectSuccess(connection_id, address));
-                engine.send(peer_connect_msg).map_err(|send_err| {
-                    error!("Error sending peer connect to engine: {:?}", send_err); // map err to ()
-                })
+                //TODO: should probably just use the normal ClientConnect message to notify producer manager of peer connection
+//                let peer_connect_msg = ClientMessage::Producer(ProducerManagerMessage::PeerConnectSuccess(connection_id, address));
+//                engine.send(peer_connect_msg).map_err(|send_err| {
+//                    error!("Error sending peer connect to engine: {:?}", send_err); // map err to ()
+//                })
+                Ok(())
             }
             Err(io_err) => {
                 debug!("Failed to connect to peer address: {:?}, err: {}", address, io_err);
-                let fail = ProducerMessage::PeerConnectFailed(address);
+                let fail = ProducerManagerMessage::OutgoingConnectFailure(address);
                 engine.send(ClientMessage::Producer(fail)).expect("Failed to send PeerConnectFailed message to producer manager");
                 Err(())
             }

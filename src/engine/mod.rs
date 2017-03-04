@@ -5,7 +5,7 @@ pub mod version_vec;
 mod producer;
 mod consumer;
 
-use self::api::{ConsumerMessage, ProducerMessage};
+use self::api::{ConsumerManagerMessage, ProducerManagerMessage};
 use self::producer::ProducerManager;
 use self::consumer::ConsumerManager;
 use server::ServerOptions;
@@ -22,14 +22,14 @@ use std::thread;
 pub use self::producer::tick_duration;
 
 pub struct BackendChannels {
-    pub producer_manager: mpsc::Sender<ProducerMessage>,
-    pub consumer_manager: mpsc::Sender<ConsumerMessage>,
+    pub producer_manager: mpsc::Sender<ProducerManagerMessage>,
+    pub consumer_manager: mpsc::Sender<ConsumerManagerMessage>,
 }
 
 //TODO: use the cluster sender to setup peer connections
 pub fn run(options: ServerOptions, cluster_sender: UnboundedSender<SocketAddr>) -> BackendChannels {
-    let (producer_tx, producer_rx) = mpsc::channel::<ProducerMessage>();
-    let (consumer_tx, consumer_rx) = mpsc::channel::<ConsumerMessage>();
+    let (producer_tx, producer_rx) = mpsc::channel::<ProducerManagerMessage>();
+    let (consumer_tx, consumer_rx) = mpsc::channel::<ConsumerManagerMessage>();
 
     let ServerOptions{data_dir, default_namespace, max_events, max_cached_events, max_cache_memory, cluster_addresses, actor_id, ..} = options;
 

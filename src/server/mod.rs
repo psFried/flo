@@ -108,7 +108,7 @@ pub fn run(options: ServerOptions) {
         interval.map_err(|err| {
             error!("Failed to start engine tick interval: {}", err);
         }).for_each(move |_| {
-            channel.send(::engine::api::ProducerMessage::Tick).map_err(|send_err| {
+            channel.send(::engine::api::ProducerManagerMessage::Tick).map_err(|send_err| {
                 error!("Failed to send engine tick message: {}", send_err);
             })
         })

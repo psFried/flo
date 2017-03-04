@@ -11,7 +11,7 @@
 //! All numbers use big endian byte order.
 //! All Strings are newline terminated.
 use nom::{be_u64, be_u32, be_u16, IResult};
-use event::{FloEventId, ActorId, Timestamp};
+use event::{OwnedFloEvent, FloEventId, ActorId, Timestamp};
 use serializer::Serializer;
 
 use std::io::{self, Read};
@@ -158,12 +158,9 @@ pub struct ConsumerStart {
 #[derive(Debug, PartialEq, Clone)]
 pub enum ProtocolMessage {
     NewProduceEvent(NewProduceEvent),
-    /// Sent from a client (producer) to the server as a request to produce an event. See `ProduceEventHeader` docs for more.
-    ProduceEvent(ProduceEventHeader),
+    NewReceiveEvent(OwnedFloEvent),
     /// Sent from the server to client to acknowledge that an event was persisted successfully.
     AckEvent(EventAck),
-    /// Functions similarly to `ProduceEventHeader`, except for sending complete events from the server to the client.
-    ReceiveEvent(ReceiveEventHeader),
     /// Sent by a client to set it's current position in the event stream
     UpdateMarker(FloEventId),
     /// sent by a client to start reading events from the stream
@@ -466,17 +463,14 @@ impl ProtocolMessage {
 
     pub fn serialize(&self, buf: &mut [u8]) -> usize {
         match *self {
+            ProtocolMessage::NewReceiveEvent(ref event) => {
+                unimplemented!() //TODO: This message _shouldn't_ typically be serialized in this way, but should probably implement it anyway
+            }
             ProtocolMessage::AwaitingEvents => {
                 Serializer::new(buf).write_bytes(AWAITING_EVENTS).finish()
             }
-            ProtocolMessage::ProduceEvent(ref header) => {
-                serialize_produce_header(header, buf)
-            }
             ProtocolMessage::NewProduceEvent(ref header) => {
                 serialize_new_produce_header(header, buf)
-            }
-            ProtocolMessage::ReceiveEvent(ref header) => {
-                serialize_receive_event_header(header, buf)
             }
             ProtocolMessage::StartConsuming(ConsumerStart{ref namespace, ref max_events}) => {
                 Serializer::new(buf).write_bytes(START_CONSUMING)

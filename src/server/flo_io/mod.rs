@@ -75,13 +75,5 @@ pub fn setup_message_streams(connection_id: ConnectionId, tcp_stream: TcpStream,
 }
 
 fn send_client_connect(engine: &mut ChannelSender, connection_id: ConnectionId, client_address: SocketAddr, sender: &UnboundedSender<ServerMessage>) {
-    let client_connect = ClientConnect {
-        connection_id: connection_id,
-        client_addr: client_address,
-        message_sender: sender.clone(),
-    };
-    engine.send(ClientMessage::Both(
-        ConsumerMessage::ClientConnect(client_connect.clone()),
-        ProducerMessage::ClientConnect(client_connect)
-    )).unwrap(); //TODO: something better than unwrapping this result
+    engine.send(ClientMessage::connect(connection_id, client_address, sender.clone())).unwrap(); //TODO: something better than unwrapping this result
 }

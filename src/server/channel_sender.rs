@@ -1,13 +1,13 @@
 
 use std::sync::mpsc::Sender;
 
-use server::engine::api::{ClientMessage, ConsumerMessage, ProducerMessage};
+use server::engine::api::{ClientMessage, ConsumerManagerMessage, ProducerManagerMessage};
 
 
 #[derive(Clone)]
 pub struct ChannelSender {
-    pub producer_manager: Sender<ProducerMessage>,
-    pub consumer_manager: Sender<ConsumerMessage>,
+    pub producer_manager: Sender<ProducerManagerMessage>,
+    pub consumer_manager: Sender<ConsumerManagerMessage>,
 }
 
 const CONSUMER_CHANNEL: &'static str = "ConsumerManager";

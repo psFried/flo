@@ -3,7 +3,7 @@ mod client_stream;
 use std::io;
 use std::net::{TcpStream, ToSocketAddrs};
 
-use protocol::{ProtocolMessage, ProduceEventHeader, ReceiveEventHeader, ConsumerStart};
+use protocol::{ProtocolMessage, NewProduceEvent, ConsumerStart};
 use event::{FloEventId, OwnedFloEvent};
 use super::{ClientError, ConsumerOptions};
 use std::collections::VecDeque;
@@ -97,17 +97,17 @@ impl <S: IoStream> SyncConnection<S> {
         }
     }
 
-    pub fn produce<N: ToString, D: AsRef<[u8]>>(&mut self, namespace: N, data: D) -> Result<FloEventId, ClientError> {
+    pub fn produce<N: ToString, D: Into<Vec<u8>>>(&mut self, namespace: N, data: D) -> Result<FloEventId, ClientError> {
         self.produce_with_parent(None, namespace, data)
     }
 
-    pub fn produce_with_parent<N: ToString, D: AsRef<[u8]>>(&mut self, parent_id: Option<FloEventId>, namespace: N, data: D) -> Result<FloEventId, ClientError> {
+    pub fn produce_with_parent<N: ToString, D: Into<Vec<u8>>>(&mut self, parent_id: Option<FloEventId>, namespace: N, data: D) -> Result<FloEventId, ClientError> {
         self.op_id += 1;
-        let mut send_msg = ProtocolMessage::ProduceEvent(ProduceEventHeader {
+        let mut send_msg = ProtocolMessage::NewProduceEvent(NewProduceEvent {
             namespace: namespace.to_string(),
             parent_id: parent_id,
             op_id: self.op_id,
-            data_length: data.as_ref().len() as u32
+            data: data.into()  //TODO: Make protocolMessage enum generic so the message can just hold a slice
         });
 
         self.stream.write(&mut send_msg).map_err(|e| e.into()).and_then(|()| {
@@ -125,10 +125,8 @@ impl <S: IoStream> SyncConnection<S> {
                     .map_err(|io_err| io_err.into())
                     .and_then(|protocol_msg| {
                         match protocol_msg {
-                            ProtocolMessage::ReceiveEvent(header) => {
-                                self.read_event_data(header).map(|event| {
-                                    ClientMessage::Event(event)
-                                })
+                            ProtocolMessage::NewReceiveEvent(event) => {
+                                ClientMessage::Event(event)
                             }
                             other @ _ => {
                                 Ok(ClientMessage::Proto(other))
@@ -147,9 +145,7 @@ impl <S: IoStream> SyncConnection<S> {
                 Ok(ProtocolMessage::Error(error_message)) => {
                     return Err(ClientError::FloError(error_message));
                 }
-                Ok(ProtocolMessage::ReceiveEvent(header)) => {
-                    trace!("buffering event: {:?}", header);
-                    let event = self.read_event_data(header)?; //return error if unable to read data
+                Ok(ProtocolMessage::NewReceiveEvent(event)) => {
                     self.message_buffer.push_back(ClientMessage::Event(event));
                 }
                 Ok(other) => {
@@ -225,15 +221,20 @@ impl <S: IoStream> SyncConnection<S> {
     }
 
     fn read_event(&mut self) -> Result<OwnedFloEvent, ClientError> {
-        match self.read_next_message() {
-            Ok(ClientMessage::Event(event)) => {
-                Ok(event)
-            },
-            Ok(ClientMessage::Proto(ProtocolMessage::Error(error_msg))) => Err(ClientError::FloError(error_msg)),
-            Ok(ClientMessage::Proto(ProtocolMessage::AwaitingEvents)) => Err(ClientError::EndOfStream),
-            Ok(ClientMessage::Proto(other)) => Err(ClientError::UnexpectedMessage(other)),
-            Err(io_err) => Err(io_err.into())
+        match self.stream.read() {
+            Ok(ProtocolMessage::NewReceiveEvent(event)) => {
+                
+            }
         }
+//        match self.read_next_message() {
+//            Ok(ClientMessage::Event(event)) => {
+//                Ok(event)
+//            },
+//            Ok(ClientMessage::Proto(ProtocolMessage::Error(error_msg))) => Err(ClientError::FloError(error_msg)),
+//            Ok(ClientMessage::Proto(ProtocolMessage::AwaitingEvents)) => Err(ClientError::EndOfStream),
+//            Ok(ClientMessage::Proto(other)) => Err(ClientError::UnexpectedMessage(other)),
+//            Err(io_err) => Err(io_err.into())
+//        }
     }
 
     fn read_event_data(&mut self, header: ReceiveEventHeader) -> Result<OwnedFloEvent, ClientError> {
