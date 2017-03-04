@@ -103,6 +103,14 @@ pub struct ProduceEventHeader {
     pub data_length: u32,
 }
 
+#[derive(Debug, PartialEq, Clone)]
+pub struct NewProduceEvent {
+    pub op_id: u32,
+    pub namespace: String,
+    pub parent_id: Option<FloEventId>,
+    pub data: Vec<u8>,
+}
+
 /// Sent by the server to the producer of an event to acknowledge that the event was successfully persisted to the stream.
 #[derive(Debug, PartialEq, Clone)]
 pub struct EventAck {
@@ -149,6 +157,7 @@ pub struct ConsumerStart {
 /// Defines all the distinct messages that can be sent over the wire between client and server.
 #[derive(Debug, PartialEq, Clone)]
 pub enum ProtocolMessage {
+    NewProduceEvent(NewProduceEvent),
     /// Sent from a client (producer) to the server as a request to produce an event. See `ProduceEventHeader` docs for more.
     ProduceEvent(ProduceEventHeader),
     /// Sent from the server to client to acknowledge that an event was persisted successfully.
@@ -226,6 +235,24 @@ named!{pub parse_event_id<Option<FloEventId>>,
             } else {
                 None
             }
+        }
+    )
+}
+
+named!{pub parse_new_producer_event<ProtocolMessage>,
+    chain!(
+        _tag: tag!(PRODUCE_EVENT) ~
+        namespace: parse_str ~
+        parent_id: parse_event_id ~
+        op_id: be_u32 ~
+        data_len: be_u32,
+        || {
+            ProtocolMessage::NewProduceEvent(NewProduceEvent{
+                namespace: namespace.to_owned(),
+                parent_id: parent_id,
+                op_id: op_id,
+                data: Vec::with_capacity(data_len as usize),
+            })
         }
     )
 }
@@ -364,7 +391,6 @@ named!{parse_error_message<ProtocolMessage>,
 named!{parse_awaiting_events<ProtocolMessage>, map!(tag!(AWAITING_EVENTS), |_| {ProtocolMessage::AwaitingEvents})}
 
 named!{pub parse_any<ProtocolMessage>, alt!(
-        parse_producer_event |
         parse_event_ack |
         parse_receive_event_header |
         parse_peer_update |
@@ -373,9 +399,23 @@ named!{pub parse_any<ProtocolMessage>, alt!(
         parse_start_consuming |
         parse_auth |
         parse_error_message |
-        parse_awaiting_events
+        parse_awaiting_events |
+        parse_new_producer_event
 )}
 
+fn serialize_new_produce_header(header: &NewProduceEvent, mut buf: &mut [u8]) -> usize {
+    let (counter, actor) = header.parent_id.map(|id| {
+        (id.event_counter, id.actor)
+    }).unwrap_or((0, 0));
+
+    Serializer::new(buf).write_bytes(PRODUCE_EVENT)
+                        .newline_term_string(&header.namespace)
+                        .write_u64(counter)
+                        .write_u16(actor)
+                        .write_u32(header.op_id)
+                        .write_u32(header.data.len() as u32)
+                        .finish()
+}
 
 fn serialize_produce_header(header: &ProduceEventHeader, mut buf: &mut [u8]) -> usize {
 
@@ -432,6 +472,9 @@ impl ProtocolMessage {
             ProtocolMessage::ProduceEvent(ref header) => {
                 serialize_produce_header(header, buf)
             }
+            ProtocolMessage::NewProduceEvent(ref header) => {
+                serialize_new_produce_header(header, buf)
+            }
             ProtocolMessage::ReceiveEvent(ref header) => {
                 serialize_receive_event_header(header, buf)
             }
@@ -484,6 +527,7 @@ impl ProtocolMessage {
     }
 }
 
+//TODO: delete Read impl for ProtocolMessage
 impl Read for ProtocolMessage {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize, io::Error> {
         let n_bytes = self.serialize(buf);
@@ -510,8 +554,13 @@ mod test {
     use nom::IResult;
     use event::FloEventId;
 
-    fn test_serialize_then_deserialize(mut message: ProtocolMessage) {
-        let mut buffer = [0; 128];
+    fn test_serialize_then_deserialize(message: &mut ProtocolMessage) {
+        let result  = ser_de(message);
+        assert_eq!(*message, result);
+    }
+
+    fn ser_de(message: &mut ProtocolMessage) -> ProtocolMessage {
+        let mut buffer = [0; 1024];
 
         let len = message.read(&mut buffer[..]).expect("failed to serialize message to buffer");
         (&mut buffer[len..(len + 4)]).copy_from_slice(&[4, 3, 2, 1]); // extra bytes at the end of the buffer
@@ -519,8 +568,8 @@ mod test {
 
         match parse_any(&buffer) {
             IResult::Done(remaining, result) => {
-                assert_eq!(message, result);
                 assert!(remaining.starts_with(&[4, 3, 2, 1]));
+                result
             }
             IResult::Error(err) => {
                 panic!("Got parse error: {:?}", err)
@@ -533,7 +582,7 @@ mod test {
 
     #[test]
     fn awaiting_events_message_is_serialized_and_parsed() {
-        test_serialize_then_deserialize(ProtocolMessage::AwaitingEvents);
+        test_serialize_then_deserialize(&mut ProtocolMessage::AwaitingEvents);
     }
 
     #[test]
@@ -543,12 +592,12 @@ mod test {
             kind: ErrorKind::InvalidNamespaceGlob,
             description: "some shit happened".to_owned(),
         };
-        test_serialize_then_deserialize(ProtocolMessage::Error(error));
+        test_serialize_then_deserialize(&mut ProtocolMessage::Error(error));
     }
 
     #[test]
     fn acknowledge_event_message_is_parsed() {
-        test_serialize_then_deserialize(ProtocolMessage::AckEvent(EventAck{
+        test_serialize_then_deserialize(&mut ProtocolMessage::AckEvent(EventAck{
             op_id: 2345667,
             event_id: FloEventId::new(123, 456),
         }));
@@ -557,7 +606,7 @@ mod test {
     #[test]
     fn peer_announce_is_parsed() {
         let ids = vec![FloEventId::new(3, 4), FloEventId::new(87, 65), FloEventId::new(33, 1)];
-        test_serialize_then_deserialize(ProtocolMessage::PeerAnnounce(1234, ids));
+        test_serialize_then_deserialize(&mut ProtocolMessage::PeerAnnounce(1234, ids));
     }
 
     #[test]
@@ -567,7 +616,7 @@ mod test {
             FloEventId::new(2, 7),
             FloEventId::new(5, 1)
         ];
-        test_serialize_then_deserialize(ProtocolMessage::PeerUpdate {
+        test_serialize_then_deserialize(&mut ProtocolMessage::PeerUpdate {
             actor_id: 12345,
             version_vec: version_vec,
         });
@@ -575,33 +624,38 @@ mod test {
 
     #[test]
     fn event_marker_update_is_parsed() {
-        test_serialize_then_deserialize(ProtocolMessage::UpdateMarker(FloEventId::new(2, 255)));
+        test_serialize_then_deserialize(&mut ProtocolMessage::UpdateMarker(FloEventId::new(2, 255)));
     }
 
     #[test]
     fn start_consuming_message_is_parsed() {
-        test_serialize_then_deserialize(ProtocolMessage::StartConsuming(ConsumerStart{
+        test_serialize_then_deserialize(&mut ProtocolMessage::StartConsuming(ConsumerStart{
             namespace: "/test/ns".to_owned(),
             max_events: 8766
         }));
     }
 
     #[test]
-    fn parse_producer_event_parses_correct_event() {
-        let input = ProtocolMessage::ProduceEvent(ProduceEventHeader {
+    fn parse_producer_event_parses_the_header_but_not_the_data() {
+        let input = NewProduceEvent {
             namespace: "/the/namespace".to_owned(),
             parent_id: Some(FloEventId::new(123, 456)),
             op_id: 9,
-            data_length: 5,
-        });
-        test_serialize_then_deserialize(input);
-        let input = ProtocolMessage::ProduceEvent(ProduceEventHeader {
-            namespace: "/another/namespace".to_owned(),
-            parent_id: None,
-            op_id: 8,
-            data_length: 999,
-        });
-        test_serialize_then_deserialize(input);
+            data: vec![9; 5]
+        };
+        let mut message_input = ProtocolMessage::NewProduceEvent(input.clone());
+        let message_result = ser_de(&mut message_input);
+
+        if let ProtocolMessage::NewProduceEvent(result) = message_result {
+            assert_eq!(input.namespace, result.namespace);
+            assert_eq!(input.parent_id, result.parent_id);
+            assert_eq!(input.op_id, result.op_id);
+
+            // The vector must be allocated with the correct capacity, but we haven't actually read all the data
+            assert_eq!(input.data.len(), result.data.capacity());
+        } else {
+            panic!("got the wrong fucking message. Just quit now");
+        }
     }
 
 
@@ -621,7 +675,7 @@ mod test {
 
     #[test]
     fn parse_client_auth_parses_valid_header_with_no_remaining_bytes() {
-        test_serialize_then_deserialize(ProtocolMessage::ClientAuth {
+        test_serialize_then_deserialize(&mut ProtocolMessage::ClientAuth {
             namespace: "hello".to_owned(),
             username: "usr".to_owned(),
             password: "pass".to_owned(),
