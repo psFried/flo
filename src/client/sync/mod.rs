@@ -200,7 +200,7 @@ impl <S: IoStream> SyncConnection<S> {
     }
 
     fn read_event(&mut self) -> Result<OwnedFloEvent, ClientError> {
-        match self.stream.read() {
+        match self.read_next_message() {
             Ok(ProtocolMessage::NewReceiveEvent(event)) => Ok(event),
             Ok(ProtocolMessage::Error(err)) => Err(ClientError::FloError(err)),
             Ok(ProtocolMessage::AwaitingEvents) => Err(ClientError::EndOfStream),

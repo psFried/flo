@@ -105,7 +105,9 @@ integration_test!{consumer_responds_to_event, port, _tcp_stream, {
         fn on_event<C: ConsumerContext>(&mut self, event_result: Result<OwnedFloEvent, &ClientError>, context: &mut C) -> ConsumerAction {
             println!("respondingConsumer got event: {:?}", event_result);
             if let Ok(event) = event_result {
-                context.respond("/responses", event.data).into()
+                let result = context.respond("/responses", event.data);
+                println!("Response to the response: {:?}", result);
+                result.into()
             } else {
                 ConsumerAction::Stop
             }
