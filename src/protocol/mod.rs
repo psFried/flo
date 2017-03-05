@@ -76,42 +76,42 @@ impl ::std::ops::Deref for Buffer {
     }
 }
 
-pub struct MessageReader<T> {
-    pub io: T,
-    buffer: Buffer,
-    current_message: Option<InProgressMessage>,
+pub struct MessageStream<T> {
+    io: T,
+    read_buffer: Buffer,
+    current_read_message: Option<InProgressMessage>,
+
 }
 
-impl <T> MessageReader<T> {
-    pub fn new(io: T) -> MessageReader<T> {
-        MessageReader {
+impl <T> MessageStream<T> {
+    pub fn new(io: T) -> MessageStream<T> {
+        MessageStream {
             io: io,
-            buffer: Buffer::new(),
-            current_message: None,
+            read_buffer: Buffer::new(),
+            current_read_message: None,
         }
     }
 }
 
-// TODO: It's really stupid to have a method called write_all on a struct called MessageReader!
-impl <T> MessageReader<T> where T: Write {
-    pub fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
-        self.io.write_all(bytes)
+impl <T> MessageStream<T> where T: Write {
+    pub fn write(&mut self, message_writer: &mut MessageWriter) -> io::Result<()> {
+        message_writer.write(&mut self.io)
     }
 }
 
-impl <T> MessageReader<T> where T: Read {
+impl <T> MessageStream<T> where T: Read {
 
     pub fn read_next(&mut self) -> io::Result<ProtocolMessage> {
         use nom::IResult;
 
-        let MessageReader{ref mut io, ref mut buffer, ref mut current_message} = *self;
+        let MessageStream {ref mut io, ref mut read_buffer, ref mut current_read_message} = *self;
         // if there's an in-progress message, then try to push the bytes into it
         // otherwise try to deserialize a new message
 
-        let (bytes_consumed, mut next_message) = current_message.take().map(|in_progress_message| {
+        let (bytes_consumed, mut next_message) = current_read_message.take().map(|in_progress_message| {
             Ok((0, in_progress_message))
         }).unwrap_or_else(|| {
-            buffer.fill(io).and_then(|bytes| {
+            read_buffer.fill(io).and_then(|bytes| {
                 let buffer_start_length = bytes.len();
                 match self::client::parse_any(bytes) {
                     IResult::Done(remaining, message) => {
@@ -129,17 +129,17 @@ impl <T> MessageReader<T> where T: Read {
             })
         })?; // Early return if either the read or parse fails
 
-        buffer.consume(bytes_consumed);
+        read_buffer.consume(bytes_consumed);
 
         let mut remaining_bytes_in_body = next_message.body_bytes_remaining();
 
         while remaining_bytes_in_body > 0 {
             trace!("Filling body of message with {} bytes", remaining_bytes_in_body);
             let n_appended = {
-                let bytes = buffer.fill(io)?; // early return if the read fails
+                let bytes = read_buffer.fill(io)?; // early return if the read fails
                 next_message.append_body(bytes)
             };
-            buffer.consume(n_appended);
+            read_buffer.consume(n_appended);
             remaining_bytes_in_body -= n_appended;
         }
         Ok(next_message.finish())

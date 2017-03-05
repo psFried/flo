@@ -5,13 +5,13 @@ use std::time::{Instant};
 use std::net::SocketAddr;
 
 use server::engine::api::{self, ClientMessage, ProducerMessage, ConsumerMessage, ConnectionId, PeerVersionMap};
-use protocol::{ClientProtocol, ProtocolMessage, ProduceEventHeader, ConsumerStart, MessageReader};
+use protocol::{ClientProtocol, ProtocolMessage, ProduceEventHeader, ConsumerStart, MessageStream};
 use nom::IResult;
 
 pub struct ClientMessageStream<R: Read> {
     connection_id: ConnectionId,
     client_address: SocketAddr,
-    message_reader: MessageReader<R>,
+    message_reader: MessageStream<R>,
     connected: bool
 }
 
@@ -20,7 +20,7 @@ impl <R: Read> ClientMessageStream<R> {
         ClientMessageStream {
             connection_id: connection_id,
             client_address: client_address,
-            message_reader: MessageReader::new(reader),
+            message_reader: MessageStream::new(reader),
             connected: true,
         }
     }

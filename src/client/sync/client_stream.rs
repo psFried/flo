@@ -4,7 +4,7 @@ use std::net::{TcpStream, ToSocketAddrs};
 
 use nom::IResult;
 
-use protocol::{ProtocolMessage, ClientProtocol, ClientProtocolImpl, MessageReader};
+use protocol::{ProtocolMessage, ClientProtocol, ClientProtocolImpl, MessageStream};
 
 const BUFFER_LENGTH: usize = 8 * 1024;
 
@@ -12,7 +12,7 @@ pub trait IoStream: Read + Write {}
 impl IoStream for TcpStream {}
 
 pub struct ClientStream<T: IoStream> {
-    io: MessageReader<T>,
+    io: MessageStream<T>,
 }
 
 pub type SyncStream = ClientStream<TcpStream>;
@@ -30,7 +30,7 @@ impl SyncStream {
 
     pub fn from_stream(stream: TcpStream) -> SyncStream {
         SyncStream {
-            io: MessageReader::new(stream),
+            io: MessageStream::new(stream),
         }
     }
 }
@@ -38,7 +38,8 @@ impl SyncStream {
 impl <T: IoStream> ClientStream<T> {
 
     pub fn write(&mut self, message: &mut ProtocolMessage) -> io::Result<()> {
-        ::protocol::MessageWriter::new(message).write(&mut self.io.io)
+        let mut writer = ::protocol::MessageWriter::new(message);
+        self.io.write(&mut writer)
     }
 
     pub fn read(&mut self) -> io::Result<ProtocolMessage> {
