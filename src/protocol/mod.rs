@@ -77,7 +77,7 @@ impl ::std::ops::Deref for Buffer {
 }
 
 pub struct MessageReader<T> {
-    io: T,
+    pub io: T,
     buffer: Buffer,
     current_message: Option<InProgressMessage>,
 }
@@ -116,6 +116,7 @@ impl <T> MessageReader<T> where T: Read {
                 match self::client::parse_any(bytes) {
                     IResult::Done(remaining, message) => {
                         let bytes_used = buffer_start_length - remaining.len();
+                        trace!("Successful parse used {} bytes; got message: {:?}", bytes_used, message);
                         Ok((bytes_used, InProgressMessage::new(message)))
                     }
                     IResult::Error(err) => {
@@ -133,8 +134,13 @@ impl <T> MessageReader<T> where T: Read {
         let mut remaining_bytes_in_body = next_message.body_bytes_remaining();
 
         while remaining_bytes_in_body > 0 {
-            let bytes = buffer.fill(io)?; // early return if the read fails
-            remaining_bytes_in_body = next_message.append_body(bytes);
+            trace!("Filling body of message with {} bytes", remaining_bytes_in_body);
+            let n_appended = {
+                let bytes = buffer.fill(io)?; // early return if the read fails
+                next_message.append_body(bytes)
+            };
+            buffer.consume(n_appended);
+            remaining_bytes_in_body -= n_appended;
         }
         Ok(next_message.finish())
     }
@@ -167,9 +173,8 @@ impl InProgressMessage {
             total_body_size = message_buffer.capacity();
             copy_until_capacity(bytes, message_buffer)
         }).unwrap_or(0);
-
         *body_read_pos += n_appended;
-        total_body_size - *body_read_pos
+        n_appended
     }
 
     fn finish(self) -> ProtocolMessage {
@@ -192,4 +197,42 @@ fn copy_until_capacity(src: &[u8], dst: &mut Vec<u8>) -> usize {
 }
 
 
+pub struct MessageWriter<'a> {
+    message: &'a mut ProtocolMessage,
+    body_position: usize,
+    header_written: bool,
+}
+
+impl <'a> MessageWriter<'a> {
+    pub fn new(message: &'a mut ProtocolMessage) -> MessageWriter<'a> {
+        MessageWriter {
+            message: message,
+            body_position: 0,
+            header_written: false,
+        }
+    }
+
+    pub fn write<T: Write>(&mut self, dest: &mut T) -> io::Result<()> {
+        let MessageWriter {ref mut message, ref mut body_position, ref mut header_written} = *self;
+        if !*header_written {
+            let mut buffer = [0; BUFFER_LENGTH];
+            let len = message.serialize(&mut buffer[..]);
+            dest.write_all(&buffer[..len])?;
+            *header_written = true;
+        }
+
+        if let Some(body) = message.get_body_mut() {
+            let total_len = body.len();
+            while *body_position < total_len {
+                let to_write = &mut body[*body_position..];
+                match dest.write(to_write) {
+                    Ok(n) => *body_position += n,
+                    Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {} // ignore and retry
+                    Err(other) => return Err(other)
+                }
+            }
+        }
+        Ok(())
+    }
+}
 

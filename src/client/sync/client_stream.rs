@@ -30,7 +30,7 @@ impl SyncStream {
 
     pub fn from_stream(stream: TcpStream) -> SyncStream {
         SyncStream {
-            io: stream,
+            io: MessageReader::new(stream),
         }
     }
 }
@@ -38,19 +38,10 @@ impl SyncStream {
 impl <T: IoStream> ClientStream<T> {
 
     pub fn write(&mut self, message: &mut ProtocolMessage) -> io::Result<()> {
-        let mut buffer = [0; BUFFER_LENGTH];
-        let nread = message.read(&mut buffer[..])?;
-        self.io.write_all(&buffer[..nread])
-    }
-
-    pub fn write_event_data<D: AsRef<[u8]>>(&mut self, data: D) -> io::Result<()> {
-        self.writer.write_all(data.as_ref()).and_then(|()| {
-            self.writer.flush()
-        })
+        ::protocol::MessageWriter::new(message).write(&mut self.io.io)
     }
 
     pub fn read(&mut self) -> io::Result<ProtocolMessage> {
         self.io.read_next()
     }
-
 }

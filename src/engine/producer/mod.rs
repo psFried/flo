@@ -87,6 +87,9 @@ impl <S: EventWriter> ProducerManager<S> {
             ProtocolMessage::PeerAnnounce(actor_id, peer_versions) => {
                 self.peer_announce(sender, actor_id, peer_versions, recv_time)
             }
+            ProtocolMessage::NewReceiveEvent(event) => {
+                self.persist_event(sender, 0, event)
+            }
             other @ _ => {
                 error!("Unhandled message: {:?}", other);
                 Err(format!("Unhandled message: {:?}", other))

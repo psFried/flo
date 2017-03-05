@@ -112,8 +112,8 @@ integration_test!{consumer_responds_to_event, port, _tcp_stream, {
         }
     }
 
-    let event_1_id = client.produce("/events", b"data").unwrap();
-    let event_2_id = client.produce("/events", b"data 2").unwrap();
+    let event_1_id = client.produce("/events", "data").unwrap();
+    let event_2_id = client.produce("/events", "data 2").unwrap();
     let mut consumer = RespondingConsumer;
     let options = ConsumerOptions::simple("/events", None, 2);
     client.run_consumer(options, &mut consumer).expect("failed to run consumer");
@@ -155,11 +155,11 @@ integration_test!{consumer_receives_error_after_starting_to_consume_with_invalid
 integration_test!{consumer_reads_events_matching_glob_pattern, port, tcp_stream, {
     let mut client = SyncConnection::connect(localhost(port)).expect("failed to create producer");
 
-    client.produce("/animal/mammal/koala", b"data").expect("failed to produce event");
-    client.produce("/animal/mammal/sorta/platypus", b"data").expect("failed to produce event");
-    client.produce("/animal/reptile/snake", b"data").expect("failed to produce event");
-    client.produce("/animal/mammal/mouse", b"data").expect("failed to produce event");
-    client.produce("/animal/bird/magpie", b"data").expect("failed to produce event");
+    client.produce("/animal/mammal/koala", "data").expect("failed to produce event");
+    client.produce("/animal/mammal/sorta/platypus", "data").expect("failed to produce event");
+    client.produce("/animal/reptile/snake", "data").expect("failed to produce event");
+    client.produce("/animal/mammal/mouse", "data").expect("failed to produce event");
+    client.produce("/animal/bird/magpie", "data").expect("failed to produce event");
 
     let mut consumer = TestConsumer::new("consumer_reads_events_matching_glob_pattern");
     let options = ConsumerOptions::simple("/animal/mammal/*", None, 2);
@@ -177,11 +177,11 @@ integration_test!{consumer_only_receives_events_with_exactly_matching_namespace,
 
     let namespace = "/test/namespace";
 
-    client.produce("/wrong/namespace", b"wrong data").expect("failed to produce event");
-    client.produce("/test/namespace/extra", b"wrong data").expect("failed to produce event");
-    client.produce(namespace, b"right data").expect("failed to produce event");
-    client.produce("/wrong/namespace", b"wrong data").expect("failed to produce event");
-    client.produce(namespace, b"right data").expect("failed to produce event");
+    client.produce("/wrong/namespace", "wrong data").expect("failed to produce event");
+    client.produce("/test/namespace/extra", "wrong data").expect("failed to produce event");
+    client.produce(namespace, "right data").expect("failed to produce event");
+    client.produce("/wrong/namespace", "wrong data").expect("failed to produce event");
+    client.produce(namespace, "right data").expect("failed to produce event");
 
     let mut consumer = TestConsumer::new("consumer_only_receives_events_with_exactly_matching_namespace");
     let options = ConsumerOptions::simple(namespace, None, 2);
@@ -205,7 +205,7 @@ integration_test!{clients_can_connect_and_disconnect_multiple_times_without_maki
 
     {
         let mut client = SyncConnection::from_tcp_stream(tcp_stream);
-        client.produce(namespace, b"whatever data").expect("failed to produce first event");
+        client.produce(namespace, "whatever data").expect("failed to produce first event");
     }
 
     {
@@ -217,7 +217,7 @@ integration_test!{clients_can_connect_and_disconnect_multiple_times_without_maki
 
     let second_event_id = {
         let mut client = SyncConnection::connect(localhost(port)).expect("failed to create second producer");
-        client.produce(namespace, b"whatever data").expect("failed to produce second event")
+        client.produce(namespace, "whatever data").expect("failed to produce second event")
     };
 
     {
@@ -229,7 +229,7 @@ integration_test!{clients_can_connect_and_disconnect_multiple_times_without_maki
 
     {
         let mut client = SyncConnection::connect(localhost(port)).expect("failed to create third producer");
-        client.produce(namespace, b"whatever data").expect("failed to produce third event");
+        client.produce(namespace, "whatever data").expect("failed to produce third event");
     }
 
     {
@@ -245,7 +245,7 @@ integration_test!{many_events_are_produced_using_sync_client, port, tcp_stream, 
     let mut client = SyncConnection::connect(localhost(port)).expect("failed to create client");
 
     for i in 0..1000 {
-        match client.produce("/any/ns", b"some bytes") {
+        match client.produce("/any/ns", "some bytes") {
             Ok(_) => {}
             Err(err) => {
                 panic!("Failed to produce event: {}, err: {:?}", i, err);
@@ -264,7 +264,7 @@ integration_test!{events_are_consumed_as_they_are_written, port, tcp_stream, {
 
         (0..num_events).map(|i| {
             let event_data = format!("Event: {} data", i);
-            client.produce("/the/test/namespace", event_data.as_bytes()).expect("Failed to produce event")
+            client.produce("/the/test/namespace", event_data).expect("Failed to produce event")
         }).collect::<Vec<FloEventId>>()
     });
 
@@ -284,5 +284,5 @@ integration_test!{events_are_consumed_as_they_are_written, port, tcp_stream, {
 
 integration_test!{event_is_written_using_sync_connection, port, tcp_stream, {
     let mut client = SyncConnection::connect(localhost(port)).expect("failed to connect");
-    client.produce("/this/namespace/is/boss", b"this is the event data").unwrap();
+    client.produce("/this/namespace/is/boss", "this is the event data").unwrap();
 }}

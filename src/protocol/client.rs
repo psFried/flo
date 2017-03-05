@@ -254,24 +254,6 @@ named!{pub parse_new_producer_event<ProtocolMessage>,
     )
 }
 
-named!{pub parse_producer_event<ProtocolMessage>,
-    chain!(
-        _tag: tag!(PRODUCE_EVENT) ~
-        namespace: parse_str ~
-        parent_id: parse_event_id ~
-        op_id: be_u32 ~
-        data_len: be_u32,
-        || {
-            ProtocolMessage::ProduceEvent(ProduceEventHeader{
-                namespace: namespace.to_owned(),
-                parent_id: parent_id,
-                op_id: op_id,
-                data_length: data_len
-            })
-        }
-    )
-}
-
 named!{parse_timestamp<Timestamp>,
     map!(be_u64, ::time::from_millis_since_epoch)
 }
@@ -283,14 +265,14 @@ named!{parse_receive_event_header<ProtocolMessage>,
         parent_id: parse_event_id ~
         timestamp: parse_timestamp ~
         namespace: parse_str ~
-        data_len: be_u32,
+        data: length_data!(be_u32),
         || {
-           ProtocolMessage::ReceiveEvent(ReceiveEventHeader {
+           ProtocolMessage::NewReceiveEvent(OwnedFloEvent {
                 id: id,
                 parent_id: parent_id,
                 namespace: namespace,
                 timestamp: timestamp,
-                data_length: data_len,
+                data: data.to_vec(),
             })
         }
     )
@@ -517,6 +499,18 @@ impl ProtocolMessage {
             ProtocolMessage::Error(ref err_message) => {
                 serialize_error_message(err_message, buf)
             }
+        }
+    }
+
+    pub fn get_body_mut(&mut self) -> Option<&mut Vec<u8>> {
+        match *self {
+            ProtocolMessage::NewProduceEvent(ref mut produce) => {
+                Some(&mut produce.data)
+            }
+            ProtocolMessage::NewReceiveEvent(ref mut event) => {
+                Some(&mut event.data)
+            }
+            _ => None
         }
     }
 }

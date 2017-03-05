@@ -183,18 +183,15 @@ mod test {
 
         let (remaining, result) = read_server_message(&buffer[..total_length]).unwrap();
 
-        let expected_header = ::protocol::ReceiveEventHeader{
+        let expected_event = OwnedFloEvent {
             id: event_id,
             parent_id: parent_id,
             namespace: namespace.to_owned(),
             timestamp: event_ts,
-            data_length: event_data.len() as u32,
+            data: event_data.as_bytes().to_vec(),
         };
 
-        assert_eq!(ProtocolMessage::ReceiveEvent(expected_header), result);
-
-        assert_eq!(event_data.as_bytes(), remaining);
-
+        assert_eq!(ProtocolMessage::NewReceiveEvent(expected_event), result);
     }
 
     #[test]
