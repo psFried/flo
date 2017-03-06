@@ -45,4 +45,8 @@ impl ClientMap {
             })
         })
     }
+
+    pub fn get_client_address(&self, connection_id: ConnectionId) -> Option<SocketAddr> {
+        self.0.get(&connection_id).map(|client| client.remote_address)
+    }
 }

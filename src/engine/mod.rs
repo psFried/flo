@@ -31,7 +31,7 @@ pub fn run(options: ServerOptions, cluster_sender: UnboundedSender<SocketAddr>) 
     let (producer_tx, producer_rx) = mpsc::channel::<ProducerManagerMessage>();
     let (consumer_tx, consumer_rx) = mpsc::channel::<ConsumerManagerMessage>();
 
-    let ServerOptions{data_dir, default_namespace, max_events, max_cached_events, max_cache_memory, cluster_addresses, actor_id, ..} = options;
+    let ServerOptions{port, data_dir, default_namespace, max_events, max_cached_events, max_cache_memory, cluster_addresses, actor_id, ..} = options;
 
     let storage_options = StorageEngineOptions {
         storage_dir: data_dir,
@@ -47,16 +47,16 @@ pub fn run(options: ServerOptions, cluster_sender: UnboundedSender<SocketAddr>) 
     let consumer_manager_sender = consumer_tx.clone();
     thread::Builder::new().name("Producer-Manager-thread".to_owned()).spawn(move || {
         let peer_addresses = cluster_addresses.unwrap_or(Vec::new());
-        let mut producer_manager = ProducerManager::new(event_writer, consumer_manager_sender, actor_id, version_vec, peer_addresses, cluster_sender);
+        let mut producer_manager = ProducerManager::new(event_writer, consumer_manager_sender, actor_id, port, version_vec, peer_addresses, cluster_sender);
         loop {
             match producer_rx.recv() {
                 Ok(msg) => {
                     match producer_manager.process(msg) {
                         Ok(()) => {
-                            trace!("Producer Manager successfully processed message");
+//                            trace!("Producer Manager successfully processed message");
                         }
                         Err(err) => {
-                            error!("ProducerManager error processing message err: {:?}", err)
+                            error!("ProducerManager error processing message err: {:?}", err);
                         }
                     }
                 }
@@ -78,7 +78,7 @@ pub fn run(options: ServerOptions, cluster_sender: UnboundedSender<SocketAddr>) 
                 Ok(client_message) => {
                     match consumer_manager.process(client_message) {
                         Ok(()) => {
-                            trace!("Consumer manager succesfully processed message");
+//                            trace!("Consumer manager succesfully processed message");
                         }
                         Err(err) => {
                             error!("ConsumerManager error in processing message err: {:?}", err);

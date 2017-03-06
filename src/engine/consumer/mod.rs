@@ -105,74 +105,22 @@ impl <R: EventReader + 'static> ConsumerManager<R> {
                     ConsumerManager::start_consuming(state, client, namespace, max_events)
                 })
             }
+            ProtocolMessage::AckEvent(ack) => {
+                self.consumers.update_consumer_position(sender, ack.event_id);
+                Ok(())
+            }
             other @ _ => {
                 error!("Unexpected message: {:?}", other);
-                Err(format!("Unexpected message: {:?}", other))
+//                Err(format!("Unexpected message: {:?}", other))
+                Ok(())
             }
         }
     }
 
-
-/*    /// Process a message, which involves sending out any responses directly over client channels
-    /// Returning an error from this method is considered a fatal error, and the consumer manager will be shutdown
-    pub fn _process(&mut self, message: ConsumerMessage) -> Result<(), String> {
-        trace!("Got message: {:?}", message);
-        match message {
-            ConsumerMessage::ClientConnect(connect) => {
-                self.consumers.add(connect);
-                Ok(())
-            }
-            ConsumerMessage::StartConsuming(connection_id, namespace, limit) => {
-                self.require_client(connection_id, move |mut client, mut state| {
-                    ConsumerManager::start_consuming(state, client, namespace, limit)
-                })
-            }
-            ConsumerMessage::ContinueConsuming(connection_id, event_id, limit) => {
-                let result = self.require_client(connection_id, move |mut client, mut state| {
-                    //TODO: remove limit from continueConsuming message, since the reader thread has no idea which ones actually match the namespace
-                    if let Some(remaining) = client.continue_consuming() {
-                        ConsumerManager::send_events(state, client, event_id, remaining);
-                    } else {
-                        warn!("Got ContinueConsuming message for connection_id: {} but client has since be moved to NotConsuming state", connection_id);
-                    }
-                    Ok(())
-                });
-                // This condition is a little weird, but not necessarily an error from the server's perspective
-                if let Err(_) = result {
-                    warn!("connection_id: {} was disconnected, so ContinueConsuming will not be processed", connection_id);
-                }
-                Ok(())
-            }
-            ConsumerMessage::EventLoaded(connection_id, event) => {
-                //TODO: think about caching events as they are loaded from disk. Currently we prefer to only cache the most recent events
-                self.state.update_greatest_event(event.id);
-                self.consumers.send_event(connection_id, Arc::new(event))
-            }
-            ConsumerMessage::EventPersisted(_connection_id, event) => {
-                self.state.update_greatest_event(event.id);
-                let event_rc = self.state.cache.insert(event);
-                self.consumers.send_event_to_all(event_rc)
-            }
-            ConsumerMessage::UpdateMarker(connection_id, event_id) => {
-                self.consumers.update_consumer_position(connection_id, event_id)
-            }
-            ConsumerMessage::Disconnect(connection_id, client_address) => {
-                debug!("Removing client: {} at address: {}", connection_id, client_address);
-                self.consumers.remove(connection_id);
-                Ok(())
-            }
-            ConsumerMessage::StartPeerReplication(peer_version_info) => {
-                self.start_peer_replication(peer_version_info)
-            }
-            m @ _ => {
-                error!("Got unhandled message: {:?}", m);
-                panic!("Got unhandled message: {:?}", m);
-            }
-        }
-    }*/
-
     fn start_peer_replication(&mut self, connection_id: ConnectionId, from_actor: ActorId, actor_versions: Vec<FloEventId>) -> Result<(), String> {
-        debug!("Attempting to start peer replication to connection_id: {}, actor_id: {}", connection_id, from_actor);
+        debug!("Attempting to start peer replication to connection_id: {}, actor_id: {}, version_vector: {:?}",
+                connection_id, from_actor, actor_versions);
+
         self.require_client(connection_id, |client, manager_state|{
             VersionVector::from_vec(actor_versions).map_err(|err| {
                 ErrorMessage {

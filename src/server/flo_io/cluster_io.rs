@@ -17,12 +17,7 @@ fn connect(address: SocketAddr, handle: &Handle, remote: Remote, engine: Channel
             Ok(tcp_stream) => {
                 let connection_id = next_connection_id();
                 debug!("established connection to peer at: {} with connection_id: {}", address, connection_id);
-                setup_message_streams(connection_id, tcp_stream, address, engine.clone(), &remote);
-                //TODO: should probably just use the normal ClientConnect message to notify producer manager of peer connection
-//                let peer_connect_msg = ClientMessage::Producer(ProducerManagerMessage::PeerConnectSuccess(connection_id, address));
-//                engine.send(peer_connect_msg).map_err(|send_err| {
-//                    error!("Error sending peer connect to engine: {:?}", send_err); // map err to ()
-//                })
+                setup_message_streams(connection_id, tcp_stream, address, engine, &remote);
                 Ok(())
             }
             Err(io_err) => {
@@ -35,7 +30,6 @@ fn connect(address: SocketAddr, handle: &Handle, remote: Remote, engine: Channel
     })
 }
 
-//TODO: setup Interval events for handling timeouts
 pub fn start_cluster_io(receiver: UnboundedReceiver<SocketAddr>, mut loop_handles: LoopHandles, engine: ChannelSender) {
     loop_handles.next_handle().spawn(move |_| {
         receiver.for_each(move |peer_address| {

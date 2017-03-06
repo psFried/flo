@@ -13,8 +13,10 @@
 use nom::{be_u64, be_u32, be_u16, IResult};
 use event::{OwnedFloEvent, FloEventId, ActorId, Timestamp};
 use serializer::Serializer;
-
+use std::net::SocketAddr;
 use std::io::{self, Read};
+use std::fmt::Write;
+use std::str::FromStr;
 
 pub mod headers {
     pub const CLIENT_AUTH: &'static str = "FLO_AUT\n";
@@ -27,6 +29,7 @@ pub mod headers {
     pub const PEER_UPDATE: &'static str = "FLO_PUD\n";
     pub const ACK_HEADER: &'static [u8; 8] = b"FLO_ACK\n";
     pub const ERROR_HEADER: &'static [u8; 8] = b"FLO_ERR\n";
+    pub const CLUSTER_STATE: &'static [u8; 8] = b"FLO_CLS\n";
 }
 
 use self::headers::*;
@@ -154,6 +157,41 @@ pub struct ConsumerStart {
 }
 
 
+/// Represents information known about a member of the flo cluster from the perspective of whichever member sent the
+/// ClusterState message.
+#[derive(Debug, PartialEq, Clone)]
+pub struct ClusterMember {
+    /// the address of the cluster member. The peer should be reachable at this address without having to modify or fix it up
+    pub addr: SocketAddr,
+
+    /// The actor id of the peer
+    pub actor_id: ActorId,
+
+    /// Whether the peer is currently connected to the sender of the ClusterState message
+    pub connected: bool,
+}
+
+/// Represents the known state of the cluster from the point of view of _one_ of it's members.
+/// Keep in mind that each member of a given cluster may have a different record of what the state of the cluster is.
+/// This message represents the point of view of the actor referred to by the `actor_id` field.
+#[derive(Debug, PartialEq, Clone)]
+pub struct ClusterState {
+    /// The id of whichever actor has sent this message
+    pub actor_id: ActorId,
+
+    /// The port number that this actor is listening on. This is not a complete address because of the fact that it's not
+    /// always possible for a server to know the correct address for connecting to itself.
+    pub actor_port: u16,
+
+    /// The current version vector of this actor
+    pub version_vector: Vec<FloEventId>,
+
+    /// Information on all the other known members of the cluster. This list will not include duplicated information about
+    /// the actor who sent the message
+    pub other_members: Vec<ClusterMember>,
+}
+
+
 /// Defines all the distinct messages that can be sent over the wire between client and server.
 #[derive(Debug, PartialEq, Clone)]
 pub enum ProtocolMessage {
@@ -170,15 +208,10 @@ pub enum ProtocolMessage {
     /// events are available. This message will only be sent at most once to a given consumer.
     AwaitingEvents,
     /// Sent between flo servers to announce their presence. Essentially makes a claim that the given server represents
-    /// the given `ActorId`
-    PeerAnnounce(ActorId, Vec<FloEventId>),
-    /// Sent between flo servers to provide the version vector of the peer
-    PeerUpdate{
-        /// The ActorId of the peer that is claiming to have the versions listed
-        actor_id: ActorId,
-        /// For each actor that this peer has knowledge of, this will contain the highest `EventCounter` currently known.
-        version_vec: Vec<FloEventId>,
-    },
+    /// the given `ActorId` and provides whatever information the actor has about the current state of the cluster
+    PeerAnnounce(ClusterState),
+    /// Sent between flo servers to provide the version vector and cluster state of the peer
+    PeerUpdate(ClusterState),
     /// This is just a bit of speculative engineering, honestly. Just don't even bother using it.
     ClientAuth {
         namespace: String,
@@ -194,6 +227,15 @@ named!{pub parse_str<String>,
         take_until_and_consume!("\n"),
         |res| {
             ::std::str::from_utf8(res).map(|val| val.to_owned())
+        }
+    )
+}
+
+named!{parse_string_slice<&str>,
+    map_res!(
+        take_until_and_consume!("\n"),
+        |res| {
+            ::std::str::from_utf8(res)
         }
     )
 }
@@ -320,13 +362,54 @@ named!{parse_start_consuming<ProtocolMessage>,
     )
 }
 
+named!{parse_cluster_state<ClusterState>,
+    chain!(
+        actor_id: be_u16 ~
+        actor_port: be_u16 ~
+        version_vec: parse_version_vec ~
+        members: length_count!(be_u16, parse_cluster_member_status),
+        || {
+            ClusterState {
+                actor_id: actor_id,
+                actor_port: actor_port,
+                version_vector: version_vec,
+                other_members: members,
+            }
+        }
+    )
+}
+
+named!{parse_socket_addr<SocketAddr>, map_res!(parse_string_slice, to_socket_addr) }
+
+fn to_socket_addr(input: &str) -> Result<SocketAddr, ::std::net::AddrParseError> {
+    SocketAddr::from_str(input)
+}
+
+fn to_bool(byte_slice: &[u8]) -> bool {
+    byte_slice == &[1u8]
+}
+
+named!{parse_cluster_member_status<ClusterMember>,
+    chain!(
+        actor_id: be_u16 ~
+        address: parse_socket_addr ~
+        connected: map!(take!(1), to_bool),
+        || {
+            ClusterMember {
+                addr: address,
+                actor_id: actor_id,
+                connected: connected,
+            }
+        }
+    )
+}
+
 named!{parse_peer_announce<ProtocolMessage>,
     chain!(
         _tag: tag!(PEER_ANNOUNCE) ~
-        actor_id: be_u16 ~
-        versions: parse_version_vec,
+        state: parse_cluster_state,
         || {
-            ProtocolMessage::PeerAnnounce(actor_id, versions)
+            ProtocolMessage::PeerAnnounce(state)
         }
     )
 }
@@ -338,13 +421,9 @@ named!{parse_version_vec<Vec<FloEventId>>,
 named!{parse_peer_update<ProtocolMessage>,
     chain!(
         _tag: tag!(PEER_UPDATE) ~
-        actor_id: be_u16 ~
-        versions: parse_version_vec,
+        state: parse_cluster_state,
         || {
-            ProtocolMessage::PeerUpdate{
-                actor_id: actor_id,
-                version_vec: versions,
-            }
+            ProtocolMessage::PeerUpdate(state)
         }
     )
 }
@@ -439,6 +518,29 @@ fn serialize_error_message(err: &ErrorMessage, buf: &mut [u8]) -> usize {
             .finish()
 }
 
+fn serialize_cluster_state(header: &'static str, state: &ClusterState, buf: &mut [u8]) -> usize {
+    let mut addr_buffer = String::new();
+
+    let mut ser = Serializer::new(buf).write_bytes(header)
+            .write_u16(state.actor_id)
+            .write_u16(state.actor_port)
+            .write_u16(state.version_vector.len() as u16);
+
+    for id in state.version_vector.iter() {
+        ser = ser.write_u64(id.event_counter).write_u16(id.actor);
+    }
+
+    ser = ser.write_u16(state.other_members.len() as u16);
+    for member in state.other_members.iter() {
+        addr_buffer.clear();
+        write!(addr_buffer, "{}", member.addr).unwrap();
+
+        ser = ser.write_u16(member.actor_id)
+                 .newline_term_string(&addr_buffer)
+                 .write_bool(member.connected);
+    }
+    ser.finish()
+}
 
 
 impl ProtocolMessage {
@@ -473,25 +575,11 @@ impl ProtocolMessage {
                                     .newline_term_string(password)
                                     .finish()
             }
-            ProtocolMessage::PeerUpdate {ref actor_id, ref version_vec} => {
-                let mut serializer = Serializer::new(buf).write_bytes(PEER_UPDATE)
-                                                         .write_u16(*actor_id)
-                                                         .write_u16(version_vec.len() as u16);
-
-                for id in version_vec.iter() {
-                    serializer = serializer.write_u64(id.event_counter).write_u16(id.actor);
-                }
-                serializer.finish()
+            ProtocolMessage::PeerUpdate(ref state) => {
+                serialize_cluster_state(PEER_UPDATE, state, buf)
             }
-            ProtocolMessage::PeerAnnounce(actor_id, ref version_vec) => {
-                let mut serializer = Serializer::new(buf)
-                        .write_bytes(headers::PEER_ANNOUNCE.as_bytes())
-                        .write_u16(actor_id)
-                        .write_u16(version_vec.len() as u16); // safe cast since we can never have more than 2^16 actors
-                for id in version_vec.iter() {
-                    serializer = serializer.write_u64(id.event_counter).write_u16(id.actor);
-                }
-                serializer.finish()
+            ProtocolMessage::PeerAnnounce(ref cluster_state) => {
+                serialize_cluster_state(PEER_ANNOUNCE, cluster_state, buf)
             }
             ProtocolMessage::AckEvent(ref ack) => {
                 serialize_event_ack(ack, buf)
@@ -541,6 +629,7 @@ mod test {
     use std::io::Read;
     use nom::IResult;
     use event::FloEventId;
+    use std::net::{SocketAddr, SocketAddrV4, Ipv4Addr};
 
     fn test_serialize_then_deserialize(message: &mut ProtocolMessage) {
         let result  = ser_de(message);
@@ -593,21 +682,56 @@ mod test {
 
     #[test]
     fn peer_announce_is_parsed() {
-        let ids = vec![FloEventId::new(3, 4), FloEventId::new(87, 65), FloEventId::new(33, 1)];
-        test_serialize_then_deserialize(&mut ProtocolMessage::PeerAnnounce(1234, ids));
+        let state = ClusterState {
+            actor_id: 5,
+            actor_port: 5555,
+            version_vector: vec![FloEventId::new(5, 6), FloEventId::new(1, 9), FloEventId::new(2, 1)],
+            other_members: vec![
+                ClusterMember {
+                    addr: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0,0,0,0), 4444)),
+                    actor_id: 6,
+                    connected: true,
+                },
+                ClusterMember {
+                    addr: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(7, 8, 9, 10), 3333)),
+                    actor_id: 3,
+                    connected: false,
+                },
+                ClusterMember {
+                    addr: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0,0,0,0), 4444)),
+                    actor_id: 2,
+                    connected: true,
+                },
+            ],
+        };
+        test_serialize_then_deserialize(&mut ProtocolMessage::PeerAnnounce(state));
     }
 
     #[test]
     fn peer_update_is_parsed() {
-        let version_vec = vec![
-            FloEventId::new(1, 5),
-            FloEventId::new(2, 7),
-            FloEventId::new(5, 1)
-        ];
-        test_serialize_then_deserialize(&mut ProtocolMessage::PeerUpdate {
-            actor_id: 12345,
-            version_vec: version_vec,
-        });
+        let state = ClusterState {
+            actor_id: 5,
+            actor_port: 5555,
+            version_vector: vec![FloEventId::new(5, 6), FloEventId::new(1, 9), FloEventId::new(2, 1)],
+            other_members: vec![
+                ClusterMember {
+                    addr: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0,0,0,0), 4444)),
+                    actor_id: 6,
+                    connected: true,
+                },
+                ClusterMember {
+                    addr: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(7, 8, 9, 10), 3333)),
+                    actor_id: 3,
+                    connected: false,
+                },
+                ClusterMember {
+                    addr: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0,0,0,0), 4444)),
+                    actor_id: 2,
+                    connected: true,
+                },
+            ],
+        };
+        test_serialize_then_deserialize(&mut ProtocolMessage::PeerUpdate(state));
     }
 
     #[test]

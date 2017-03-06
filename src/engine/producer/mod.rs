@@ -3,11 +3,11 @@ mod cluster;
 
 use self::cluster::ClusterState;
 use self::client_map::ClientMap;
-use engine::api::{ProduceEvent, ProducerMessage, PeerVersionMap, ConnectionId, ProducerManagerMessage, ConsumerManagerMessage, ReceivedMessage};
+use engine::api::{ProduceEvent, ProducerMessage, PeerVersionMap, ClientConnect, ConnectionId, ProducerManagerMessage, ConsumerManagerMessage, ReceivedMessage};
 use engine::event_store::EventWriter;
 use engine::version_vec::VersionVector;
 use event::{ActorId, OwnedFloEvent, EventCounter, FloEventId};
-use protocol::{ProtocolMessage, EventAck, NewProduceEvent};
+use protocol::{ProtocolMessage, EventAck, NewProduceEvent, ClusterMember};
 use server::metrics::ProducerMetrics;
 
 use std::sync::mpsc::Sender;
@@ -23,6 +23,7 @@ pub fn tick_duration() -> Duration {
 
 pub struct ProducerManager<S: EventWriter> {
     actor_id: ActorId,
+    server_port: u16,
     event_store: S,
     highest_event_id: EventCounter,
     version_vec: VersionVector,
@@ -37,12 +38,14 @@ impl <S: EventWriter> ProducerManager<S> {
     pub fn new(storage: S,
                consumer_manager_channel: Sender<ConsumerManagerMessage>,
                actor_id: ActorId,
+               my_port: u16,
                my_version_vec: VersionVector,
                peer_addresses: Vec<SocketAddr>,
                cluster_connect_sender: UnboundedSender<SocketAddr>) -> ProducerManager<S> {
         let highest_event_id = my_version_vec.get(actor_id);
         ProducerManager {
             actor_id: actor_id,
+            server_port: my_port,
             event_store: storage,
             highest_event_id: highest_event_id,
             version_vec: my_version_vec,
@@ -57,9 +60,7 @@ impl <S: EventWriter> ProducerManager<S> {
     pub fn process(&mut self, message: ProducerManagerMessage) -> Result<(), String> {
         match message {
             ProducerManagerMessage::Connect(connect) => {
-                info!("Added new connection from: {} as connection_id: {}", connect.client_addr, connect.connection_id);
-                self.clients.add(connect);
-                Ok(())
+                self.on_connect(connect)
             }
             ProducerManagerMessage::Disconnect(connection_id, address) => {
                 debug!("removing producer: {} at address: {}", connection_id, address);
@@ -79,29 +80,86 @@ impl <S: EventWriter> ProducerManager<S> {
         }
     }
 
+    fn on_connect(&mut self, connect: ClientConnect) -> Result<(), String> {
+        info!("Added new connection from: {} as connection_id: {}", connect.client_addr, connect.connection_id);
+        let address = connect.client_addr;
+        let connection_id = connect.connection_id;
+        self.clients.add(connect);
+
+        if self.cluster_state.is_disconnected_peer(&address) {
+            self.on_peer_connect(connection_id, address)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn get_my_cluster_state_message(&self) -> ::protocol::ClusterState {
+        let mut cluster_members = {
+            let ProducerManager {ref cluster_state, ref clients, ..} = *self;
+
+            let mut members: Vec<ClusterMember> = cluster_state.connected_peers.values().filter(|peer| {
+                peer.actor_id.is_some()
+            }).map(|peer| {
+                ClusterMember {
+                    addr: peer.address,
+                    actor_id: peer.actor_id.unwrap(), // safe unwrap because of the filter above
+                    connected: true,
+                }
+            }).collect();
+
+            for disconnected_peer in cluster_state.disconnected_peers.values() {
+                if disconnected_peer.actor_id.is_some() {
+                    let member = ClusterMember {
+                        addr: disconnected_peer.address,
+                        actor_id: disconnected_peer.actor_id.unwrap(), // safe unwrap due to check above
+                        connected: false,
+                    };
+                    members.push(member);
+                }
+            }
+            members
+        };
+
+        ::protocol::ClusterState {
+            actor_id: self.actor_id,
+            actor_port: self.server_port,
+            version_vector: self.version_vec.snapshot(),
+            other_members: cluster_members,
+        }
+    }
+
+    fn on_peer_connect(&mut self, connection_id: ConnectionId, address: SocketAddr) -> Result<(), String> {
+        self.cluster_state.peer_connected(address, connection_id);
+        let state_message = self.get_my_cluster_state_message();
+        self.clients.send(connection_id, ProtocolMessage::PeerAnnounce(state_message))
+    }
+
     fn process_received_message(&mut self, ReceivedMessage{sender, recv_time, message}: ReceivedMessage) -> Result<(), String> {
+        trace!("Received from connection_id: {} message: {:?}", sender, message);
         match message {
             ProtocolMessage::NewProduceEvent(produce) => {
                 self.new_produce_event(sender, produce)
             }
-            ProtocolMessage::PeerAnnounce(actor_id, peer_versions) => {
-                self.peer_announce(sender, actor_id, peer_versions, recv_time)
+            ProtocolMessage::PeerAnnounce(cluster_state) => {
+                self.on_peer_announce(sender, cluster_state, recv_time)
+            }
+            ProtocolMessage::PeerUpdate(cluster_state) => {
+                self.process_peer_cluster_state(sender, &cluster_state);
+                Ok(())
             }
             ProtocolMessage::NewReceiveEvent(event) => {
                 self.persist_event(sender, 0, event)
             }
+            ProtocolMessage::AwaitingEvents => {
+                info!("Replication is caught up for peer connection_id: {}", sender);
+                Ok(())
+            }
             other @ _ => {
                 error!("Unhandled message: {:?}", other);
-                Err(format!("Unhandled message: {:?}", other))
+//                Err(format!("Unhandled message: {:?}", other))
+                Ok(())
             }
         }
-    }
-
-    fn outgoing_peer_connection(&mut self, connection_id: ConnectionId, address: SocketAddr) -> Result<(), String> {
-        self.cluster_state.peer_connected(address, connection_id);
-//        let announce_message = ProtocolMessage::PeerAnnounce()
-        //TODO: Send outgoing message to peer to announce and request event replication
-        Ok(())
     }
 
     fn on_tick(&mut self) -> Result<(), String> {
@@ -128,19 +186,35 @@ impl <S: EventWriter> ProducerManager<S> {
         }
     }
 
-    fn peer_announce(&mut self, connection_id: ConnectionId, actor_id: ActorId, peer_versions: Vec<FloEventId>, message_recv_time: Instant) -> Result<(), String> {
-        info!("Upgrading to peer connection_id: {}, actor_id: {}, peer_versions: {:?}", connection_id, actor_id, peer_versions);
-        //Take a snapshot of the current version vector
-        let my_version_vec = self.version_vec.snapshot();
-        let message = ProtocolMessage::PeerUpdate {
-            actor_id: self.actor_id,
-            version_vec: my_version_vec,
-        };
-        self.clients.send(connection_id, message).and_then(|()| {
-            self.consumer_manager_channel.send(ConsumerManagerMessage::StartPeerReplication(connection_id, actor_id, peer_versions)).map_err(|send_err| {
+    fn on_peer_announce(&mut self, connection_id: ConnectionId, peer_cluster_state: ::protocol::ClusterState, message_recv_time: Instant) -> Result<(), String> {
+        info!("Upgrading to peer connection_id: {}, peer_cluster_state: {:?}", connection_id, peer_cluster_state);
+        self.process_peer_cluster_state(connection_id, &peer_cluster_state);
+
+        let my_state = self.get_my_cluster_state_message();
+        let ::protocol::ClusterState {actor_id, actor_port, version_vector, other_members} = peer_cluster_state;
+
+        self.clients.send(connection_id, ProtocolMessage::PeerUpdate(my_state)).and_then(|()| {
+            let peer_replication_message = ConsumerManagerMessage::StartPeerReplication(connection_id, actor_id, version_vector);
+            self.consumer_manager_channel.send( peer_replication_message).map_err(|send_err| {
                 format!("Failed to send message to consumer manager: {:?}", send_err)
             })
         })
+    }
+
+    fn process_peer_cluster_state(&mut self, connection_id: ConnectionId, peer_state: &::protocol::ClusterState) {
+        let rectified_address = {
+            // Safe unwrap since this is the client that just sent us the message
+            let mut client_remote_address = self.clients.get_client_address(connection_id).unwrap();
+            debug!("Rectifying peer address for connection_id: {} from remote connection address: {} and setting port from message: {}",
+                    connection_id, client_remote_address, peer_state.actor_port);
+            client_remote_address.set_port(peer_state.actor_port);
+            client_remote_address
+        };
+        info!("Received PeerUpdate from connection_id: {}, remote address: {}, peer_state: {:?}", connection_id, rectified_address, peer_state);
+        self.cluster_state.peer_connected(rectified_address, connection_id);
+        for member in peer_state.other_members.iter() {
+            self.cluster_state.add_peer_address(member.addr);
+        }
     }
 
     fn persist_event(&mut self, connection_id: ConnectionId, op_id: u32, event: OwnedFloEvent) -> Result<(), String> {
@@ -213,6 +287,7 @@ mod test {
     use futures::{Async, Stream};
 
     const SUBJECT_ACTOR_ID: ActorId = 1;
+    const SUBJECT_PORT: u16 = 2222;
 
     macro_rules! version_vec {
         ($([$actor:expr,$counter:expr]),*) => {
@@ -295,15 +370,27 @@ mod test {
                                client: &mut UnboundedReceiver<ServerMessage>,
                                consumer_manager: &mut Receiver<ConsumerManagerMessage>) {
 
-        let input = to_producer_message(client_id, ProtocolMessage::PeerAnnounce(peer_actor_id, peer_versions.clone()));
+        let peer_state = ClusterState {
+            actor_id: peer_actor_id,
+            actor_port: 2222,
+            version_vector: peer_versions.clone(),
+            other_members: vec![
+                ClusterMember {
+                    addr: address("127.0.0.1:3333"),
+                    actor_id: SUBJECT_ACTOR_ID,
+                    connected: false,
+                }
+            ],
+        };
+        let input = to_producer_message(client_id, ProtocolMessage::PeerAnnounce(peer_state));
         subject.process(input).expect("failed to process peer announce");
 
         assert_client_message_sent(client, |msg| {
             match msg {
-                ServerMessage::Other(ProtocolMessage::PeerUpdate {actor_id, version_vec}) => {
-                    let result = VersionVector::from_vec(version_vec).unwrap();
+                ServerMessage::Other(ProtocolMessage::PeerUpdate(cluster_state)) => {
+                    assert_eq!(SUBJECT_ACTOR_ID, cluster_state.actor_id);
+                    let result = VersionVector::from_vec(cluster_state.version_vector).unwrap();
                     assert_eq!(subject_versions, result);
-                    assert_eq!(SUBJECT_ACTOR_ID, actor_id);
                 }
                 other @ _ => {
                     panic!("expected PeerUpdate, got: {:?}", other);
@@ -364,6 +451,10 @@ mod test {
                 other @ _ => panic!("Expected EventPersisted, got: {:?}", other)
             }
         });
+    }
+
+    fn address(addr_str: &str) -> SocketAddr {
+        addr_str.parse().unwrap()
     }
 
     fn to_producer_message(connection_id: ConnectionId, proto_msg: ProtocolMessage) -> ProducerManagerMessage {
@@ -428,7 +519,7 @@ mod test {
         };
         let (tx, rx) = channel();
         let (cluster_sender, _rx) = ::futures::sync::mpsc::unbounded();
-        let subject = ProducerManager::new(writer, tx, SUBJECT_ACTOR_ID, map, Vec::new(), cluster_sender);
+        let subject = ProducerManager::new(writer, tx, SUBJECT_ACTOR_ID, SUBJECT_PORT, map, Vec::new(), cluster_sender);
 
         (subject, rx)
     }

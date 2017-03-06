@@ -28,6 +28,7 @@ impl VersionVector {
         if id.event_counter <= current {
             Err(format!("Cannot insert event id: {:?} because the current counter: {} is greater", id, current))
         } else {
+            trace!("Update {:?}, current: {}", id, current);
             self.0.insert(id.actor, id.event_counter);
             Ok(())
         }
@@ -37,6 +38,7 @@ impl VersionVector {
     /// does nothing if the given id is smaller
     pub fn update_if_greater(&mut self, id: FloEventId) {
         let value: &mut EventCounter = self.0.entry(id.actor).or_insert(0);
+        trace!("Update if Greater: {:?}, existing: {}", id, value);
         *value = ::std::cmp::max(*value, id.event_counter);
     }
 

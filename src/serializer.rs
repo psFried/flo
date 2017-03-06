@@ -14,6 +14,11 @@ impl <'a> Serializer<'a> {
         }
     }
 
+    pub fn write_bool(mut self, value: bool) -> Self {
+        let b = if value { 1 } else { 0 };
+        self.write_u8(b)
+    }
+
     pub fn write_u8(mut self, byte: u8) -> Self {
         let pos = self.position;
         self.buffer[pos] = byte;

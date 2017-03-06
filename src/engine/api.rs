@@ -41,7 +41,7 @@ impl ClientMessage {
 
     pub fn from_protocol_message(connection_id: ConnectionId, protocol_message: ProtocolMessage) -> ClientMessage {
         match protocol_message {
-            m @ ProtocolMessage::PeerAnnounce(_, _) => producer_message(connection_id, m),
+            m @ ProtocolMessage::PeerAnnounce(_) => producer_message(connection_id, m),
             m @ ProtocolMessage::NewProduceEvent(_) => producer_message(connection_id, m),
             m @ ProtocolMessage::Error(_) => producer_message(connection_id, m),
             m @ ProtocolMessage::PeerUpdate {..} => producer_message(connection_id, m),

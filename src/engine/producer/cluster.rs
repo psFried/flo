@@ -1,19 +1,20 @@
 use event::ActorId;
 use engine::api::ConnectionId;
+use engine::version_vec::VersionVector;
 
 use futures::sync::mpsc::UnboundedSender;
 
 use std::net::SocketAddr;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::{Instant, Duration};
 
 
 #[derive(Debug, PartialEq)]
-struct ConnectedPeer {
-    address: SocketAddr,
-    connection_id: ConnectionId,
+pub struct ConnectedPeer {
+    pub address: SocketAddr,
+    pub connection_id: ConnectionId,
+    pub actor_id: Option<ActorId>,
     connection_start_time: Instant,
-    actor_id: Option<ActorId>,
     last_message_received: Option<Instant>,
 }
 
@@ -42,9 +43,9 @@ impl ConnectedPeer {
 }
 
 #[derive(Debug, PartialEq)]
-struct DisconnectedPeer {
-    address: SocketAddr,
-    actor_id: Option<ActorId>,
+pub struct DisconnectedPeer {
+    pub address: SocketAddr,
+    pub actor_id: Option<ActorId>,
     last_message_received: Option<Instant>,
     connection_attempt_start: Option<Instant>,
     connection_attempts: u64,
@@ -93,16 +94,29 @@ impl DisconnectedPeer {
 
 
 pub struct ClusterState {
-    connected_peers: HashMap<ConnectionId, ConnectedPeer>,
-    disconnected_peers: HashMap<SocketAddr, DisconnectedPeer>,
+    pub connected_peers: HashMap<ConnectionId, ConnectedPeer>,
+    pub disconnected_peers: HashMap<SocketAddr, DisconnectedPeer>,
+    all_peers: HashSet<SocketAddr>,
 }
 
 impl ClusterState {
     pub fn new(peer_addresses: Vec<SocketAddr>) -> ClusterState {
-        let new_peers = peer_addresses.into_iter().map(|addr| (addr.clone(), DisconnectedPeer::new(addr))).collect();
-        ClusterState {
+        let mut state = ClusterState {
             connected_peers: HashMap::new(),
-            disconnected_peers: new_peers,
+            disconnected_peers: HashMap::new(),
+            all_peers: HashSet::new(),
+        };
+        for addr in peer_addresses {
+            state.add_peer_address(addr);
+        }
+        state
+    }
+
+    pub fn add_peer_address(&mut self, peer_address: SocketAddr) {
+        if !self.all_peers.contains(&peer_address) {
+            debug!("Discovered new peer at address: {}", peer_address);
+            self.all_peers.insert(peer_address);
+            self.disconnected_peers.insert(peer_address, DisconnectedPeer::new(peer_address));
         }
     }
 
@@ -115,12 +129,19 @@ impl ClusterState {
         })
     }
 
-    pub fn peer_connected(&mut self, address: SocketAddr, connection_id: ConnectionId) {
-        let disconnected_peer = self.disconnected_peers.remove(&address).unwrap_or_else(|| {
-            DisconnectedPeer::new(address)
-        });
+    pub fn is_disconnected_peer(&self, address: &SocketAddr) -> bool {
+        self.disconnected_peers.contains_key(&address)
+    }
 
-        let connected_peer = disconnected_peer.connect(connection_id);
+    pub fn peer_connected(&mut self, address: SocketAddr, connection_id: ConnectionId) {
+        //TODO: Check the connected peers to make sure there isn't one already from this address
+        let disconnected_peer = self.disconnected_peers.remove(&address);
+
+        debug!("peer_connected at address: {}, connection_id: {}, previous peer state: {:?}", address, connection_id, disconnected_peer);
+        let connected_peer = disconnected_peer.unwrap_or_else(|| {
+            DisconnectedPeer::new(address)
+        }).connect(connection_id);
+
         self.connected_peers.insert(connection_id, connected_peer);
     }
 
