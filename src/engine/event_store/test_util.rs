@@ -14,7 +14,6 @@ pub struct TestEventIter {
     current_idx: usize,
     remaining: usize,
 }
-unsafe impl Send for TestEventIter {}
 
 impl Iterator for TestEventIter {
     type Item = Result<OwnedFloEvent, String>;

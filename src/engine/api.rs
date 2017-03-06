@@ -22,7 +22,6 @@ pub enum ClientMessage {
     Producer(ProducerManagerMessage),
     Both(ConsumerManagerMessage, ProducerManagerMessage),
 }
-unsafe impl Send for ClientMessage {}
 
 impl ClientMessage {
 
@@ -77,7 +76,6 @@ pub struct ClientConnect {
     pub client_addr: SocketAddr,
     pub message_sender: UnboundedSender<ServerMessage>,
 }
-unsafe impl Send for ClientConnect {}
 
 impl Debug for ClientConnect {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> Result<(), fmt::Error> {
@@ -99,7 +97,6 @@ pub struct ReceivedMessage {
     pub recv_time: Instant,
     pub message: ProtocolMessage
 }
-unsafe impl Send for ReceivedMessage {}
 
 impl ReceivedMessage {
     pub fn received_now(connection_id: ConnectionId, message: ProtocolMessage) -> ReceivedMessage {
@@ -121,7 +118,6 @@ pub enum ConsumerManagerMessage {
     EventLoaded(ConnectionId, OwnedFloEvent),
     Receive(ReceivedMessage),
 }
-unsafe impl Send for ConsumerManagerMessage {}
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum ProducerManagerMessage {
@@ -131,7 +127,6 @@ pub enum ProducerManagerMessage {
     Tick,
     Receive(ReceivedMessage),
 }
-unsafe impl Send for ProducerManagerMessage {}
 
 
 
@@ -145,7 +140,6 @@ pub struct PeerVersionMap {
     pub from_actor: ActorId,
     pub actor_versions: Vec<FloEventId>,
 }
-unsafe impl Send for PeerVersionMap {}
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct StateDeltaHeader {
@@ -154,7 +148,6 @@ pub struct StateDeltaHeader {
     pub actor_versions: Vec<FloEventId>,
     pub event_count: u32,
 }
-unsafe impl Send for StateDeltaHeader {}
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct PeerUpdate {
@@ -162,14 +155,12 @@ pub struct PeerUpdate {
     pub actor_id: ActorId,
     pub version_map: Vec<FloEventId>,
 }
-unsafe impl Send for PeerUpdate {}
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct PeerAnnounce {
     pub connection_id: ConnectionId,
     pub actor_id: ActorId,
 }
-unsafe impl Send for PeerAnnounce {}
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum ConsumerMessage {
@@ -183,7 +174,6 @@ pub enum ConsumerMessage {
     EventLoaded(ConnectionId, OwnedFloEvent),
     StartPeerReplication(PeerVersionMap),
 }
-unsafe impl Send for ConsumerMessage {}
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum ProducerMessage {
@@ -205,7 +195,6 @@ pub enum ProducerMessage {
     /// It kicks off the processes in the ProducerManager that check up on cluster members and such
     Tick,
 }
-unsafe impl Send for ProducerMessage {}
 
 
 #[derive(Debug, PartialEq, Clone)]
@@ -225,5 +214,4 @@ pub struct ProduceEvent {
     pub parent_id: Option<FloEventId>,
     pub event_data: Vec<u8>
 }
-unsafe impl Send for ProduceEvent {}
 

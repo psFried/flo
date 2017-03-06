@@ -47,7 +47,6 @@ pub enum ErrorKind {
     /// Indicates that the provided version vector was invalid (contained more than one entry for at least one actor id)
     InvalidVersionVector
 }
-unsafe impl Send for ErrorKind {}
 
 /// Represents a response to any request that results in an error
 #[derive(Debug, PartialEq, Clone)]
@@ -123,7 +122,6 @@ pub struct EventAck {
     /// The id that was assigned to the event. This id is immutable and must be the same across all servers in a flo cluster.
     pub event_id: FloEventId,
 }
-unsafe impl Send for EventAck {}
 
 /// Works the same as the `ProduceEventHeader`, except for receiving events from the server. This header must be directly
 /// followed by the event body

@@ -9,7 +9,6 @@ pub enum ServerMessage {
     Event(Arc<OwnedFloEvent>),
     Other(ProtocolMessage)
 }
-unsafe impl Send for ServerMessage {}
 
 impl Clone for ServerMessage {
     fn clone(&self) -> Self {
