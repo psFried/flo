@@ -211,9 +211,13 @@ impl <S: EventWriter> ProducerManager<S> {
             client_remote_address
         };
         info!("Received PeerUpdate from connection_id: {}, remote address: {}, peer_state: {:?}", connection_id, rectified_address, peer_state);
-        self.cluster_state.peer_connected(rectified_address, connection_id);
+
+        self.cluster_state.peer_message_received(rectified_address, connection_id, peer_state.actor_id);
+
         for member in peer_state.other_members.iter() {
-            self.cluster_state.add_peer_address(member.addr);
+            if member.actor_id != self.actor_id {
+                self.cluster_state.add_peer_address(member.addr);
+            }
         }
     }
 
