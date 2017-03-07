@@ -54,6 +54,7 @@ impl ServerProtocol for ServerProtocolImpl {
 }
 
 
+//TODO: We really shouldn't need a ServerProtocol at all. Should just make the ProtocolMessage and MessageWriter both generic over the type of event (OwnedFloEvent vs. Arc<OwnedFloEvent>)
 impl Read for ServerProtocolImpl {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         use serializer::Serializer;
@@ -116,16 +117,26 @@ impl Read for ServerProtocolImpl {
 mod test {
     use super::*;
     use nom::IResult;
-    use std::io::Read;
+    use std::io::{Read, Cursor};
     use event::{FloEventId, OwnedFloEvent};
     use std::sync::Arc;
     use byteorder::{ByteOrder, BigEndian};
-    use protocol::{ProtocolMessage, ClientProtocol, ClientProtocolImpl, ErrorMessage, ErrorKind, EventAck};
+    use protocol::{ProtocolMessage, MessageStream, ErrorMessage, ErrorKind, EventAck};
 
-    static CLIENT_PROTOCOL: ClientProtocolImpl = ClientProtocolImpl;
+    fn assert_event_serializes_and_deserializes(event: OwnedFloEvent) {
+        let mut buffer = [0; 1024];
+        let mut serializer = ServerProtocolImpl::new(ServerMessage::Event(Arc::new(event.clone())));
+        let nread = serializer.read(&mut buffer[..]).expect("failed to read message into buffer");
+        println!("Buffer: {:?}", &buffer[..nread]);
 
-    fn read_server_message(buf: &[u8]) -> IResult<&[u8], ProtocolMessage> {
-        CLIENT_PROTOCOL.parse_any(buf)
+        let mut message_stream = MessageStream::new(Cursor::new(&buffer[..nread]));
+        let result = message_stream.read_next().expect("Failed to deserialize message");
+        match result {
+            ProtocolMessage::ReceiveEvent(received) => {
+                assert_eq!(event, received);
+            }
+            other @ _ => panic!("Expected to read an event but got: {:?}", other)
+        }
     }
 
     fn assert_message_serializes_and_deserializes(message: ProtocolMessage) {
@@ -134,19 +145,9 @@ mod test {
         let nread = serializer.read(&mut buffer[..]).expect("failed to read message into buffer");
         println!("Buffer: {:?}", &buffer[..nread]);
 
-        let result = read_server_message(&buffer[..nread]);
-        match result {
-            IResult::Done(rem, message_result) => {
-                assert_eq!(message, message_result);
-                assert!(rem.is_empty());
-            }
-            IResult::Incomplete(need) => {
-                panic!("expected Done, got Incomplete: {:?}", need)
-            }
-            IResult::Error(err) => {
-                panic!("Error deserializing event: {:?}", err)
-            }
-        }
+        let mut message_stream = MessageStream::new(Cursor::new(&buffer[..nread]));
+        let result = message_stream.read_next().expect("Failed to deserialize message");
+        assert_eq!(message, result);
     }
 
     #[test]
@@ -168,29 +169,14 @@ mod test {
         //time needs to be from milliseconds, otherwise we lose precision
         let event_ts = ::time::from_millis_since_epoch(1);
 
-        let event = ServerMessage::Event(Arc::new(OwnedFloEvent{
+        let event = OwnedFloEvent{
             id: event_id,
             parent_id: parent_id,
             timestamp: event_ts,
             namespace: namespace.to_owned(),
             data: event_data.as_bytes().to_owned(),
-        }));
-        let mut buffer = [0; 256];
-        let mut serializer = ServerProtocolImpl::new(event);
-        let total_length = serializer.read(&mut buffer[..]).unwrap();
-        println!("total length: {}, buffer: {:?}", total_length, &buffer[..total_length]);
-
-        let (remaining, result) = read_server_message(&buffer[..total_length]).unwrap();
-
-        let expected_event = OwnedFloEvent {
-            id: event_id,
-            parent_id: parent_id,
-            namespace: namespace.to_owned(),
-            timestamp: event_ts,
-            data: event_data.as_bytes().to_vec(),
         };
-
-        assert_eq!(ProtocolMessage::ReceiveEvent(expected_event), result);
+        assert_event_serializes_and_deserializes(event);
     }
 
     #[test]

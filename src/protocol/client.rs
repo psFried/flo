@@ -18,6 +18,7 @@ use std::io::{self, Read};
 use std::fmt::Write;
 use std::str::FromStr;
 
+// TODO: probably about time to just change these to just a single byte each
 pub mod headers {
     pub const CLIENT_AUTH: &'static str = "FLO_AUT\n";
     pub const PRODUCE_EVENT: &'static str = "FLO_PRO\n";
@@ -105,11 +106,23 @@ pub struct ProduceEventHeader {
     pub data_length: u32,
 }
 
+/// The body of a ProduceEvent `ProtocolMessage`. This is sent from a client producer to the server, and the server will
+/// respond with either an `EventAck` or an `ErrorMessage` to indicate success or failure respectively. Although the flo
+/// protocol is pipelined, this message includes an `op_id` field to aid in correlation of requests and responses.
 #[derive(Debug, PartialEq, Clone)]
 pub struct ProduceEvent {
+    /// This is an arbritrary number, assigned by the client, to aid in correlation of requests and responses. Clients may
+    /// choose to just set it to the same value for every operation if they wish.
     pub op_id: u32,
+    /// The namespace to produce the event to. See the `namespace` documentation on `FloEvent` for more information on
+    /// namespaces in general. As far as the protocol is concerned, it's just serialized as a utf-8 string.
     pub namespace: String,
+    /// The parent_id of the new event. This is typically set to the id of whatever event a consumer is responding to.
+    /// The parent id is optional. On the wire, a null parent_id is serialized as an event id where both the counter and the
+    /// actor are set to 0.
     pub parent_id: Option<FloEventId>,
+    /// The event payload. As far as the flo server is concerned, this is just an opaque byte array. Note that events with
+    /// 0-length bodies are perfectly fine.
     pub data: Vec<u8>,
 }
 
@@ -121,27 +134,6 @@ pub struct EventAck {
 
     /// The id that was assigned to the event. This id is immutable and must be the same across all servers in a flo cluster.
     pub event_id: FloEventId,
-}
-
-/// Works the same as the `ProduceEventHeader`, except for receiving events from the server. This header must be directly
-/// followed by the event body
-#[derive(Debug, PartialEq, Clone)]
-pub struct ReceiveEventHeader {
-    /// The id (primary key) of the event
-    pub id: FloEventId,
-
-    /// The parent_id of the event. Used to correlate events
-    pub parent_id: Option<FloEventId>,
-
-    /// The namespace that the event was produced in
-    pub namespace: String,
-
-    /// The UTC timestamp associated with the event. Note that this is NOT monotonic. Timestamps are sent over the wire
-    /// as a u64 representing the number of milliseconds since the unix epoch.
-    pub timestamp: Timestamp,
-
-    /// The length of the event data immediately following the header
-    pub data_length: u32,
 }
 
 /// Sent by a client to the server to begin reading events from the stream.
@@ -193,7 +185,9 @@ pub struct ClusterState {
 /// Defines all the distinct messages that can be sent over the wire between client and server.
 #[derive(Debug, PartialEq, Clone)]
 pub enum ProtocolMessage {
+    /// Signals a client's intent to publish a new event. The server will respond with either an `EventAck` or an `ErrorMessage`
     ProduceEvent(ProduceEvent),
+    /// This is a complete event as serialized over the wire. This message is sent to to both consumers as well as other servers
     ReceiveEvent(OwnedFloEvent),
     /// Sent from the server to client to acknowledge that an event was persisted successfully.
     AckEvent(EventAck),
@@ -488,18 +482,6 @@ fn serialize_produce_header(header: &ProduceEventHeader, mut buf: &mut [u8]) -> 
             .finish()
 }
 
-fn serialize_receive_event_header(header: &ReceiveEventHeader, buf: &mut [u8]) -> usize {
-    Serializer::new(buf).write_bytes(RECEIVE_EVENT)
-            .write_u64(header.id.event_counter)
-            .write_u16(header.id.actor)
-            .write_u64(header.parent_id.map(|id| id.event_counter).unwrap_or(0))
-            .write_u16(header.parent_id.map(|id| id.actor).unwrap_or(0))
-            .write_u64(::time::millis_since_epoch(header.timestamp))
-            .newline_term_string(&header.namespace)
-            .write_u32(header.data_length)
-            .finish()
-}
-
 fn serialize_event_ack(ack: &EventAck, buf: &mut [u8]) -> usize {
     Serializer::new(buf).write_bytes(ACK_HEADER)
             .write_u32(ack.op_id)
@@ -601,26 +583,6 @@ impl ProtocolMessage {
     }
 }
 
-//TODO: delete Read impl for ProtocolMessage
-impl Read for ProtocolMessage {
-    fn read(&mut self, buf: &mut [u8]) -> Result<usize, io::Error> {
-        let n_bytes = self.serialize(buf);
-        Ok(n_bytes)
-    }
-}
-
-pub trait ClientProtocol {
-    fn parse_any<'a>(&'a self, buffer: &'a [u8]) -> IResult<&'a [u8], ProtocolMessage>;
-}
-
-pub struct ClientProtocolImpl;
-
-impl ClientProtocol for ClientProtocolImpl {
-    fn parse_any<'a>(&'a self, buffer: &'a [u8]) -> IResult<&'a [u8], ProtocolMessage> {
-        parse_any(buffer)
-    }
-}
-
 #[cfg(test)]
 mod test {
     use super::*;
@@ -637,7 +599,7 @@ mod test {
     fn ser_de(message: &mut ProtocolMessage) -> ProtocolMessage {
         let mut buffer = [0; 1024];
 
-        let len = message.read(&mut buffer[..]).expect("failed to serialize message to buffer");
+        let len = message.serialize(&mut buffer[..]);
         (&mut buffer[len..(len + 4)]).copy_from_slice(&[4, 3, 2, 1]); // extra bytes at the end of the buffer
         println!("buffer: {:?}", &buffer[..(len + 4)]);
 

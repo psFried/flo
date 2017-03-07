@@ -5,7 +5,7 @@ use std::time::{Instant};
 use std::net::SocketAddr;
 
 use server::engine::api::{self, ClientMessage, ConnectionId};
-use protocol::{ClientProtocol, ProtocolMessage, ProduceEventHeader, ConsumerStart, MessageStream};
+use protocol::{ProtocolMessage, ConsumerStart, MessageStream};
 use nom::IResult;
 
 pub struct ClientMessageStream<R: Read> {
@@ -72,7 +72,7 @@ mod test {
 
     use event::FloEventId;
     use server::engine::api::{ClientMessage, ConsumerManagerMessage, ProducerManagerMessage};
-    use protocol::{ClientProtocol, ClientProtocolImpl, ProtocolMessage, ProduceEvent};
+    use protocol::{ProtocolMessage, ProduceEvent};
     use nom::{IResult, Needed, ErrorKind};
 
     fn address() -> SocketAddr {

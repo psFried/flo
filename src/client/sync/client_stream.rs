@@ -4,7 +4,7 @@ use std::net::{TcpStream, ToSocketAddrs};
 
 use nom::IResult;
 
-use protocol::{ProtocolMessage, ClientProtocol, ClientProtocolImpl, MessageStream};
+use protocol::{ProtocolMessage, MessageStream};
 
 const BUFFER_LENGTH: usize = 8 * 1024;
 

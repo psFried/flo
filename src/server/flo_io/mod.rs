@@ -8,7 +8,7 @@ use std::sync::atomic;
 pub use self::client_message_stream::ClientMessageStream;
 pub use self::server_message_stream::ServerMessageStream;
 use server::channel_sender::ChannelSender;
-use protocol::{ClientProtocolImpl, ServerProtocolImpl, ServerMessage};
+use protocol::{ServerProtocolImpl, ServerMessage};
 use server::engine::api::{ConnectionId, ClientMessage, ClientConnect};
 
 use tokio_core::reactor::Remote;
