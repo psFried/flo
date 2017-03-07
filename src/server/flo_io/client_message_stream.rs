@@ -4,7 +4,7 @@ use std::io::{self, Read};
 use std::time::{Instant};
 use std::net::SocketAddr;
 
-use server::engine::api::{self, ClientMessage, ProducerMessage, ConsumerMessage, ConnectionId, PeerVersionMap};
+use server::engine::api::{self, ClientMessage, ConnectionId};
 use protocol::{ClientProtocol, ProtocolMessage, ProduceEventHeader, ConsumerStart, MessageStream};
 use nom::IResult;
 
@@ -71,7 +71,7 @@ mod test {
     use std::io::{self, Read, Cursor};
 
     use event::FloEventId;
-    use server::engine::api::{ClientMessage, ConsumerManagerMessage, ProducerManagerMessage, ClientAuth};
+    use server::engine::api::{ClientMessage, ConsumerManagerMessage, ProducerManagerMessage};
     use protocol::{ClientProtocol, ClientProtocolImpl, ProtocolMessage, NewProduceEvent};
     use nom::{IResult, Needed, ErrorKind};
 

@@ -3,7 +3,7 @@ mod cache;
 
 pub use self::client::{ClientImpl, NamespaceGlob};
 
-use engine::api::{ConnectionId, ConsumerMessage, ClientConnect, PeerVersionMap, ConsumerManagerMessage, ReceivedMessage};
+use engine::api::{ConnectionId, ClientConnect, ConsumerManagerMessage, ReceivedMessage};
 use engine::version_vec::VersionVector;
 use protocol::{ProtocolMessage, ErrorMessage, ErrorKind, ConsumerStart};
 use event::{FloEvent, OwnedFloEvent, FloEventId, ActorId};

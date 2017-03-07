@@ -3,7 +3,7 @@ mod cluster;
 
 use self::cluster::ClusterState;
 use self::client_map::ClientMap;
-use engine::api::{ProduceEvent, ProducerMessage, PeerVersionMap, ClientConnect, ConnectionId, ProducerManagerMessage, ConsumerManagerMessage, ReceivedMessage};
+use engine::api::{ClientConnect, ConnectionId, ProducerManagerMessage, ConsumerManagerMessage, ReceivedMessage};
 use engine::event_store::EventWriter;
 use engine::version_vec::VersionVector;
 use event::{ActorId, OwnedFloEvent, EventCounter, FloEventId};
@@ -255,21 +255,6 @@ impl <S: EventWriter> ProducerManager<S> {
             namespace: namespace,
             parent_id: parent_id,
             data: data,
-        };
-
-        self.persist_event(connection_id, op_id, owned_event)
-    }
-
-    fn produce_event(&mut self, event: ProduceEvent) -> Result<(), String> {
-        let ProduceEvent{namespace, connection_id, parent_id, op_id, event_data, message_recv_start} = event;
-
-        let event_id = FloEventId::new(self.actor_id, self.highest_event_id + 1);
-        let owned_event = OwnedFloEvent {
-            id: event_id,
-            timestamp: ::time::now(),
-            namespace: namespace,
-            parent_id: parent_id,
-            data: event_data,
         };
 
         self.persist_event(connection_id, op_id, owned_event)
