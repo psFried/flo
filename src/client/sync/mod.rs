@@ -3,7 +3,7 @@ mod client_stream;
 use std::io;
 use std::net::{TcpStream, ToSocketAddrs};
 
-use protocol::{ProtocolMessage, NewProduceEvent, ConsumerStart};
+use protocol::{ProtocolMessage, ProduceEvent, ConsumerStart};
 use event::{FloEventId, OwnedFloEvent};
 use super::{ClientError, ConsumerOptions};
 use std::collections::VecDeque;
@@ -98,7 +98,7 @@ impl <S: IoStream> SyncConnection<S> {
 
     pub fn produce_with_parent<N: ToString, D: Into<Vec<u8>>>(&mut self, parent_id: Option<FloEventId>, namespace: N, data: D) -> Result<FloEventId, ClientError> {
         self.op_id += 1;
-        let mut send_msg = ProtocolMessage::NewProduceEvent(NewProduceEvent {
+        let mut send_msg = ProtocolMessage::ProduceEvent(ProduceEvent {
             namespace: namespace.to_string(),
             parent_id: parent_id,
             op_id: self.op_id,
@@ -201,7 +201,7 @@ impl <S: IoStream> SyncConnection<S> {
 
     fn read_event(&mut self) -> Result<OwnedFloEvent, ClientError> {
         match self.read_next_message() {
-            Ok(ProtocolMessage::NewReceiveEvent(event)) => Ok(event),
+            Ok(ProtocolMessage::ReceiveEvent(event)) => Ok(event),
             Ok(ProtocolMessage::Error(err)) => Err(ClientError::FloError(err)),
             Ok(ProtocolMessage::AwaitingEvents) => Err(ClientError::EndOfStream),
             Ok(other) => Err(ClientError::UnexpectedMessage(other)),

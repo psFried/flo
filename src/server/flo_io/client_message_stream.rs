@@ -72,7 +72,7 @@ mod test {
 
     use event::FloEventId;
     use server::engine::api::{ClientMessage, ConsumerManagerMessage, ProducerManagerMessage};
-    use protocol::{ClientProtocol, ClientProtocolImpl, ProtocolMessage, NewProduceEvent};
+    use protocol::{ClientProtocol, ClientProtocolImpl, ProtocolMessage, ProduceEvent};
     use nom::{IResult, Needed, ErrorKind};
 
     fn address() -> SocketAddr {
@@ -104,7 +104,7 @@ mod test {
         let result = subject.poll();
         if let Ok(Async::Ready(Some(ClientMessage::Producer(ProducerManagerMessage::Receive(received))))) = result {
             assert_eq!(123, received.sender);
-            if let ProtocolMessage::NewProduceEvent(event) = received.message {
+            if let ProtocolMessage::ProduceEvent(event) = received.message {
                 assert_eq!("/foo/bar", &event.namespace);
                 assert_eq!(4, event.op_id);
                 assert_eq!(Some(FloEventId::new(5, 9)), event.parent_id);
@@ -126,7 +126,7 @@ mod test {
         let result = subject.poll();
         if let Ok(Async::Ready(Some(ClientMessage::Producer(ProducerManagerMessage::Receive(received))))) = result {
             assert_eq!(123, received.sender);
-            if let ProtocolMessage::NewProduceEvent(event) = received.message {
+            if let ProtocolMessage::ProduceEvent(event) = received.message {
                 assert_eq!("/baz", &event.namespace);
                 assert_eq!(5, event.op_id);
                 assert_eq!(Some(FloEventId::new(5, 9)), event.parent_id);

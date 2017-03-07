@@ -41,11 +41,11 @@ impl ClientMessage {
     pub fn from_protocol_message(connection_id: ConnectionId, protocol_message: ProtocolMessage) -> ClientMessage {
         match protocol_message {
             m @ ProtocolMessage::PeerAnnounce(_) => producer_message(connection_id, m),
-            m @ ProtocolMessage::NewProduceEvent(_) => producer_message(connection_id, m),
+            m @ ProtocolMessage::ProduceEvent(_) => producer_message(connection_id, m),
             m @ ProtocolMessage::Error(_) => producer_message(connection_id, m),
             m @ ProtocolMessage::PeerUpdate {..} => producer_message(connection_id, m),
             m @ ProtocolMessage::AwaitingEvents => producer_message(connection_id, m),
-            m @ ProtocolMessage::NewReceiveEvent(_) => producer_message(connection_id, m),
+            m @ ProtocolMessage::ReceiveEvent(_) => producer_message(connection_id, m),
 
             m @ ProtocolMessage::AckEvent(_) => consumer_message(connection_id, m),
             m @ ProtocolMessage::StartConsuming(_) => consumer_message(connection_id, m),

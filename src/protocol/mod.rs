@@ -184,7 +184,7 @@ impl InProgressMessage {
 
 fn get_body_buffer(message: &mut ProtocolMessage) -> Option<&mut Vec<u8>> {
     match *message {
-        ProtocolMessage::NewProduceEvent(ref mut event) => Some(&mut event.data),
+        ProtocolMessage::ProduceEvent(ref mut event) => Some(&mut event.data),
         _ => None
     }
 }

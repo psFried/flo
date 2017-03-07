@@ -190,7 +190,7 @@ mod test {
             data: event_data.as_bytes().to_vec(),
         };
 
-        assert_eq!(ProtocolMessage::NewReceiveEvent(expected_event), result);
+        assert_eq!(ProtocolMessage::ReceiveEvent(expected_event), result);
     }
 
     #[test]

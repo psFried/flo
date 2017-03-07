@@ -7,7 +7,7 @@ use engine::api::{ClientConnect, ConnectionId, ProducerManagerMessage, ConsumerM
 use engine::event_store::EventWriter;
 use engine::version_vec::VersionVector;
 use event::{ActorId, OwnedFloEvent, EventCounter, FloEventId};
-use protocol::{ProtocolMessage, EventAck, NewProduceEvent, ClusterMember};
+use protocol::{ProtocolMessage, EventAck, ProduceEvent, ClusterMember};
 use server::metrics::ProducerMetrics;
 
 use std::sync::mpsc::Sender;
@@ -137,7 +137,7 @@ impl <S: EventWriter> ProducerManager<S> {
     fn process_received_message(&mut self, ReceivedMessage{sender, recv_time, message}: ReceivedMessage) -> Result<(), String> {
         trace!("Received from connection_id: {} message: {:?}", sender, message);
         match message {
-            ProtocolMessage::NewProduceEvent(produce) => {
+            ProtocolMessage::ProduceEvent(produce) => {
                 self.new_produce_event(sender, produce)
             }
             ProtocolMessage::PeerAnnounce(cluster_state) => {
@@ -147,7 +147,7 @@ impl <S: EventWriter> ProducerManager<S> {
                 self.process_peer_cluster_state(sender, &cluster_state);
                 Ok(())
             }
-            ProtocolMessage::NewReceiveEvent(event) => {
+            ProtocolMessage::ReceiveEvent(event) => {
                 self.persist_event(sender, 0, event)
             }
             ProtocolMessage::AwaitingEvents => {
@@ -246,7 +246,7 @@ impl <S: EventWriter> ProducerManager<S> {
         })
     }
 
-    fn new_produce_event(&mut self, connection_id: ConnectionId, NewProduceEvent{op_id, namespace, parent_id, data}: NewProduceEvent) -> Result<(), String> {
+    fn new_produce_event(&mut self, connection_id: ConnectionId, ProduceEvent {op_id, namespace, parent_id, data}: ProduceEvent) -> Result<(), String> {
 
         let event_id = FloEventId::new(self.actor_id, self.highest_event_id + 1);
         let owned_event = OwnedFloEvent {
@@ -329,7 +329,7 @@ mod test {
             namespace: "/deli/pickles".to_owned(),
             data: vec![9, 8, 7, 6, 5],
         };
-        subject.process(to_producer_message(client_connection_id, ProtocolMessage::NewReceiveEvent(event.clone()))).expect("failed to process replicate event message");
+        subject.process(to_producer_message(client_connection_id, ProtocolMessage::ReceiveEvent(event.clone()))).expect("failed to process replicate event message");
 
         assert_eq!(5, subject.version_vec.get(peer_actor_id));
         assert_event_written(event, &subject.event_store);
@@ -408,7 +408,7 @@ mod test {
         let parent_id = Some(FloEventId::new(3, 4));
         let event_data = vec![1, 2, 4, 8];
         let op_id = 1234;
-        let event = ProtocolMessage::NewProduceEvent(NewProduceEvent{
+        let event = ProtocolMessage::ProduceEvent(ProduceEvent {
             op_id: op_id,
             parent_id: parent_id,
             namespace: namespace.to_owned(),

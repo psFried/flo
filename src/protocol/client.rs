@@ -106,7 +106,7 @@ pub struct ProduceEventHeader {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct NewProduceEvent {
+pub struct ProduceEvent {
     pub op_id: u32,
     pub namespace: String,
     pub parent_id: Option<FloEventId>,
@@ -193,8 +193,8 @@ pub struct ClusterState {
 /// Defines all the distinct messages that can be sent over the wire between client and server.
 #[derive(Debug, PartialEq, Clone)]
 pub enum ProtocolMessage {
-    NewProduceEvent(NewProduceEvent),
-    NewReceiveEvent(OwnedFloEvent),
+    ProduceEvent(ProduceEvent),
+    ReceiveEvent(OwnedFloEvent),
     /// Sent from the server to client to acknowledge that an event was persisted successfully.
     AckEvent(EventAck),
     /// Sent by a client to set it's current position in the event stream
@@ -284,7 +284,7 @@ named!{pub parse_new_producer_event<ProtocolMessage>,
         op_id: be_u32 ~
         data_len: be_u32,
         || {
-            ProtocolMessage::NewProduceEvent(NewProduceEvent{
+            ProtocolMessage::ProduceEvent(ProduceEvent{
                 namespace: namespace.to_owned(),
                 parent_id: parent_id,
                 op_id: op_id,
@@ -307,7 +307,7 @@ named!{parse_receive_event_header<ProtocolMessage>,
         namespace: parse_str ~
         data: length_data!(be_u32),
         || {
-           ProtocolMessage::NewReceiveEvent(OwnedFloEvent {
+           ProtocolMessage::ReceiveEvent(OwnedFloEvent {
                 id: id,
                 parent_id: parent_id,
                 namespace: namespace,
@@ -459,7 +459,7 @@ named!{pub parse_any<ProtocolMessage>, alt!(
         parse_new_producer_event
 )}
 
-fn serialize_new_produce_header(header: &NewProduceEvent, mut buf: &mut [u8]) -> usize {
+fn serialize_new_produce_header(header: &ProduceEvent, mut buf: &mut [u8]) -> usize {
     let (counter, actor) = header.parent_id.map(|id| {
         (id.event_counter, id.actor)
     }).unwrap_or((0, 0));
@@ -545,13 +545,13 @@ impl ProtocolMessage {
 
     pub fn serialize(&self, buf: &mut [u8]) -> usize {
         match *self {
-            ProtocolMessage::NewReceiveEvent(ref event) => {
+            ProtocolMessage::ReceiveEvent(ref event) => {
                 unimplemented!() //TODO: This message _shouldn't_ typically be serialized in this way, but should probably implement it anyway
             }
             ProtocolMessage::AwaitingEvents => {
                 Serializer::new(buf).write_bytes(AWAITING_EVENTS).finish()
             }
-            ProtocolMessage::NewProduceEvent(ref header) => {
+            ProtocolMessage::ProduceEvent(ref header) => {
                 serialize_new_produce_header(header, buf)
             }
             ProtocolMessage::StartConsuming(ConsumerStart{ref namespace, ref max_events}) => {
@@ -590,10 +590,10 @@ impl ProtocolMessage {
 
     pub fn get_body_mut(&mut self) -> Option<&mut Vec<u8>> {
         match *self {
-            ProtocolMessage::NewProduceEvent(ref mut produce) => {
+            ProtocolMessage::ProduceEvent(ref mut produce) => {
                 Some(&mut produce.data)
             }
-            ProtocolMessage::NewReceiveEvent(ref mut event) => {
+            ProtocolMessage::ReceiveEvent(ref mut event) => {
                 Some(&mut event.data)
             }
             _ => None
@@ -747,16 +747,16 @@ mod test {
 
     #[test]
     fn parse_producer_event_parses_the_header_but_not_the_data() {
-        let input = NewProduceEvent {
+        let input = ProduceEvent {
             namespace: "/the/namespace".to_owned(),
             parent_id: Some(FloEventId::new(123, 456)),
             op_id: 9,
             data: vec![9; 5]
         };
-        let mut message_input = ProtocolMessage::NewProduceEvent(input.clone());
+        let mut message_input = ProtocolMessage::ProduceEvent(input.clone());
         let message_result = ser_de(&mut message_input);
 
-        if let ProtocolMessage::NewProduceEvent(result) = message_result {
+        if let ProtocolMessage::ProduceEvent(result) = message_result {
             assert_eq!(input.namespace, result.namespace);
             assert_eq!(input.parent_id, result.parent_id);
             assert_eq!(input.op_id, result.op_id);
