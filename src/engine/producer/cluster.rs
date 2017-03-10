@@ -92,6 +92,19 @@ impl DisconnectedPeer {
     }
 }
 
+impl From<ConnectedPeer> for DisconnectedPeer {
+    fn from(ConnectedPeer {address, actor_id, connection_id, connection_start_time, last_message_received}: ConnectedPeer) -> Self {
+        DisconnectedPeer {
+            address: address,
+            actor_id: actor_id,
+            last_message_received: last_message_received,
+            connection_attempt_start: None,
+            connection_attempts: 0,
+            last_failure_time: None,
+        }
+    }
+}
+
 
 pub struct ClusterState {
     pub connected_peers: HashMap<ConnectionId, ConnectedPeer>,
@@ -132,6 +145,12 @@ impl ClusterState {
             }
 
         }
+    }
+
+    pub fn connection_closed(&mut self, connection_id: ConnectionId) {
+        self.connected_peers.remove(&connection_id).map(|connected_peer| {
+            self.disconnected_peers.insert(connected_peer.address, connected_peer.into());
+        });
     }
 
     pub fn is_disconnected_peer(&self, address: &SocketAddr) -> bool {
@@ -208,6 +227,19 @@ mod test {
                    expected_result,
                    prev_attempts,
                    seconds_since_last);
+    }
+
+    #[test]
+    fn connection_closed_changes_a_connected_peer_to_a_disconnected_peer() {
+        let mut subject = ClusterState::new(Vec::new());
+        let connection_id = 8;
+        let address = localhost(9999);
+        subject.peer_connected(address, connection_id);
+        subject.peer_message_received(address, connection_id, 6);
+
+        subject.connection_closed(connection_id);
+        assert!(subject.disconnected_peers.contains_key(&address));
+        assert!(subject.connected_peers.is_empty());
     }
 
     #[test]

@@ -34,6 +34,12 @@ impl VersionVector {
         }
     }
 
+    /// Returns true if the current couner for the given actor is greater than or equal to the given id's counter
+    /// If the current counter is less, or if the actor_id is not present at all, returns false
+    pub fn contains(&self, id: FloEventId) -> bool {
+        self.0.get(&id.actor).map(|c| id.event_counter <= *c).unwrap_or(false)
+    }
+
     /// updates the version vector with the given id, only if the id is greater than the one already contained in the vector
     /// does nothing if the given id is smaller
     pub fn update_if_greater(&mut self, id: FloEventId) {
@@ -64,6 +70,17 @@ mod test {
     use super::*;
     use event::FloEventId;
     use std::collections::HashSet;
+
+    #[test]
+    fn contains_returns_true_when_counter_for_actor_is_greater_than_or_equal_to_counter_in_id() {
+        let mut version_vec = VersionVector::new();
+        let id = FloEventId::new(3, 4);
+
+        assert!(!version_vec.contains(id));
+        version_vec.update_if_greater(id);
+        assert!(version_vec.contains(id));
+        assert!(version_vec.contains(FloEventId::new(3, 3)));
+    }
 
     #[test]
     fn min_returns_zero_when_the_version_vector_is_empty() {

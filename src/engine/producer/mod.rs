@@ -65,6 +65,7 @@ impl <S: EventWriter> ProducerManager<S> {
             ProducerManagerMessage::Disconnect(connection_id, address) => {
                 debug!("removing producer: {} at address: {}", connection_id, address);
                 self.clients.remove(connection_id);
+                self.cluster_state.connection_closed(connection_id);
                 Ok(())
             }
             ProducerManagerMessage::OutgoingConnectFailure(address) => {
@@ -148,7 +149,12 @@ impl <S: EventWriter> ProducerManager<S> {
                 Ok(())
             }
             ProtocolMessage::ReceiveEvent(event) => {
-                self.persist_event(sender, 0, event)
+                if !self.version_vec.contains(event.id) {
+                    self.persist_event(sender, 0, event)
+                } else {
+                    trace!("Skipping event: {} received from connection_id: {} because it's already persisted", event.id, sender);
+                    Ok(())
+                }
             }
             ProtocolMessage::AwaitingEvents => {
                 info!("Replication is caught up for peer connection_id: {}", sender);
