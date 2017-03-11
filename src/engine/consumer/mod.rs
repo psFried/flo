@@ -130,7 +130,7 @@ impl <R: EventReader + 'static> ConsumerManager<R> {
                 }
             }).and_then(|version_vec| {
                 let start_id = version_vec.min();
-                client.start_peer_replication(version_vec).map_err(|err| {
+                client.start_peer_replication(from_actor, version_vec).map_err(|err| {
                     ErrorMessage {
                         op_id: 0,
                         kind: ErrorKind::InvalidConsumerState,

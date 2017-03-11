@@ -2,7 +2,7 @@ mod namespace;
 
 pub use self::namespace::NamespaceGlob;
 
-use event::{FloEvent, FloEventId, OwnedFloEvent};
+use event::{FloEvent, FloEventId, ActorId, OwnedFloEvent};
 use engine::api::{ConnectionId, ClientConnect};
 use protocol::{ServerMessage, ProtocolMessage};
 use channels::Sender;
@@ -40,7 +40,7 @@ enum ConsumerState {
         namespace: NamespaceGlob,
         remaining_events: u64,
     },
-    Peer,
+    Peer(ActorId),
     NotConsuming,
 }
 
@@ -96,7 +96,9 @@ impl <T: Sender<ServerMessage>> Client<T> {
         if event.id().event_counter > current_id {
             match &self.new_consumer_state {
                 &ConsumerState::Consumer { ref namespace, .. } => namespace.matches(event.namespace()),
-                &ConsumerState::Peer => true,
+                &ConsumerState::Peer(actor) => {
+                    actor != event.id().actor
+                }
                 _ => false
             }
         } else {
@@ -129,9 +131,9 @@ impl <T: Sender<ServerMessage>> Client<T> {
         }
     }
 
-    pub fn start_peer_replication(&mut self, version_vec: VersionVector) -> Result<(), String> {
+    pub fn start_peer_replication(&mut self, from_actor: ActorId, version_vec: VersionVector) -> Result<(), String> {
         if self.new_consumer_state.is_not_consuming() {
-            self.new_consumer_state = ConsumerState::Peer;
+            self.new_consumer_state = ConsumerState::Peer(from_actor);
             self.version_vector = version_vec;
             Ok(())
         } else {
@@ -242,14 +244,14 @@ mod test {
         let mut subject = subject();
         subject.consume_from_namespace(NamespaceGlob::new("/foo").unwrap(), 999).unwrap();
 
-        let result = subject.start_peer_replication(VersionVector::new());
+        let result = subject.start_peer_replication(1, VersionVector::new());
         assert!(result.is_err());
     }
 
     #[test]
     fn consume_from_namespace_returns_error_when_client_has_been_previously_upgraded_to_peer() {
         let mut subject = subject();
-        subject.start_peer_replication(VersionVector::new()).unwrap();
+        subject.start_peer_replication(1, VersionVector::new()).unwrap();
 
         let result = subject.consume_from_namespace(NamespaceGlob::new("/foo").unwrap(), 999);
         assert!(result.is_err());
@@ -304,10 +306,11 @@ mod test {
     #[test]
     fn should_send_event_returns_true_when_client_is_a_peer_and_event_is_greater_than_version_vector() {
         let actor = 1;
+        let event_actor = 2;
         let mut subject = subject();
 
-        subject.start_peer_replication(VersionVector::new()).unwrap();
-        let event = event(actor, 99, "/any");
+        subject.start_peer_replication(actor, VersionVector::new()).unwrap();
+        let event = event(event_actor, 99, "/any");
         assert!(subject.should_send_event(&*event));
     }
 
