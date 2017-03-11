@@ -104,6 +104,9 @@ mod test {
         let result = event_iter.next().expect("expected result to be Some").expect("failed to read event 4");
         assert_eq!(event3, result);
 
+        let result = event_iter.next().expect("expected result to be Some").expect("failed to read event 4");
+        assert_eq!(event4, result);
+
         assert!(event_iter.next().is_none());
 
         // version vec still has counter of 1 from when version vec was initialized

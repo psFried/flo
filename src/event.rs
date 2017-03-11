@@ -104,6 +104,7 @@ mod event_id_test {
 }
 
 pub const ZERO_EVENT_ID: FloEventId = FloEventId{event_counter: 0, actor: 0};
+pub const MAX_EVENT_ID: FloEventId = FloEventId{event_counter: ::std::u64::MAX, actor: ::std::u16::MAX};
 
 impl FloEventId {
 
@@ -111,6 +112,12 @@ impl FloEventId {
     #[inline]
     pub fn zero() -> FloEventId {
         ZERO_EVENT_ID
+    }
+
+    /// Returns the maximum possible event id. All other event ids will be less than or equal to this id
+    #[inline]
+    pub fn max() -> FloEventId {
+        MAX_EVENT_ID
     }
 
     /// Constructs a new FloEventId with the given actor and counter values

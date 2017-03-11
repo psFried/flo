@@ -22,7 +22,7 @@ enum EventIterInner {
 struct WrappedIterator {
     iter: FSEventIter,
     next: Option<Result<OwnedFloEvent, io::Error>>,
-    next_id: FloEventId,
+    next_id: Option<FloEventId>,
 }
 
 impl WrappedIterator {
@@ -30,7 +30,7 @@ impl WrappedIterator {
         let mut wrapped_iter = WrappedIterator {
             iter: iter,
             next: None,
-            next_id: FloEventId::zero(),
+            next_id: None,
         };
         let _ = wrapped_iter.advance();
         wrapped_iter
@@ -39,8 +39,8 @@ impl WrappedIterator {
     fn advance(&mut self) -> Option<Result<OwnedFloEvent, io::Error>> {
         let next = self.iter.next();
         let next_id = match &next {
-            &Some(Ok(ref event)) => event.id,
-            _ => FloEventId::zero()
+            &Some(Ok(ref event)) => Some(event.id),
+            _ => None,
         };
         trace!("Advancing file reader for actor: {}, prev id: {:?}, next_id: {:?}", self.actor_id(), self.next_id, next_id);
         self.next_id = next_id;
@@ -60,8 +60,16 @@ impl Iterator for MultiActorEventIter {
     type Item = Result<OwnedFloEvent, io::Error>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let next_iter: Option<&mut WrappedIterator> = self.iters.iter_mut().min_by_key(|wrapped| wrapped.next_id);
-        next_iter.and_then(|wrapped| wrapped.advance())
+        let next_iter: Option<&mut WrappedIterator> = self.iters.iter_mut().min_by_key(|wrapped| {
+            wrapped.next_id.unwrap_or(FloEventId::max())
+        });
+        next_iter.and_then(|wrapped| {
+            if wrapped.next_id.is_none() {
+                None
+            } else {
+                wrapped.advance()
+            }
+        })
     }
 }
 
