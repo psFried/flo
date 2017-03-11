@@ -59,11 +59,13 @@ impl Buffer {
     pub fn drain(&mut self, num_bytes: usize) -> &[u8] {
         let pos = self.pos;
         let byte_count = ::std::cmp::min(num_bytes, self.len - pos);
+        trace!("draining buffer - requested: {}, available: {}, returning: {:?}", num_bytes, byte_count, &self.bytes[pos..(pos + byte_count)]);
         self.consume(byte_count);
         &self.bytes[pos..(pos + byte_count)]
     }
 
     pub fn consume(&mut self, nbytes: usize) {
+        trace!("Consuming {} bytes from buffer", nbytes);
         self.pos += nbytes;
     }
 
@@ -108,10 +110,8 @@ impl <T> MessageStream<T> where T: Read {
         // if there's an in-progress message, then try to push the bytes into it
         // otherwise try to deserialize a new message
 
-        let (bytes_consumed, mut next_message) = current_read_message.take().map(|in_progress_message| {
-            Ok((0, in_progress_message))
-        }).unwrap_or_else(|| {
-            read_buffer.fill(io).and_then(|bytes| {
+        if current_read_message.is_none() {
+            let (bytes_consumed, next_message) = read_buffer.fill(io).and_then(|bytes| {
                 let buffer_start_length = bytes.len();
                 match self::client::parse_any(bytes) {
                     IResult::Done(remaining, message) => {
@@ -126,23 +126,28 @@ impl <T> MessageStream<T> where T: Read {
                         Err(io::Error::new(io::ErrorKind::UnexpectedEof, "Not enough data to deserialize message"))
                     }
                 }
-            })
-        })?; // Early return if either the read or parse fails
+            })?; //early return if we fail to read or deserialize
 
-        read_buffer.consume(bytes_consumed);
-
-        let mut remaining_bytes_in_body = next_message.body_bytes_remaining();
-
-        while remaining_bytes_in_body > 0 {
-            trace!("Filling body of message with {} bytes", remaining_bytes_in_body);
-            let n_appended = {
-                let bytes = read_buffer.fill(io)?; // early return if the read fails
-                next_message.append_body(bytes)
-            };
-            read_buffer.consume(n_appended);
-            remaining_bytes_in_body -= n_appended;
+            read_buffer.consume(bytes_consumed);
+            *current_read_message = Some(next_message);
         }
-        Ok(next_message.finish())
+
+        {
+            let message = current_read_message.as_mut().unwrap();
+            let mut remaining_bytes_in_body = message.body_bytes_remaining();
+
+            while remaining_bytes_in_body > 0 {
+                trace!("Filling body of message with {} bytes", remaining_bytes_in_body);
+                let n_appended = {
+                    let bytes = read_buffer.fill(io)?; // early return if the read fails
+                    message.append_body(bytes)
+                };
+                read_buffer.consume(n_appended);
+                remaining_bytes_in_body -= n_appended;
+            }
+        }
+
+        Ok(current_read_message.take().unwrap().message)
     }
 }
 
@@ -192,6 +197,7 @@ fn get_body_buffer(message: &mut ProtocolMessage) -> Option<&mut Vec<u8>> {
 fn copy_until_capacity(src: &[u8], dst: &mut Vec<u8>) -> usize {
     let len = cmp::min(src.len(), dst.capacity() - dst.len());
     let s = &src[..len];
+    trace!("filling body with {} bytes", len);
     dst.extend_from_slice(s);
     len
 }
