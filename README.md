@@ -1,6 +1,8 @@
 Flo
 =======
 
+[![Build Status](https://travis-ci.org/psFried/flo.svg?branch=master)](https://travis-ci.org/psFried/flo)
+
 A naive and amateurish attempt at an event stream server. This is mostly just a fun/learning project at the moment, so don't get your panties in a bunch if it doesn't work properly (or at all).
 
 Installation
