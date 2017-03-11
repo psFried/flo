@@ -120,7 +120,7 @@ impl <T> MessageStream<T> where T: Read {
                         Ok((bytes_used, InProgressMessage::new(message)))
                     }
                     IResult::Error(err) => {
-                        Err(io::Error::new(io::ErrorKind::InvalidData, format!("Error parsing message: {:?}", err)))
+                        Err(io::Error::new(io::ErrorKind::InvalidData, format!("Error parsing message: {:?}, buffer: {:?}", err, bytes)))
                     }
                     IResult::Incomplete(need) => {
                         Err(io::Error::new(io::ErrorKind::UnexpectedEof, "Not enough data to deserialize message"))
