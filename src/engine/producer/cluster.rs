@@ -29,16 +29,14 @@ impl ConnectedPeer {
         }
     }
 
-    fn set_actor_id(&mut self, actor_id: ActorId) -> Result<(), String> {
-        if self.actor_id.is_some() {
-            Err(format!("Cannot change to actor_id: {} for connection_id: {} because actor_id is already: {:?}",
-                        actor_id, self.connection_id, self.actor_id))
-        } else {
-            info!("Peer connection established on connection_id: {} as actor_id: {} at address: {}",
-                    self.connection_id, actor_id, self.address);
-            self.actor_id = Some(actor_id);
-            Ok(())
+    fn set_actor_id(&mut self, actor_id: ActorId) {
+        if let Some(ref mut current_id) = self.actor_id {
+            if *current_id != actor_id {
+                warn!("Changing actor id for connection_id: {} at address: {} from {} to {}",
+                        self.connection_id, self.address, current_id, actor_id);
+            }
         }
+        self.actor_id = Some(actor_id);
     }
 }
 
@@ -139,11 +137,7 @@ impl ClusterState {
         }
 
         if let Some(ref mut peer) = self.connected_peers.get_mut(&connection_id) {
-            match peer.set_actor_id(actor_id) {
-                Ok(()) => info!("peer connection_id: {} to address: {} now has actor_id: {}", connection_id, peer_address, actor_id),
-                Err(err) => error!("Error setting actor_id for connection_id: {} and address: {}, - {}", connection_id, peer_address, err)
-            }
-
+            peer.set_actor_id(actor_id);
         }
     }
 
@@ -158,7 +152,7 @@ impl ClusterState {
     }
 
     pub fn peer_connected(&mut self, address: SocketAddr, connection_id: ConnectionId) {
-        //TODO: Check the connected peers to make sure there isn't one already from this address
+
         let disconnected_peer = self.disconnected_peers.remove(&address);
 
         debug!("peer_connected at address: {}, connection_id: {}, previous peer state: {:?}", address, connection_id, disconnected_peer);
@@ -167,6 +161,7 @@ impl ClusterState {
         }).connect(connection_id);
 
         self.connected_peers.insert(connection_id, connected_peer);
+        self.all_peers.insert(address);
     }
 
     pub fn attempt_connections(&mut self, current_time: Instant) -> Vec<SocketAddr> {
@@ -292,22 +287,6 @@ mod test {
         assert!(peer.should_attempt_connection(now));
     }
 
-//    #[test]
-//    fn peer_message_received_returns_error_when_peer_already_had_an_actor_id_assigned() {
-//        let peer = localhost(5678);
-//        let addresses = vec![localhost(1234), peer.clone(), localhost(4321)];
-//        let mut subject = ClusterState::new(addresses.clone());
-//
-//        let connection_id = 67;
-//        subject.peer_connected(peer, connection_id);
-//        let peer_actor_id = 89;
-//        subject.peer_message_received(connection_id, peer_actor_id).expect("First cal should succeed");
-//
-//        let result = subject.peer_message_received(connection_id, 3);
-//        assert!(result.is_err());
-//    }
-
-
     #[test]
     fn peer_message_received_sets_the_actor_id_of_a_peer() {
         let peer = localhost(5678);
@@ -321,6 +300,16 @@ mod test {
 
         let result = subject.connected_peers.remove(&connection_id).unwrap();
         assert_eq!(Some(peer_actor_id), result.actor_id);
+    }
+
+    #[test]
+    fn peer_message_received_adds_peer_address_to_set_of_all_addresses() {
+        let mut subject = ClusterState::new(Vec::new());
+
+        let peer_address = localhost(666);
+        subject.peer_message_received(peer_address, 5, 4);
+
+        assert!(subject.all_peers.contains(&peer_address));
     }
 
     #[test]
