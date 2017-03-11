@@ -94,20 +94,19 @@ mod test {
 
         let (mut writer, mut reader, version_vec) = FSStorageEngine::initialize(storage_opts).expect("failed to initialize storage engine");
 
+
+        let mut event_iter = reader.load_range(FloEventId::new(2, 1), 55);
+
         let event4 = OwnedFloEvent::new(FloEventId::new(1, 4), None, event_time(), "/yolo".to_owned(), "fourth event data".as_bytes().to_owned());
         writer.store(&event4).unwrap();
 
-        let mut event_iter = reader.load_range(FloEventId::new(2, 1), 55);
         let result = event_iter.next().expect("expected result to be Some").expect("failed to read event 3");
         assert_eq!(event2, result);
 
         let result = event_iter.next().expect("expected result to be Some").expect("failed to read event 4");
         assert_eq!(event3, result);
 
-        let result = event_iter.next().expect("expected result to be Some").expect("failed to read event 4");
-        assert_eq!(event4, result);
-
-        assert!(event_iter.next().is_none());
+        assert!(event_iter.next().is_none()); // Assert that event4 is NOT observed
 
         // version vec still has counter of 1 from when version vec was initialized
         assert_eq!(1, version_vec.get(1));
