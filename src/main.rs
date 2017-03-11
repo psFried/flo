@@ -57,6 +57,7 @@ fn app_args() -> App<'static, 'static> {
                     .multiple(true)
                     .help("Sets the log level for a module. Argument should be in the format module::sub-module=<level> where level is one of trace, debug, info, warn"))
             .arg(Arg::with_name("log-dest")
+                    .short("o")
                     .long("log-dest")
                     .value_name("path")
                     .help("Path of a file to write logs to. Default is to log to stdout if unspecified"))
@@ -103,6 +104,10 @@ fn app_args() -> App<'static, 'static> {
                     .short("A")
                     .takes_value(true)
                     .help("The id to assign to this node in the cluster. This MUST be unique within the cluster. Will be removed once cluster support doesn't suck so bad"))
+            .arg(Arg::with_name("max-io-threads")
+                    .long("max-io-threads")
+                    .takes_value(true)
+                    .help("The maximum number of threads to spawn for handling client connections. The actual number of threads used may be less"))
 }
 
 fn main() {
@@ -120,6 +125,17 @@ fn main() {
     let max_cache_memory = get_max_cache_mem_amount(&args);
     let cluster_addresses = get_cluster_addresses(&args);
     let actor_id = args.value_of("actor-id").unwrap_or("1").parse::<ActorId>().expect("ActorId must be an unsigned 16 bit integer");
+    let max_io_threads = args.value_of("max-io-threads").map(|value| {
+        value.parse::<usize>().map_err(|_| {
+            format!("Invalid max-io-threads argument: '{}' value must be a positive integer", value)
+        }).and_then(|parsed| {
+            if parsed == 0 {
+                Err(format!("max-io-threads cannot be 0"))
+            } else {
+                Ok(parsed)
+            }
+        }).or_bail()
+    });
 
     let server_options = ServerOptions {
         default_namespace: default_ns,
@@ -130,6 +146,7 @@ fn main() {
         max_cache_memory: max_cache_memory,
         cluster_addresses: cluster_addresses,
         actor_id: actor_id,
+        max_io_threads: max_io_threads,
     };
     server::run(server_options);
     info!("Shutdown server");

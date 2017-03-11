@@ -113,6 +113,8 @@ impl FloServerProcess {
                 .env("RUST_BACKTRACE", "1")
                 .arg("--port")
                 .arg(format!("{}", self.port))
+                .arg("--max-io-threads")
+                .arg("2")
                 .arg("--data-dir")
                 .arg(self.data_dir.path().to_str().unwrap())
                 .args(&self.args)

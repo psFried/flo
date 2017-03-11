@@ -1,6 +1,7 @@
 use tokio_core::reactor::{Core, Remote};
 use std::thread::{self, JoinHandle};
 
+use std::cmp::{max, min};
 use std::sync::mpsc::sync_channel;
 use std::time::Duration;
 
@@ -54,20 +55,26 @@ impl EventLoopsJoinHandle {
     }
 }
 
-pub fn spawn_default_event_loops() -> Result<(EventLoopsJoinHandle, LoopHandles), String> {
-    use std::cmp::{max, min};
+fn get_default_io_thread_count() -> usize {
     let cpu_count = ::num_cpus::get();
-    let thread_count = min(32, max(1, cpu_count.saturating_sub(2)));
-    spawn_event_loop_threads(thread_count as u8)
+    min(32, max(1, cpu_count.saturating_sub(2)))
 }
 
-pub fn spawn_event_loop_threads(num_threads: u8) -> Result<(EventLoopsJoinHandle, LoopHandles), String> {
+fn get_io_thread_count(max_threads: Option<usize>) -> usize {
+    let default = get_default_io_thread_count();
+    max_threads.map(|n_threads| {
+        min(default, n_threads)
+    }).unwrap_or(default)
+}
+
+pub fn spawn_event_loop_threads(max: Option<usize>) -> Result<(EventLoopsJoinHandle, LoopHandles), String> {
+    let num_threads = get_io_thread_count(max);
     info!("initializing {} client I/O threads", num_threads);
     let mut thread_handles = Vec::with_capacity(num_threads as usize);
     let mut remotes = Vec::with_capacity(num_threads as usize);
 
     for i in 0..num_threads {
-        let (thread_handle, remote) = spawn_event_loop_thread(i)?;
+        let (thread_handle, remote) = spawn_event_loop_thread(i as u8)?;
         thread_handles.push(thread_handle);
         remotes.push(remote);
     }

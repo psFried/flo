@@ -61,12 +61,13 @@ pub struct ServerOptions {
     pub max_cache_memory: MemoryLimit,
     pub cluster_addresses: Option<Vec<SocketAddr>>,
     pub actor_id: ActorId,
+    pub max_io_threads: Option<usize>,
 }
 
 
 
 pub fn run(options: ServerOptions) {
-    let (join_handle, mut event_loop_handles) = self::event_loops::spawn_default_event_loops().unwrap();
+    let (join_handle, mut event_loop_handles) = self::event_loops::spawn_event_loop_threads(options.max_io_threads).unwrap();
 
     let server_port = options.port;
     let address: SocketAddr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), server_port));
