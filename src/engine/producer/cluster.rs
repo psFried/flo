@@ -105,7 +105,7 @@ impl From<ConnectedPeer> for DisconnectedPeer {
     }
 }
 
-
+#[derive(Debug)]
 pub struct ClusterState {
     pub connected_peers: HashMap<ConnectionId, ConnectedPeer>,
     pub disconnected_peers: HashMap<SocketAddr, DisconnectedPeer>,
@@ -193,6 +193,9 @@ impl ClusterState {
         }
     }
 
+    pub fn log_state(&self) {
+        debug!("Current ClusterState: {:?}", self);
+    }
 }
 
 #[cfg(test)]

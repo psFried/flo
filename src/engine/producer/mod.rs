@@ -142,10 +142,13 @@ impl <S: EventWriter> ProducerManager<S> {
                 self.new_produce_event(sender, produce)
             }
             ProtocolMessage::PeerAnnounce(cluster_state) => {
-                self.on_peer_announce(sender, cluster_state, recv_time)
+                let result = self.on_peer_announce(sender, cluster_state, recv_time);
+                self.cluster_state.log_state();
+                result
             }
             ProtocolMessage::PeerUpdate(cluster_state) => {
                 self.process_peer_cluster_state(sender, &cluster_state);
+                self.cluster_state.log_state();
                 Ok(())
             }
             ProtocolMessage::ReceiveEvent(event) => {
