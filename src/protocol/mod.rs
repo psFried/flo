@@ -47,9 +47,33 @@ impl Buffer {
                 let mut buf = &mut self.bytes[..];
                 read(buf, reader)?
             };
+            if nread == 0 {
+                warn!("Read 0 bytes, returning UnexpectedEOF");
+                return Err(io::Error::from(io::ErrorKind::UnexpectedEof));
+            }
             trace!("read {} bytes", nread);
             self.len = nread;
             self.pos = 0;
+        }
+        let buf = &self.bytes[self.pos..self.len];
+        trace!("Returning buffer: {:?}", buf);
+        Ok(buf)
+    }
+
+    pub fn grow<R: Read>(&mut self, reader: &mut R) -> io::Result<&[u8]> {
+        let current_buffer_len = self.bytes.len();
+        if self.len >= current_buffer_len {
+            debug!("Reallocating buffer to grow the vector by {} bytes", current_buffer_len);
+            self.bytes.resize(current_buffer_len, 0);
+        }
+
+        let nread = {
+            let mut buf = &mut self.bytes[self.len..];
+            read(buf, reader)?
+        };
+        if nread == 0 {
+            warn!("Read 0 bytes, returning UnexpectedEOF");
+            return Err(io::Error::from(io::ErrorKind::UnexpectedEof));
         }
         let buf = &self.bytes[self.pos..self.len];
         trace!("Returning buffer: {:?}", buf);
@@ -111,25 +135,33 @@ impl <T> MessageStream<T> where T: Read {
         // otherwise try to deserialize a new message
 
         if current_read_message.is_none() {
-            let (bytes_consumed, next_message) = read_buffer.fill(io).and_then(|bytes| {
+            let mut bytes_consumed = 0;
+            let mut grow_buffer = false;
+            loop {
+                let bytes = if grow_buffer {
+                    read_buffer.grow(io)?
+                } else {
+                    read_buffer.fill(io)?
+                };
                 let buffer_start_length = bytes.len();
                 match self::client::parse_any(bytes) {
                     IResult::Done(remaining, message) => {
-                        let bytes_used = buffer_start_length - remaining.len();
-                        trace!("Successful parse used {} bytes; got message: {:?}", bytes_used, message);
-                        Ok((bytes_used, InProgressMessage::new(message)))
+                        bytes_consumed += buffer_start_length - remaining.len();
+                        trace!("Successful parse used {} bytes; got message: {:?}", bytes_consumed, message);
+                        *current_read_message = Some(InProgressMessage::new(message));
+                        break
                     }
                     IResult::Error(err) => {
-                        Err(io::Error::new(io::ErrorKind::InvalidData, format!("Error parsing message: {:?}, buffer: {:?}", err, bytes)))
+                        return Err(io::Error::new(io::ErrorKind::InvalidData, format!("Error parsing message: {:?}, buffer: {:?}", err, bytes)))
                     }
-                    IResult::Incomplete(need) => {
-                        Err(io::Error::new(io::ErrorKind::UnexpectedEof, "Not enough data to deserialize message"))
+                    IResult::Incomplete(_need) => {
+                        grow_buffer = true;
+                        trace!("Not enough data to deserialize message, trying again");
+                        // loop again
                     }
                 }
-            })?; //early return if we fail to read or deserialize
-
+            }
             read_buffer.consume(bytes_consumed);
-            *current_read_message = Some(next_message);
         }
 
         {

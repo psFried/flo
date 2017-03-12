@@ -52,6 +52,7 @@ impl <R: Read> Stream for ClientMessageStream<R> {
             }
             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => Ok(Async::NotReady),
             Err(ref e) if e.kind() == io::ErrorKind::UnexpectedEof => {
+                info!("EOF for connection_id: {}, err: {:?}", self.connection_id, e);
                 self.disconnect()
             }
             Err(io_err) => {
