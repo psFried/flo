@@ -1,11 +1,10 @@
 use futures::{Poll, Async};
 use futures::stream::Stream;
 use std::io::{self, Read};
-use std::time::{Instant};
 use std::net::SocketAddr;
 
-use server::engine::api::{self, ClientMessage, ConnectionId};
-use protocol::{ProtocolMessage, ConsumerStart, MessageStream};
+use server::engine::api::{ClientMessage, ConnectionId};
+use protocol::MessageStream;
 
 pub struct ClientMessageStream<R: Read> {
     connection_id: ConnectionId,
@@ -68,11 +67,11 @@ mod test {
     use super::*;
     use futures::Async;
     use futures::stream::Stream;
-    use std::io::{self, Read, Cursor};
+    use std::io::Cursor;
 
     use event::FloEventId;
-    use server::engine::api::{ClientMessage, ConsumerManagerMessage, ProducerManagerMessage};
-    use protocol::{ProtocolMessage, ProduceEvent};
+    use server::engine::api::{ClientMessage, ProducerManagerMessage};
+    use protocol::ProtocolMessage;
 
     fn address() -> SocketAddr {
         "127.0.0.1:3000".parse().unwrap()
@@ -80,7 +79,6 @@ mod test {
 
     #[test]
     fn multiple_events_are_read_in_sequence() {
-        ::env_logger::init();
         let reader = {
             let mut b = Vec::new();
             b.extend_from_slice(b"FLO_PRO\n/foo/bar\n");
@@ -116,7 +114,8 @@ mod test {
         }
 
         let result = subject.poll();
-        if let Ok(Async::Ready(Some(message))) = result {
+        if let Ok(Async::Ready(Some(_message))) = result {
+            //TODO: assert that message fields are correct
             println!("Got some message");
         } else {
             panic!("expected to get a message");

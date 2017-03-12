@@ -9,9 +9,8 @@ use self::api::{ConsumerManagerMessage, ProducerManagerMessage};
 use self::producer::ProducerManager;
 use self::consumer::ConsumerManager;
 use server::ServerOptions;
-use engine::event_store::{StorageEngine, EventReader, StorageEngineOptions};
+use engine::event_store::{StorageEngine, StorageEngineOptions};
 use engine::event_store::fs::{FSStorageEngine};
-use event::ActorId;
 
 use futures::sync::mpsc::UnboundedSender;
 
@@ -39,7 +38,7 @@ pub fn run(options: ServerOptions, cluster_sender: UnboundedSender<SocketAddr>) 
         max_events: max_events,
     };
 
-    let (event_writer, mut event_reader, version_vec) = FSStorageEngine::initialize(storage_options).expect("Failed to initialize storage engine");
+    let (event_writer, event_reader, version_vec) = FSStorageEngine::initialize(storage_options).expect("Failed to initialize storage engine");
     let highest_event_id = version_vec.max();
     info!("initialized storage engine with highest event id: {}, version vec: {:?}", highest_event_id, version_vec);
 

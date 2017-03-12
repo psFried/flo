@@ -60,7 +60,7 @@ impl <R: EventReader + 'static> ConsumerManager<R> {
                 self.consumers.remove(connection_id);
                 Ok(())
             }
-            ConsumerManagerMessage::ContinueConsuming(connection_id, last_event_id, limit) => {
+            ConsumerManagerMessage::ContinueConsuming(connection_id, last_event_id, _limit) => {
                 let result = self.require_client(connection_id, move |mut client, mut state| {
                     //TODO: remove limit from continueConsuming message, since the reader thread has no idea which ones actually match the namespace
                     if let Some(remaining) = client.continue_consuming() {
@@ -79,7 +79,7 @@ impl <R: EventReader + 'static> ConsumerManager<R> {
             ConsumerManagerMessage::StartPeerReplication(connection_id, actor_id, peer_versions) => {
                 self.start_peer_replication(connection_id, actor_id, peer_versions)
             }
-            ConsumerManagerMessage::EventPersisted(connection_id, event) => {
+            ConsumerManagerMessage::EventPersisted(_connection_id, event) => {
                 self.state.update_greatest_event(event.id);
                 let event_rc = self.state.cache.insert(event);
                 self.consumers.send_event_to_all(event_rc)
@@ -95,10 +95,11 @@ impl <R: EventReader + 'static> ConsumerManager<R> {
         }
     }
 
-    fn process_received_message(&mut self, ReceivedMessage{sender, recv_time, message}: ReceivedMessage) -> Result<(), String> {
+    fn process_received_message(&mut self, ReceivedMessage{sender, message, ..}: ReceivedMessage) -> Result<(), String> {
         match message {
             ProtocolMessage::UpdateMarker(event_id) => {
-                self.consumers.update_consumer_position(sender, event_id)
+                self.consumers.update_consumer_position(sender, event_id);
+                Ok(())
             }
             ProtocolMessage::StartConsuming(ConsumerStart{max_events, namespace}) => {
                 self.require_client(sender, move |mut client, mut state| {
@@ -275,12 +276,10 @@ impl ConsumerMap {
         })
     }
 
-    pub fn update_consumer_position(&mut self, connection_id: ConnectionId, new_position: FloEventId) -> Result<(), String> {
-        self.0.get_mut(&connection_id).ok_or_else(|| {
-            format!("Consumer: {} does not exist. Cannot update position", connection_id)
-        }).map(|consumer| {
+    pub fn update_consumer_position(&mut self, connection_id: ConnectionId, new_position: FloEventId) {
+        if let Some(consumer) = self.0.get_mut(&connection_id) {
             consumer.update_version_vector(new_position);
-        })
+        }
     }
 
     pub fn send_event(&mut self, connection_id: ConnectionId, event: Arc<OwnedFloEvent>) -> Result<(), String> {

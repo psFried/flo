@@ -95,8 +95,8 @@ impl <S: EventWriter> ProducerManager<S> {
     }
 
     fn get_my_cluster_state_message(&self) -> ::protocol::ClusterState {
-        let mut cluster_members = {
-            let ProducerManager {ref cluster_state, ref clients, ..} = *self;
+        let cluster_members = {
+            let ProducerManager {ref cluster_state, ..} = *self;
 
             let mut members: Vec<ClusterMember> = cluster_state.connected_peers.values().filter(|peer| {
                 peer.actor_id.is_some()
@@ -142,7 +142,7 @@ impl <S: EventWriter> ProducerManager<S> {
                 self.new_produce_event(sender, produce)
             }
             ProtocolMessage::PeerAnnounce(cluster_state) => {
-                let result = self.on_peer_announce(sender, cluster_state, recv_time);
+                let result = self.on_peer_announce(sender, cluster_state);
                 self.cluster_state.log_state();
                 result
             }
@@ -183,24 +183,12 @@ impl <S: EventWriter> ProducerManager<S> {
         Ok(())
     }
 
-    fn replicate_event(&mut self, connection_id: ConnectionId, event: OwnedFloEvent, message_recv_time: Instant) -> Result<(), String> {
-        let counter_for_actor = self.version_vec.get(event.id.actor);
-        if event.id.event_counter > counter_for_actor {
-            trace!("Replicating event: {:?} from connection: {}", event.id, connection_id);
-            self.persist_event(connection_id, 0, event)
-        } else {
-            trace!("No need to replicate event {:?} on connection: {} because the counter is less than the current one: {}",
-                    event.id, connection_id, counter_for_actor);
-            Ok(())
-        }
-    }
-
-    fn on_peer_announce(&mut self, connection_id: ConnectionId, peer_cluster_state: ::protocol::ClusterState, message_recv_time: Instant) -> Result<(), String> {
+    fn on_peer_announce(&mut self, connection_id: ConnectionId, peer_cluster_state: ::protocol::ClusterState) -> Result<(), String> {
         info!("Upgrading to peer connection_id: {}, peer_cluster_state: {:?}", connection_id, peer_cluster_state);
         self.process_peer_cluster_state(connection_id, &peer_cluster_state);
 
         let my_state = self.get_my_cluster_state_message();
-        let ::protocol::ClusterState {actor_id, actor_port, version_vector, other_members} = peer_cluster_state;
+        let ::protocol::ClusterState {actor_id, version_vector, ..} = peer_cluster_state;
 
         self.clients.send(connection_id, ProtocolMessage::PeerUpdate(my_state)).and_then(|()| {
             let peer_replication_message = ConsumerManagerMessage::StartPeerReplication(connection_id, actor_id, version_vector);
@@ -274,13 +262,13 @@ impl <S: EventWriter> ProducerManager<S> {
 mod test {
     use super::*;
     use engine::api::*;
-    use protocol::*;
+    use protocol::{self, ServerMessage};
     use event::{FloEvent, OwnedFloEvent, ActorId};
     use engine::event_store::EventWriter;
     use engine::version_vec::VersionVector;
 
     use std::sync::mpsc::{channel, Receiver};
-    use std::time::{Instant, Duration};
+    use std::time::Duration;
     use futures::sync::mpsc::{UnboundedReceiver, unbounded};
     use futures::{Async, Stream};
 
@@ -368,7 +356,7 @@ mod test {
                                client: &mut UnboundedReceiver<ServerMessage>,
                                consumer_manager: &mut Receiver<ConsumerManagerMessage>) {
 
-        let peer_state = ClusterState {
+        let peer_state = protocol::ClusterState {
             actor_id: peer_actor_id,
             actor_port: 2222,
             version_vector: peer_versions.clone(),
