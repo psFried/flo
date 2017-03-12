@@ -1,4 +1,3 @@
-pub mod metrics;
 mod flo_io;
 mod channel_sender;
 mod event_loops;

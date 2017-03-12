@@ -8,7 +8,6 @@ use engine::event_store::EventWriter;
 use engine::version_vec::VersionVector;
 use event::{ActorId, OwnedFloEvent, EventCounter, FloEventId};
 use protocol::{ProtocolMessage, EventAck, ProduceEvent, ClusterMember};
-use server::metrics::ProducerMetrics;
 
 use std::sync::mpsc::Sender;
 use std::time::{Instant, Duration};
@@ -29,7 +28,6 @@ pub struct ProducerManager<S: EventWriter> {
     version_vec: VersionVector,
     consumer_manager_channel: Sender<ConsumerManagerMessage>,
     clients: ClientMap,
-    metrics: ProducerMetrics,
     cluster_state: ClusterState,
     cluster_connect_sender: UnboundedSender<SocketAddr>,
 }
@@ -51,7 +49,6 @@ impl <S: EventWriter> ProducerManager<S> {
             version_vec: my_version_vec,
             consumer_manager_channel: consumer_manager_channel,
             clients: ClientMap::new(),
-            metrics: ProducerMetrics::new(),
             cluster_state: ClusterState::new(peer_addresses),
             cluster_connect_sender: cluster_connect_sender,
         }
@@ -135,7 +132,7 @@ impl <S: EventWriter> ProducerManager<S> {
         self.clients.send(connection_id, ProtocolMessage::PeerAnnounce(state_message))
     }
 
-    fn process_received_message(&mut self, ReceivedMessage{sender, recv_time, message}: ReceivedMessage) -> Result<(), String> {
+    fn process_received_message(&mut self, ReceivedMessage{sender, message, ..}: ReceivedMessage) -> Result<(), String> {
         trace!("Received from connection_id: {} message: {:?}", sender, message);
         match message {
             ProtocolMessage::ProduceEvent(produce) => {
