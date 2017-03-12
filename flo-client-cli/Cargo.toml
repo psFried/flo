@@ -1,0 +1,9 @@
+[package]
+name = "flo-client-cli"
+version = "0.1.0"
+authors = ["pfried <philipsfried@gmail.com>"]
+
+[dependencies]
+flo-client-lib = { path = "../flo-client-lib" }
+clap = "2.5"
+
