@@ -1,0 +1,12 @@
+[package]
+name = "flo-client-lib"
+version = "0.1.0"
+authors = ["pfried <philipsfried@gmail.com>"]
+
+[dependencies]
+flo-protocol = { path = "../flo-protocol" }
+flo-event = { path = "../flo-event" }
+log = "0.3"
+
+[dev-dependencies]
+env_logger = "*"

@@ -10,7 +10,8 @@ Installation
 
 - You'll need a nightly version of the Rust compiler. I recommend installing rustup and just running `rustup install nightly`.
 - Inside the root of the repository, run `rustup override set nightly` to make sure it builds using the nightly version of the rust compiler.
-- run `cargo install` from the root of the repository to install the executables. This will install both the `flo` server and the `flo-client` CLI.
+- To install the flo server, run `cargo install --path flo-server` from the root of the repository. 
+- To install the flo CLI client run `cargo install --path flo-client-cli`
 
 ## Running the Server
 
