@@ -15,7 +15,7 @@ use event::ActorId;
 use futures::sync::mpsc::unbounded;
 use std::path::PathBuf;
 use std::net::{SocketAddr, Ipv4Addr, SocketAddrV4};
-use std::io::{self, Write};
+use std::io;
 use engine;
 
 #[derive(Copy, Clone, PartialEq, Debug)]
@@ -65,18 +65,12 @@ pub struct ServerOptions {
 }
 
 
-pub fn run(options: ServerOptions) {
+pub fn run(options: ServerOptions) -> io::Result<()> {
 
     let server_port = options.port;
     let address: SocketAddr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), server_port));
 
-    let listener = match ::std::net::TcpListener::bind(address) {
-        Ok(listener) => listener,
-        Err(e) => {
-            writeln!(&mut io::stderr(), "Error binding to socket: {}", e).unwrap();
-            return;
-        }
-    };
+    let listener = ::std::net::TcpListener::bind(address)?;
 
     let (join_handle, mut event_loop_handles) = self::event_loops::spawn_event_loop_threads(options.max_io_threads).unwrap();
 
@@ -126,5 +120,7 @@ pub fn run(options: ServerOptions) {
     });
 
     join_handle.join();
+
+    Ok(())
 }
 

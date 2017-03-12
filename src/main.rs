@@ -148,7 +148,10 @@ fn main() {
         actor_id: actor_id,
         max_io_threads: max_io_threads,
     };
-    server::run(server_options);
+    let run_finished = server::run(server_options);
+    if let Some(err) = run_finished.err() {
+        error!("IO Error: {}", err);
+    }
     info!("Shutdown server");
 }
 
