@@ -15,7 +15,7 @@ use event::ActorId;
 use futures::sync::mpsc::unbounded;
 use std::path::PathBuf;
 use std::net::{SocketAddr, Ipv4Addr, SocketAddrV4};
-use std::io;
+use std::io::{self, Write};
 use engine;
 
 #[derive(Copy, Clone, PartialEq, Debug)]
@@ -65,12 +65,20 @@ pub struct ServerOptions {
 }
 
 
-
 pub fn run(options: ServerOptions) {
-    let (join_handle, mut event_loop_handles) = self::event_loops::spawn_event_loop_threads(options.max_io_threads).unwrap();
 
     let server_port = options.port;
     let address: SocketAddr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), server_port));
+
+    let listener = match ::std::net::TcpListener::bind(address) {
+        Ok(listener) => listener,
+        Err(e) => {
+            writeln!(&mut io::stderr(), "Error binding to socket: {}", e).unwrap();
+            return;
+        }
+    };
+
+    let (join_handle, mut event_loop_handles) = self::event_loops::spawn_event_loop_threads(options.max_io_threads).unwrap();
 
     let (cluster_tx, cluster_rx) = unbounded();
 
@@ -81,8 +89,10 @@ pub fn run(options: ServerOptions) {
         producer_manager: producer_manager.clone(),
         consumer_manager: consumer_manager.clone(),
     };
+
     client_loop_handles.next_handle().spawn(move |handle| {
-        let listener = TcpListener::bind(&address, &handle).unwrap();
+
+        let listener = TcpListener::from_listener(listener, &address, &handle).unwrap();
 
         info!("Started listening on port: {}", server_port);
 
