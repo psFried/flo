@@ -1,5 +1,5 @@
 
-extern crate flo_sync_client;
+extern crate flo_client_lib;
 
 #[macro_use]
 extern crate clap;
@@ -7,7 +7,7 @@ extern crate clap;
 mod client_cli;
 
 
-use flo_sync_client::FloEventId;
+use flo_client_lib::FloEventId;
 use clap::{App, Arg, ArgMatches, SubCommand, AppSettings};
 use client_cli::{Producer, ProduceOptions, Verbosity, Context, Critical, Consumer, CliConsumerOptions};
 

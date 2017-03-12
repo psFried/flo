@@ -1,5 +1,5 @@
 use super::{FloCliCommand, Context, Verbosity};
-use flo_sync_client::{SyncConnection,
+use flo_client_lib::{SyncConnection,
     FloConsumer,
     ConsumerOptions,
     ConsumerContext,

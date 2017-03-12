@@ -1,4 +1,4 @@
-extern crate flo_sync_client;
+extern crate flo_client_lib;
 extern crate url;
 extern crate env_logger;
 extern crate tempdir;
@@ -11,9 +11,9 @@ extern crate nom;
 mod test_utils;
 
 use test_utils::*;
-use flo_sync_client::client::sync::{SyncConnection, FloConsumer, ConsumerContext, ConsumerAction};
-use flo_sync_client::client::{ConsumerOptions, ClientError};
-use flo_sync_client::{FloEventId, OwnedFloEvent, ErrorKind};
+use flo_client_lib::client::sync::{SyncConnection, FloConsumer, ConsumerContext, ConsumerAction};
+use flo_client_lib::client::{ConsumerOptions, ClientError};
+use flo_client_lib::{FloEventId, OwnedFloEvent, ErrorKind};
 use std::thread;
 use std::time::Duration;
 use std::net::{TcpStream, SocketAddr, SocketAddrV4, Ipv4Addr};

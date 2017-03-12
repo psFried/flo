@@ -2,7 +2,7 @@ extern crate url;
 extern crate env_logger;
 extern crate tempdir;
 extern crate byteorder;
-extern crate flo_sync_client;
+extern crate flo_client_lib;
 
 use std::process::{Child, Command};
 use std::thread;

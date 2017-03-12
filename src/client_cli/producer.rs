@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 
-use flo_sync_client::{SyncConnection, FloEventId};
+use flo_client_lib::{SyncConnection, FloEventId};
 use super::{Context, FloCliCommand};
 
 pub struct ProduceOptions {

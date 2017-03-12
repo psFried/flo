@@ -2,8 +2,6 @@ use std::io::{self, Write, Read};
 use std::time::Duration;
 use std::net::{TcpStream, ToSocketAddrs};
 
-use nom::IResult;
-
 use protocol::{ProtocolMessage, MessageStream, MessageWriter};
 
 const BUFFER_LENGTH: usize = 8 * 1024;
