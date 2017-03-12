@@ -7,3 +7,8 @@ authors = ["pfried <philipsfried@gmail.com>"]
 flo-client-lib = { path = "../flo-client-lib" }
 clap = "2.5"
 
+
+[[bin]]
+name = "flo-client"
+path = "src/main.rs"
+
