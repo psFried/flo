@@ -3,7 +3,6 @@ members = [
     "flo-client-cli",
     "flo-client-lib",
     "flo-event",
-    "flo-integration-test",
     "flo-protocol",
     "flo-server"
 ]

@@ -18,5 +18,7 @@ glob = "0.2"
 chrono = "^0.2"
 
 [dev-dependencies]
+flo-client-lib = { path = "../flo-client-lib" }
 env_logger = "*"
 tempdir = "*"
+url = "1.1"

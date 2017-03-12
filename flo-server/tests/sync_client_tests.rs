@@ -4,9 +4,9 @@ extern crate env_logger;
 extern crate tempdir;
 
 #[macro_use]
-extern crate flo_integration_test;
+mod test_utils;
 
-use flo_integration_test::*;
+use test_utils::*;
 use flo_client_lib::client::sync::{SyncConnection, FloConsumer, ConsumerContext, ConsumerAction};
 use flo_client_lib::client::{ConsumerOptions, ClientError};
 use flo_client_lib::{FloEventId, OwnedFloEvent, ErrorKind};
