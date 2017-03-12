@@ -204,7 +204,7 @@ mod test {
     #[test]
     fn continue_consuming_returns_max_u64_when_client_is_a_peer() {
         let mut subject = subject();
-        subject.start_peer_replication(3, VersionVector::new());
+        subject.start_peer_replication(3, VersionVector::new()).unwrap();
 
         let result = subject.continue_consuming();
         assert_eq!(Some(::std::u64::MAX), result);

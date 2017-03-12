@@ -1,8 +1,5 @@
 use event::ActorId;
 use engine::api::ConnectionId;
-use engine::version_vec::VersionVector;
-
-use futures::sync::mpsc::UnboundedSender;
 
 use std::net::SocketAddr;
 use std::collections::{HashMap, HashSet};
@@ -91,7 +88,7 @@ impl DisconnectedPeer {
 }
 
 impl From<ConnectedPeer> for DisconnectedPeer {
-    fn from(ConnectedPeer {address, actor_id, connection_id, connection_start_time, last_message_received}: ConnectedPeer) -> Self {
+    fn from(ConnectedPeer {address, actor_id, last_message_received, ..}: ConnectedPeer) -> Self {
         DisconnectedPeer {
             address: address,
             actor_id: actor_id,
@@ -196,7 +193,6 @@ impl ClusterState {
 #[cfg(test)]
 mod test {
     use super::*;
-    use event::ActorId;
 
     use std::net::SocketAddr;
     use std::time::{Instant, Duration};
