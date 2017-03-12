@@ -23,8 +23,6 @@ pub trait EventReader: Sized {
     type Iter: Iterator<Item=Result<OwnedFloEvent, Self::Error>> + Send;
 
     fn load_range(&mut self, range_start: FloEventId, limit: usize) -> Self::Iter;
-
-    fn get_highest_event_id(&mut self) -> FloEventId;
 }
 
 pub trait EventWriter: Sized {

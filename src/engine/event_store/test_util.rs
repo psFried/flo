@@ -44,10 +44,6 @@ impl EventReader for TestEventReader {
             remaining: limit,
         }
     }
-
-    fn get_highest_event_id(&mut self) -> FloEventId {
-        FloEventId::new(1, 1)
-    }
 }
 
 pub struct TestEventWriter {

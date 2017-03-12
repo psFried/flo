@@ -40,7 +40,8 @@ pub fn run(options: ServerOptions, cluster_sender: UnboundedSender<SocketAddr>) 
     };
 
     let (event_writer, mut event_reader, version_vec) = FSStorageEngine::initialize(storage_options).expect("Failed to initialize storage engine");
-    let highest_event_id = event_reader.get_highest_event_id();
+    let highest_event_id = version_vec.max();
+    info!("initialized storage engine with highest event id: {}, version vec: {:?}", highest_event_id, version_vec);
 
     // Initialize Producer Manager first
 

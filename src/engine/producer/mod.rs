@@ -42,7 +42,7 @@ impl <S: EventWriter> ProducerManager<S> {
                my_version_vec: VersionVector,
                peer_addresses: Vec<SocketAddr>,
                cluster_connect_sender: UnboundedSender<SocketAddr>) -> ProducerManager<S> {
-        let highest_event_id = my_version_vec.get(actor_id);
+        let highest_event_id = my_version_vec.max().event_counter;
         ProducerManager {
             actor_id: actor_id,
             server_port: my_port,

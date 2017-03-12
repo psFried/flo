@@ -339,9 +339,4 @@ impl EventReader for FSEventReader {
             remaining: limit
         }
     }
-
-    fn get_highest_event_id(&mut self) -> FloEventId {
-        let index = self.index.read().expect("Unable to acquire read lock on event index");
-        index.get_greatest_event_id()
-    }
 }

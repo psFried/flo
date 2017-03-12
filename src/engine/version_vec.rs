@@ -62,6 +62,11 @@ impl VersionVector {
     pub fn min(&self) -> FloEventId {
         self.0.iter().map(|(k, v)| FloEventId::new(*k, *v)).min().unwrap_or(FloEventId::zero())
     }
+
+    /// Returns the largest value in the version vector
+    pub fn max(&self) -> FloEventId {
+        self.0.iter().map(|(k, v)| FloEventId::new(*k, *v)).max().unwrap_or(FloEventId::zero())
+    }
 }
 
 

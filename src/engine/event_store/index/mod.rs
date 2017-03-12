@@ -25,7 +25,6 @@ pub struct EventIndex {
     least_entry: FloEventId,
     greatest_entry: FloEventId,
     version_vec: VersionVector,
-    max_actor_id: ActorId,
 }
 
 impl EventIndex {
@@ -36,15 +35,11 @@ impl EventIndex {
             least_entry: FloEventId::new(0, 0),
             greatest_entry: FloEventId::new(0, 0),
             version_vec: VersionVector::new(),
-            max_actor_id: 0,
         }
     }
 
     pub fn add(&mut self, new_entry: IndexEntry) -> Option<IndexEntry> {
-        //If this returns error, that just means there was already a greater entry in the version vector for that actor
-        // That's fine, as far as the index is concerned
-        let _ = self.version_vec.update(new_entry.id);
-        self.max_actor_id = max(self.max_actor_id, new_entry.id.actor);
+        self.version_vec.update_if_greater(new_entry.id);
 
         let mut to_return = None;
         trace!("adding index entry: {:?}", new_entry);
@@ -71,10 +66,6 @@ impl EventIndex {
         &self.version_vec
     }
 
-    pub fn get_max_actor_id(&self) -> ActorId {
-        self.max_actor_id
-    }
-
     pub fn get_next_entry(&self, start_after: FloEventId) -> Option<&IndexEntry> {
         self.entries.range((Bound::Excluded(&start_after), Bound::Unbounded)).next().map(|(_k, v)| v)
     }
@@ -85,10 +76,6 @@ impl EventIndex {
                     id.actor == actor_id
                 }).next()
                 .map(|(_id, entry)| entry)
-    }
-
-    pub fn get_greatest_event_id(&self) -> FloEventId {
-        self.greatest_entry
     }
 
     pub fn entry_count(&self) -> usize {
@@ -106,19 +93,6 @@ mod index_test {
 
     fn id_entry(actor: ActorId, counter: EventCounter) -> IndexEntry {
         IndexEntry::new(FloEventId::new(actor, counter), 76)
-    }
-
-
-    #[test]
-    fn index_tracks_max_actor_id() {
-        let mut subject = EventIndex::new(10);
-
-        assert_eq!(0, subject.get_max_actor_id());
-        subject.add(id_entry(1, 2));
-        assert_eq!(1, subject.get_max_actor_id());
-
-        subject.add(id_entry(5, 0));
-        assert_eq!(5, subject.get_max_actor_id());
     }
 
     #[test]

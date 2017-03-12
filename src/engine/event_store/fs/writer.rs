@@ -60,24 +60,10 @@ impl FSEventWriter {
         storage_dir.push(&storage_options.root_namespace);
         create_dir_all(&storage_dir)?; //early return if this fails
 
-        let mut file_writers = HashMap::new();
-        let max_actor_id = {
-            //TODO: how safe is it to trust that the index has complete knowledge of all actors at this point in initialization?
-            let idx = index.read().map_err(|err| {
-                io::Error::new(io::ErrorKind::Other, format!("Error acquiring write lock for index: {:?}", err))
-            })?;
-            idx.get_max_actor_id()
-            //drop the read lock at the end of this block
-        };
-        for actor_id in 0..max_actor_id {
-            //Open all the events files up front, NOT lazily. Early return if any fails
-            let writer = FileWriter::initialize(&storage_dir, actor_id)?;
-            file_writers.insert(actor_id, writer);
-        }
         Ok(FSEventWriter{
             index: index,
             storage_dir: storage_dir,
-            writers_by_actor: file_writers,
+            writers_by_actor: HashMap::new(),
         })
     }
 

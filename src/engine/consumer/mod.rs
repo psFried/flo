@@ -488,10 +488,6 @@ mod test {
                 events: events
             }
         }
-
-        fn get_highest_event_id(&mut self) -> FloEventId {
-            self.stored_events.lock().unwrap().iter().map(|evt| evt.id).max().unwrap_or(FloEventId::new(0, 0))
-        }
     }
 
     struct MockReaderIter {
