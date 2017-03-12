@@ -2,6 +2,7 @@
 #![feature(collections_bound)]
 #![feature(btree_range)]
 
+extern crate flo_event as event;
 extern crate clap;
 
 #[macro_use]
@@ -33,7 +34,6 @@ mod engine;
 mod time;
 mod protocol;
 mod serializer;
-mod event;
 mod channels;
 
 use event::ActorId;

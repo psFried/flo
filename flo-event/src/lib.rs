@@ -1,4 +1,4 @@
-//! This module defines the common types that form the basic building blocks of flo, events.
+//! This crate defines the common types that form the basic building blocks of flo, events.
 //! An Event is exactly what it sounds like. Semantically, it describes something that _happened_. Events are fundamentally
 //! different than typical _domain objects_, which are focused on _state_.
 //!

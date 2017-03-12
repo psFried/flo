@@ -1,4 +1,6 @@
 
+extern crate flo_event as event;
+
 #[macro_use]
 extern crate nom;
 
@@ -26,7 +28,6 @@ pub mod client;
 pub mod protocol;
 pub mod time;
 pub mod serializer;
-pub mod event;
 
 pub use event::{FloEventId, FloEvent, OwnedFloEvent, ActorId, EventCounter, Timestamp};
 pub use client::sync::{SyncConnection, ConsumerAction, ConsumerContext, FloConsumer};

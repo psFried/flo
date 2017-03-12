@@ -1,0 +1,7 @@
+[package]
+name = "flo-event"
+version = "0.1.0"
+authors = ["pfried <philipsfried@gmail.com>"]
+
+[dependencies]
+chrono = "^0.2"
