@@ -1,0 +1,14 @@
+[package]
+name = "flo-integration-test"
+version = "0.1.0"
+authors = ["pfried <philipsfried@gmail.com>"]
+
+[dependencies]
+flo-client-lib = { path = "../flo-client-lib" }
+tempdir = "*"
+url = "1.1"
+env_logger = "*"
+
+[dev-dependencies]
+# flo-server is a dependency here so that we can make sure it is build prior to running the integration tests
+flo-server = { path = "../flo-server" }

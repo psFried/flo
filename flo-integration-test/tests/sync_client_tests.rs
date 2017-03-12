@@ -2,15 +2,11 @@ extern crate flo_client_lib;
 extern crate url;
 extern crate env_logger;
 extern crate tempdir;
-extern crate byteorder;
 
 #[macro_use]
-extern crate nom;
+extern crate flo_integration_test;
 
-#[macro_use]
-mod test_utils;
-
-use test_utils::*;
+use flo_integration_test::*;
 use flo_client_lib::client::sync::{SyncConnection, FloConsumer, ConsumerContext, ConsumerAction};
 use flo_client_lib::client::{ConsumerOptions, ClientError};
 use flo_client_lib::{FloEventId, OwnedFloEvent, ErrorKind};
@@ -64,7 +60,6 @@ impl FloConsumer for TestConsumer {
 
 #[test]
 fn consumer_transitions_from_reading_events_from_disk_to_reading_from_memory() {
-    use test_utils::{FloServerProcess, init_logger, get_server_port, ServerProcessType};
     use tempdir::TempDir;
 
     init_logger();

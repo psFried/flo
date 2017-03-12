@@ -8,3 +8,5 @@ flo-protocol = { path = "../flo-protocol" }
 flo-event = { path = "../flo-event" }
 log = "0.3"
 
+[dev-dependencies]
+env_logger = "*"

@@ -1,27 +1,10 @@
-[package]
-name = "flo"
-version = "0.1.0"
-authors = ["pfried <philipsfried@gmail.com>"]
+[workspace]
+members = [
+    "flo-client-cli",
+    "flo-client-lib",
+    "flo-event",
+    "flo-integration-test",
+    "flo-protocol",
+    "flo-server"
+]
 
-[dependencies]
-flo-event = { path = "./flo-event" }
-flo-protocol = { path = "./flo-protocol" }
-num_cpus = "^1.2"
-log = "0.3"
-log4rs = "0.4"
-clap = "2.5"
-nom = "2.0"
-byteorder = "0.5"
-tokio-core = "0.1.4"
-futures = "0.1.10"
-glob = "0.2"
-chrono = "^0.2"
-
-[dev-dependencies]
-tempdir = "*"
-env_logger = "*"
-url = "1.1"
-
-[[bin]]
-name = "flo"
-path = "src/main.rs"

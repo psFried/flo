@@ -6,7 +6,6 @@ use std::net::SocketAddr;
 
 use server::engine::api::{self, ClientMessage, ConnectionId};
 use protocol::{ProtocolMessage, ConsumerStart, MessageStream};
-use nom::IResult;
 
 pub struct ClientMessageStream<R: Read> {
     connection_id: ConnectionId,
@@ -74,7 +73,6 @@ mod test {
     use event::FloEventId;
     use server::engine::api::{ClientMessage, ConsumerManagerMessage, ProducerManagerMessage};
     use protocol::{ProtocolMessage, ProduceEvent};
-    use nom::{IResult, Needed, ErrorKind};
 
     fn address() -> SocketAddr {
         "127.0.0.1:3000".parse().unwrap()

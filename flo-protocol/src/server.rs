@@ -118,10 +118,10 @@ mod test {
     use super::*;
     use nom::IResult;
     use std::io::{Read, Cursor};
-    use event::{FloEventId, OwnedFloEvent};
+    use event::{time, FloEventId, OwnedFloEvent};
     use std::sync::Arc;
     use byteorder::{ByteOrder, BigEndian};
-    use protocol::{ProtocolMessage, MessageStream, ErrorMessage, ErrorKind, EventAck};
+    use ::{ProtocolMessage, MessageStream, ErrorMessage, ErrorKind, EventAck};
 
     fn assert_event_serializes_and_deserializes(event: OwnedFloEvent) {
         let mut buffer = [0; 1024];
@@ -167,7 +167,7 @@ mod test {
         let event_id = FloEventId::new(1, 6);
         let parent_id = Some(FloEventId::new(123, 456));
         //time needs to be from milliseconds, otherwise we lose precision
-        let event_ts = ::time::from_millis_since_epoch(1);
+        let event_ts = time::from_millis_since_epoch(1);
 
         let event = OwnedFloEvent{
             id: event_id,
@@ -182,7 +182,7 @@ mod test {
     #[test]
     fn event_is_written_in_one_pass() {
         let mut subject = ServerProtocolImpl::new(ServerMessage::Event(
-            Arc::new(OwnedFloEvent::new(FloEventId::new(12, 23), None, ::time::from_millis_since_epoch(2), "the namespace".to_owned(), vec![9; 64]))
+            Arc::new(OwnedFloEvent::new(FloEventId::new(12, 23), None, time::from_millis_since_epoch(2), "the namespace".to_owned(), vec![9; 64]))
         ));
 
         let mut buffer = [0; 256];
@@ -210,7 +210,7 @@ mod test {
     #[test]
     fn event_is_written_in_multiple_passes() {
         let timestamp_millis = 12345;
-        let timestamp = ::time::from_millis_since_epoch(timestamp_millis);
+        let timestamp = time::from_millis_since_epoch(timestamp_millis);
         let mut subject = ServerProtocolImpl::new(ServerMessage::Event(
             Arc::new(OwnedFloEvent::new(FloEventId::new(12, 23), None, timestamp, "the namespace".to_owned(), vec![9; 64]))
         ));

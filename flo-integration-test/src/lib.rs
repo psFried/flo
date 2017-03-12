@@ -1,7 +1,6 @@
 extern crate url;
 extern crate env_logger;
 extern crate tempdir;
-extern crate byteorder;
 extern crate flo_client_lib;
 
 use std::process::{Child, Command};
@@ -106,7 +105,7 @@ impl FloServerProcess {
         assert!(self.child_proc.is_none(), "tried to start server but it's already started");
 
         let mut flo_path = current_dir().unwrap();
-        flo_path.push("target/debug/flo");
+        flo_path.push("../target/debug/flo-server");
 
         println!("Starting flo server");
         let child = Command::new(flo_path)
