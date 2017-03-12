@@ -96,8 +96,7 @@ fn print_event(output: &Context, event: OwnedFloEvent) {
     } else {
         String::new()
     };
-    output.normal(format!("EventId: {}{}", event.id, parent));
-    output.normal(format!("Namespace: {}", event.namespace));
+    output.normal(format!("EventId: {}{}\nNamespace: {}\nTimestamp: {}", event.id, parent, event.namespace, event.timestamp));
     output.normal(String::from_utf8_lossy(&event.data));
 }
 
