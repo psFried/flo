@@ -431,7 +431,7 @@ mod test {
     fn event(actor: ActorId, counter: EventCounter) -> OwnedFloEvent {
         OwnedFloEvent {
             id: FloEventId::new(actor, counter),
-            timestamp: ::time::now(),
+            timestamp: ::event::time::now(),
             parent_id: None,
             namespace: "/green/onions".to_owned(),
             data: vec![1, 2, 3, 4, 5],

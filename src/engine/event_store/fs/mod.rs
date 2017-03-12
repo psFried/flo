@@ -61,13 +61,13 @@ mod test {
     use super::*;
     use engine::event_store::{EventReader, EventWriter, StorageEngineOptions};
     use engine::event_store::index::EventIndex;
-    use event::{FloEventId, OwnedFloEvent, Timestamp};
+    use event::{time, FloEventId, OwnedFloEvent, Timestamp};
     use std::io::Cursor;
 
     use tempdir::TempDir;
 
     fn event_time() -> Timestamp {
-        ::time::from_millis_since_epoch(12345)
+        time::from_millis_since_epoch(12345)
     }
 
     #[test]

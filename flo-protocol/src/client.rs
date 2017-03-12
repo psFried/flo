@@ -11,7 +11,7 @@
 //! All numbers use big endian byte order.
 //! All Strings are newline terminated.
 use nom::{be_u64, be_u32, be_u16, IResult};
-use event::{OwnedFloEvent, FloEventId, ActorId, Timestamp};
+use event::{time, OwnedFloEvent, FloEventId, ActorId, Timestamp};
 use serializer::Serializer;
 use std::net::SocketAddr;
 use std::io::{self, Read};
@@ -289,7 +289,7 @@ named!{pub parse_new_producer_event<ProtocolMessage>,
 }
 
 named!{parse_timestamp<Timestamp>,
-    map!(be_u64, ::time::from_millis_since_epoch)
+    map!(be_u64, time::from_millis_since_epoch)
 }
 
 named!{parse_receive_event_header<ProtocolMessage>,

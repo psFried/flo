@@ -4,7 +4,7 @@ use std::net::{TcpStream, ToSocketAddrs};
 
 use nom::IResult;
 
-use protocol::{ProtocolMessage, MessageStream};
+use protocol::{ProtocolMessage, MessageStream, MessageWriter};
 
 const BUFFER_LENGTH: usize = 8 * 1024;
 
@@ -38,7 +38,7 @@ impl SyncStream {
 impl <T: IoStream> ClientStream<T> {
 
     pub fn write(&mut self, message: &mut ProtocolMessage) -> io::Result<()> {
-        let mut writer = ::protocol::MessageWriter::new(message);
+        let mut writer = MessageWriter::new(message);
         self.io.write(&mut writer)
     }
 

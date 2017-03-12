@@ -1,5 +1,6 @@
 
 extern crate flo_event as event;
+extern crate flo_protocol as protocol;
 
 #[macro_use]
 extern crate nom;
@@ -25,10 +26,8 @@ extern crate env_logger;
 extern crate tempdir;
 
 pub mod client;
-pub mod protocol;
-pub mod time;
-pub mod serializer;
 
+pub use protocol::{ErrorKind, ErrorMessage};
 pub use event::{FloEventId, FloEvent, OwnedFloEvent, ActorId, EventCounter, Timestamp};
 pub use client::sync::{SyncConnection, ConsumerAction, ConsumerContext, FloConsumer};
 pub use client::{ConsumerOptions, ClientError};

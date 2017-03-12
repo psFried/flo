@@ -1,7 +1,7 @@
-use event::{FloEvent, OwnedFloEvent};
+use event::{FloEvent, OwnedFloEvent, time};
 use std::io::{self, Read};
 
-use protocol::ProtocolMessage;
+use ::ProtocolMessage;
 use std::sync::Arc;
 
 #[derive(Debug, PartialEq)]
@@ -81,7 +81,7 @@ impl Read for ServerProtocolImpl {
                                 .write_u16(event.id.actor)
                                 .write_u64(event.parent_id.map(|id| id.event_counter).unwrap_or(0))
                                 .write_u16(event.parent_id.map(|id| id.actor).unwrap_or(0))
-                                .write_u64(::time::millis_since_epoch(event.timestamp))
+                                .write_u64(time::millis_since_epoch(event.timestamp))
                                 .newline_term_string(&event.namespace)
                                 .write_u32(event.data.len() as u32)
                                 .finish();

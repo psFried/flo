@@ -260,7 +260,7 @@ impl <S: EventWriter> ProducerManager<S> {
         let event_id = FloEventId::new(self.actor_id, self.highest_event_id + 1);
         let owned_event = OwnedFloEvent {
             id: event_id,
-            timestamp: ::time::now(),
+            timestamp: ::event::time::now(),
             namespace: namespace,
             parent_id: parent_id,
             data: data,
@@ -333,7 +333,7 @@ mod test {
         client_upgrades_to_peer(client_connection_id, peer_actor_id, peer_versions, subject_versions.clone(), &mut subject, &mut client_receiver, &mut consumer_manager);
         let event = OwnedFloEvent {
             id: FloEventId::new(peer_actor_id, 5),
-            timestamp: ::time::from_millis_since_epoch(4),
+            timestamp: ::event::time::from_millis_since_epoch(4),
             parent_id: None,
             namespace: "/deli/pickles".to_owned(),
             data: vec![9, 8, 7, 6, 5],

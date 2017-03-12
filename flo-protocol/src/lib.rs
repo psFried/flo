@@ -1,3 +1,13 @@
+#[macro_use]
+extern crate nom;
+
+#[macro_use]
+extern crate log;
+
+extern crate flo_event as event;
+extern crate byteorder;
+
+mod serializer;
 mod client;
 mod server;
 

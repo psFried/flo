@@ -37,6 +37,8 @@
 //!
 extern crate chrono;
 
+pub mod time;
+
 use std::cmp::{Ord, PartialOrd, Ordering};
 use std::fmt::{self, Display, Debug};
 use std::str::FromStr;

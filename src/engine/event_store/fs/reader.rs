@@ -187,7 +187,7 @@ impl EventHeader {
     }
 
     pub fn timestamp(&self) -> Timestamp {
-        ::time::from_millis_since_epoch(self.timestamp)
+        ::event::time::from_millis_since_epoch(self.timestamp)
     }
 }
 

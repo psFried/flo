@@ -3,6 +3,7 @@
 #![feature(btree_range)]
 
 extern crate flo_event as event;
+extern crate flo_protocol as protocol;
 extern crate clap;
 
 #[macro_use]
@@ -31,9 +32,6 @@ extern crate tempdir;
 mod logging;
 mod server;
 mod engine;
-mod time;
-mod protocol;
-mod serializer;
 mod channels;
 
 use event::ActorId;

@@ -1,6 +1,6 @@
 use chrono::{UTC, TimeZone};
 
-use event::Timestamp;
+use ::Timestamp;
 
 const NANOS_IN_MILLISECOND: u64 = 1_000_000u64;
 const MILLIS_IN_SECOND: u64 = 1_000;

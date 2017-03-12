@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use engine::event_store::{EventWriter, StorageEngineOptions};
 use engine::event_store::index::EventIndex;
 
-use event::{FloEvent, ActorId};
+use event::{FloEvent, ActorId, time};
 
 //Actor and file_path are here so we can re-open files later
 struct FileWriter {
@@ -128,7 +128,7 @@ pub fn write_event<W: Write, E: FloEvent>(writer: &mut W, event: &E) -> Result<u
     BigEndian::write_u16(&mut buffer[20..22], event.id().actor);
     BigEndian::write_u64(&mut buffer[22..30], parent_counter);
     BigEndian::write_u16(&mut buffer[30..32], parent_actor);
-    BigEndian::write_u64(&mut buffer[32..40], ::time::millis_since_epoch(event.timestamp()));
+    BigEndian::write_u64(&mut buffer[32..40], time::millis_since_epoch(event.timestamp()));
     BigEndian::write_u32(&mut buffer[40..44], event.namespace().len() as u32);
 
     writer.write(&buffer).and_then(|_| {

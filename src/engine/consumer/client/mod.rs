@@ -374,7 +374,7 @@ mod test {
     }
 
     fn event(actor: ActorId, counter: EventCounter, namespace: &str) -> Arc<OwnedFloEvent> {
-        Arc::new(OwnedFloEvent::new(FloEventId::new(actor, counter), None, ::time::now(), namespace.to_owned(), Vec::new()))
+        Arc::new(OwnedFloEvent::new(FloEventId::new(actor, counter), None, ::event::time::now(), namespace.to_owned(), Vec::new()))
     }
 
     fn subject() -> Client<MockSender<ServerMessage>> {
