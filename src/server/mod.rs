@@ -65,12 +65,14 @@ pub struct ServerOptions {
 }
 
 
-
-pub fn run(options: ServerOptions) {
-    let (join_handle, mut event_loop_handles) = self::event_loops::spawn_event_loop_threads(options.max_io_threads).unwrap();
+pub fn run(options: ServerOptions) -> io::Result<()> {
 
     let server_port = options.port;
     let address: SocketAddr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), server_port));
+
+    let listener = ::std::net::TcpListener::bind(address)?;
+
+    let (join_handle, mut event_loop_handles) = self::event_loops::spawn_event_loop_threads(options.max_io_threads).unwrap();
 
     let (cluster_tx, cluster_rx) = unbounded();
 
@@ -81,8 +83,10 @@ pub fn run(options: ServerOptions) {
         producer_manager: producer_manager.clone(),
         consumer_manager: consumer_manager.clone(),
     };
+
     client_loop_handles.next_handle().spawn(move |handle| {
-        let listener = TcpListener::bind(&address, &handle).unwrap();
+
+        let listener = TcpListener::from_listener(listener, &address, &handle).unwrap();
 
         info!("Started listening on port: {}", server_port);
 
@@ -116,5 +120,7 @@ pub fn run(options: ServerOptions) {
     });
 
     join_handle.join();
+
+    Ok(())
 }
 
