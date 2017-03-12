@@ -1,6 +1,8 @@
 language: rust
+env:
+  - RUST_BACKTRACE=1
 rust:
-  - nightly
+  - nightly-2017-03-04
 os:
   - linux
   - osx
