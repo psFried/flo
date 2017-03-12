@@ -105,7 +105,7 @@ impl FloServerProcess {
         assert!(self.child_proc.is_none(), "tried to start server but it's already started");
 
         let mut flo_path = current_dir().unwrap();
-        flo_path.push("../target/debug/flo-server");
+        flo_path.push("../target/debug/flo");
 
         println!("Starting flo server");
         let child = Command::new(flo_path)
