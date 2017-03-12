@@ -67,7 +67,7 @@ pub struct FloEventId {
 
 impl Display for FloEventId {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        write!(f, "{:020}{:05}", self.event_counter, self.actor)
+        write!(f, "{}.{}", self.event_counter, self.actor)
     }
 }
 
@@ -75,10 +75,19 @@ impl FromStr for FloEventId {
     type Err = &'static str;
 
     fn from_str(input: &str) -> Result<Self, Self::Err> {
-        let err_message = "FloEventId must be a 25 character string with all numeric digits";
-        let counter_portion = input[..20].parse::<EventCounter>().map_err(|_| err_message)?;
-        let actor_portion = input[20..].parse::<ActorId>().map_err(|_| err_message)?;
-        Ok(FloEventId::new(actor_portion, counter_portion))
+        let err_message = "FloEventId must be an event counter and actor id separated by a single '.'";
+
+        if let Some(dot_index) = input.find('.') {
+            println!("dot index: {}", dot_index);
+            let (counter, actor) = input.split_at(dot_index);
+            counter.parse::<EventCounter>().and_then(|c| {
+                (&actor[1..]).parse::<ActorId>().map(|a| {
+                    FloEventId::new(a, c)
+                })
+            }).map_err(|_| err_message)
+        } else {
+            Err(err_message)
+        }
     }
 }
 
@@ -90,16 +99,30 @@ mod event_id_test {
     fn flo_event_id_is_displayed_as_string() {
         let id = FloEventId::new(7, 12345);
         let result = format!("{}", id);
-        let expected = "0000000000000001234500007";
+        let expected = "12345.7";
         assert_eq!(expected, &result);
     }
 
     #[test]
-    fn flo_event_id_is_parsed_from_25_digit_string() {
-        let start = FloEventId::new(12345, 877655);
-        let as_str = format!("{}", start);
-        let result = as_str.parse::<FloEventId>().expect("failed to parse id");
-        assert_eq!(start, result);
+    fn from_str_returns_err_when_actor_id_is_missing() {
+        assert!(FloEventId::from_str("4.").is_err())
+    }
+
+    #[test]
+    fn from_str_returns_err_when_event_counter_is_missing() {
+        assert!(FloEventId::from_str(".4").is_err())
+    }
+
+    #[test]
+    fn from_str_returns_err_when_number_does_not_contain_dot() {
+        assert!(FloEventId::from_str("7654").is_err())
+    }
+
+    #[test]
+    fn flo_event_id_is_parsed_from_a_dot_separated_string() {
+        let input = "8.2";
+        let result = FloEventId::from_str(input).unwrap();
+        assert_eq!(FloEventId::new(2, 8), result);
     }
 }
 
