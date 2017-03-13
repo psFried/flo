@@ -8,8 +8,7 @@ pub mod test_util;
 use std::path::PathBuf;
 use std::io;
 
-use event::{FloEvent, OwnedFloEvent, FloEventId};
-use engine::version_vec::VersionVector;
+use event::{FloEvent, OwnedFloEvent, FloEventId, VersionVector};
 
 pub struct StorageEngineOptions {
     pub storage_dir: PathBuf,

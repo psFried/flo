@@ -8,8 +8,7 @@ pub use self::writer::FSEventWriter;
 pub use self::reader::{FSEventReader, FSEventIter};
 use super::{StorageEngine, StorageEngineOptions};
 use engine::event_store::index::{EventIndex};
-use engine::version_vec::VersionVector;
-use event::{FloEvent, ActorId};
+use event::{FloEvent, ActorId, VersionVector};
 
 use std::sync::{Arc, RwLock};
 use std::path::{PathBuf, Path};
