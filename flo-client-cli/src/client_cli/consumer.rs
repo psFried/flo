@@ -10,7 +10,7 @@ use flo_client_lib::{SyncConnection,
 };
 
 use std::fmt::{self, Display};
-use std::io::{self, Write};
+use std::io;
 
 pub struct CliConsumerOptions {
     pub host: String,

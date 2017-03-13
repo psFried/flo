@@ -1,5 +1,3 @@
-use std::net::SocketAddr;
-
 use flo_client_lib::{SyncConnection, FloEventId};
 use super::{Context, FloCliCommand};
 

@@ -11,7 +11,6 @@ use flo_client_lib::FloEventId;
 use clap::{App, Arg, ArgMatches, SubCommand, AppSettings};
 use client_cli::{Producer, ProduceOptions, Verbosity, Context, Critical, Consumer, CliConsumerOptions};
 
-use std::net::{SocketAddr, ToSocketAddrs, IpAddr};
 use std::str::FromStr;
 
 
@@ -149,7 +148,7 @@ fn main() {
 
 fn parse_opt_or_exit<T: FromStr>(arg_name: &'static str, args: &ArgMatches, context: &Context) -> Option<T> {
     args.value_of(arg_name).map(|value| {
-        value.parse::<T>().map_err(|err| {
+        value.parse::<T>().map_err(|_| {
             format!("Invalid argument: {}", arg_name)
         }).or_abort_process(&context)
     })

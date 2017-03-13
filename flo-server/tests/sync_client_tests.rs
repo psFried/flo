@@ -7,8 +7,14 @@ extern crate tempdir;
 mod test_utils;
 
 use test_utils::*;
-use flo_client_lib::client::sync::{SyncConnection, FloConsumer, ConsumerContext, ConsumerAction};
-use flo_client_lib::client::{ConsumerOptions, ClientError};
+use flo_client_lib::sync::{
+    SyncConnection,
+    FloConsumer,
+    ConsumerContext,
+    ConsumerAction,
+    ConsumerOptions,
+    ClientError
+};
 use flo_client_lib::{FloEventId, OwnedFloEvent, ErrorKind};
 use std::thread;
 use std::time::Duration;
