@@ -1,5 +1,3 @@
-pub mod error;
-
 mod producer;
 mod consumer;
 
@@ -38,7 +36,6 @@ pub enum Verbosity {
     Verbose,
     Normal,
     Error,
-    Silent,
 }
 
 impl Verbosity {
@@ -49,7 +46,6 @@ impl Verbosity {
             Verbose => 3,
             Normal => 2,
             Error => 1,
-            Silent => 0
         }
     }
 
@@ -88,7 +84,7 @@ impl Context {
     pub fn write_stdout<M: Display>(&self, message: M, verbosity: Verbosity) {
         if self.verbosity.is_greater_or_equal(verbosity) {
             let mut stdout = ::std::io::stdout();
-            write!(stdout, "{}", message);
+            write!(stdout, "{}", message).unwrap();
             stdout.flush().unwrap();
         }
     }
@@ -101,7 +97,7 @@ impl Context {
     pub fn write_stderr<M: Display>(&self, message: M, verbosity: Verbosity) {
         if self.verbosity.is_greater_or_equal(verbosity) {
             let mut stderr = ::std::io::stderr();
-            write!(stderr, "{}", message);
+            write!(stderr, "{}", message).unwrap();
             stderr.flush().unwrap();
         }
     }

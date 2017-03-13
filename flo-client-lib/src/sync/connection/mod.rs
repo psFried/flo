@@ -1,14 +1,42 @@
 mod client_stream;
+mod error;
 
 use std::io;
 use std::net::{TcpStream, ToSocketAddrs};
 
-use protocol::{ProtocolMessage, ProduceEvent, ConsumerStart};
+use protocol::{ProtocolMessage, ProduceEvent, ConsumerStart, ErrorMessage};
 use event::{FloEventId, OwnedFloEvent};
-use super::{ClientError, ConsumerOptions};
 use std::collections::VecDeque;
 
+pub use self::error::ClientError;
 pub use self::client_stream::{SyncStream, ClientStream, IoStream};
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct ConsumerOptions {
+    pub namespace: String,
+    pub start_position: Option<FloEventId>,
+    pub max_events: u64,
+    pub username: String,
+    pub password: String,
+}
+
+impl ConsumerOptions {
+    pub fn simple<S: ToString>(namespace: S, start_position: Option<FloEventId>, max_events: u64) -> ConsumerOptions {
+        ConsumerOptions {
+            namespace: namespace.to_string(),
+            start_position: start_position,
+            max_events: max_events,
+            username: String::new(),
+            password: String::new(),
+        }
+    }
+}
+
+pub trait ConsumerContext {
+    fn events_consumed(&self) -> u64;
+    fn current_event_id(&self) -> Option<FloEventId>;
+    fn respond<N: ToString, D: Into<Vec<u8>>>(&mut self, namespace: N, data: D) -> Result<FloEventId, ClientError>;
+}
 
 pub enum ConsumerAction {
     Continue,
@@ -25,31 +53,6 @@ impl <T, E> From<Result<T, E>> for ConsumerAction {
     }
 }
 
-pub trait ConsumerContext {
-    fn events_consumed(&self) -> u64;
-    fn current_event_id(&self) -> Option<FloEventId>;
-    fn respond<N: ToString, D: Into<Vec<u8>>>(&mut self, namespace: N, data: D) -> Result<FloEventId, ClientError>;
-}
-
-pub struct ConsumerContextImpl<'a, T: IoStream + 'a> {
-    pub events_consumed: u64,
-    current_event_id: Option<FloEventId>,
-    connection: &'a mut SyncConnection<T>
-}
-
-impl <'a, T: IoStream + 'a> ConsumerContext for ConsumerContextImpl<'a, T> {
-    fn events_consumed(&self) -> u64 {
-        self.events_consumed
-    }
-
-    fn current_event_id(&self) -> Option<FloEventId> {
-        self.current_event_id
-    }
-
-    fn respond<N: ToString, D: Into<Vec<u8>>>(&mut self, namespace: N, data: D) -> Result<FloEventId, ClientError> {
-        self.connection.produce_with_parent(self.current_event_id, namespace, data)
-    }
-}
 
 pub trait FloConsumer: Sized {
     fn name(&self) -> &str;
@@ -236,3 +239,24 @@ impl <S: IoStream> SyncConnection<S> {
     }
 
 }
+
+struct ConsumerContextImpl<'a, T: IoStream + 'a> {
+    pub events_consumed: u64,
+    current_event_id: Option<FloEventId>,
+    connection: &'a mut SyncConnection<T>
+}
+
+impl <'a, T: IoStream + 'a> ConsumerContext for ConsumerContextImpl<'a, T> {
+    fn events_consumed(&self) -> u64 {
+        self.events_consumed
+    }
+
+    fn current_event_id(&self) -> Option<FloEventId> {
+        self.current_event_id
+    }
+
+    fn respond<N: ToString, D: Into<Vec<u8>>>(&mut self, namespace: N, data: D) -> Result<FloEventId, ClientError> {
+        self.connection.produce_with_parent(self.current_event_id, namespace, data)
+    }
+}
+

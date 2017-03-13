@@ -1,8 +1,5 @@
-pub mod sync;
-
 use std::io;
-use protocol::{ProtocolMessage, ErrorMessage};
-use event::{FloEventId};
+use protocol::{ErrorMessage, ProtocolMessage};
 
 
 #[derive(Debug)]
@@ -41,28 +38,3 @@ impl From<ErrorMessage> for ClientError {
         ClientError::FloError(err)
     }
 }
-
-
-#[derive(Debug, PartialEq, Clone)]
-pub struct ConsumerOptions {
-    pub namespace: String,
-    pub start_position: Option<FloEventId>,
-    pub max_events: u64,
-    pub username: String,
-    pub password: String,
-}
-
-impl ConsumerOptions {
-    pub fn simple<S: ToString>(namespace: S, start_position: Option<FloEventId>, max_events: u64) -> ConsumerOptions {
-        ConsumerOptions {
-            namespace: namespace.to_string(),
-            start_position: start_position,
-            max_events: max_events,
-            username: String::new(),
-            password: String::new(),
-        }
-    }
-}
-
-
-
