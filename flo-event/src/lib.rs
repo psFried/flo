@@ -38,6 +38,9 @@
 extern crate chrono;
 
 pub mod time;
+mod version_vec;
+
+pub use version_vec::VersionVector;
 
 use std::cmp::{Ord, PartialOrd, Ordering};
 use std::fmt::{self, Display, Debug};

@@ -4,9 +4,8 @@ mod cache;
 pub use self::client::{ClientImpl, NamespaceGlob};
 
 use engine::api::{ConnectionId, ClientConnect, ConsumerManagerMessage, ReceivedMessage};
-use engine::version_vec::VersionVector;
 use protocol::{ProtocolMessage, ErrorMessage, ErrorKind, ConsumerStart};
-use event::{FloEvent, OwnedFloEvent, FloEventId, ActorId};
+use event::{FloEvent, OwnedFloEvent, FloEventId, ActorId, VersionVector};
 use std::sync::{Arc, mpsc};
 use std::thread;
 use std::collections::HashMap;

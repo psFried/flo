@@ -1,6 +1,5 @@
-use event::{FloEventId, ActorId};
+use event::{FloEventId, ActorId, VersionVector};
 
-use engine::version_vec::VersionVector;
 use std::collections::{BTreeMap, Bound};
 
 #[derive(PartialEq, Debug, Clone)]

@@ -5,8 +5,7 @@ use self::cluster::ClusterState;
 use self::client_map::ClientMap;
 use engine::api::{ClientConnect, ConnectionId, ProducerManagerMessage, ConsumerManagerMessage, ReceivedMessage};
 use engine::event_store::EventWriter;
-use engine::version_vec::VersionVector;
-use event::{ActorId, OwnedFloEvent, EventCounter, FloEventId};
+use event::{ActorId, OwnedFloEvent, EventCounter, FloEventId, VersionVector};
 use protocol::{ProtocolMessage, EventAck, ProduceEvent, ClusterMember};
 
 use std::sync::mpsc::Sender;
@@ -260,9 +259,8 @@ mod test {
     use super::*;
     use engine::api::*;
     use protocol::{self, ServerMessage};
-    use event::{FloEvent, OwnedFloEvent, ActorId};
+    use event::{FloEvent, OwnedFloEvent, ActorId, VersionVector};
     use engine::event_store::EventWriter;
-    use engine::version_vec::VersionVector;
 
     use std::sync::mpsc::{channel, Receiver};
     use std::time::Duration;

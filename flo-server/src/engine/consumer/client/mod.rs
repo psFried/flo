@@ -2,11 +2,10 @@ mod namespace;
 
 pub use self::namespace::NamespaceGlob;
 
-use event::{FloEvent, FloEventId, ActorId, OwnedFloEvent};
+use event::{FloEvent, FloEventId, ActorId, OwnedFloEvent, VersionVector};
 use engine::api::{ConnectionId, ClientConnect};
 use protocol::{ServerMessage, ProtocolMessage};
 use channels::Sender;
-use engine::version_vec::VersionVector;
 
 use futures::sync::mpsc::UnboundedSender;
 
@@ -192,8 +191,7 @@ impl <T: Sender<ServerMessage>> Client<T> {
 mod test {
     use super::*;
     use super::namespace::NamespaceGlob;
-    use engine::version_vec::VersionVector;
-    use event::{OwnedFloEvent, ActorId, EventCounter, FloEventId};
+    use event::{OwnedFloEvent, ActorId, EventCounter, FloEventId, VersionVector};
     use channels::MockSender;
     use std::sync::Arc;
 
