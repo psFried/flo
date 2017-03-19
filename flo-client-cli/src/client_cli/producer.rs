@@ -1,4 +1,6 @@
-use flo_client_lib::{SyncConnection, FloEventId};
+use flo_client_lib::sync::connection::SyncConnection;
+use flo_client_lib::codec::RawCodec;
+use flo_client_lib::FloEventId;
 use super::{Context, FloCliCommand};
 
 pub struct ProduceOptions {
@@ -19,7 +21,7 @@ impl FloCliCommand for Producer {
     fn run(ProduceOptions{host, port, namespace, event_data, parent_id}: ProduceOptions, output: &Context) -> Result<(), Self::Error> {
         let server_address = format!("{}:{}", host, port);
         output.verbose(format!("Attempting connection to: {:?}", &server_address));
-        SyncConnection::connect(&server_address).map_err(|io_err| {
+        SyncConnection::connect(&server_address, RawCodec).map_err(|io_err| {
             format!("Error establishing connection to flo server: {}", io_err)
         }).and_then(|mut client| {
             output.verbose(format!("connected to {}", &server_address));

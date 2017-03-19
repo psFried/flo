@@ -9,7 +9,7 @@ mod client_cli;
 
 use flo_client_lib::FloEventId;
 use clap::{App, Arg, ArgMatches, SubCommand, AppSettings};
-use client_cli::{Producer, ProduceOptions, Verbosity, Context, Critical, Consumer, CliConsumerOptions};
+use client_cli::{Producer, ProduceOptions, Verbosity, Context, Critical, CliConsumer, CliConsumerOptions};
 
 use std::str::FromStr;
 
@@ -137,7 +137,7 @@ fn main() {
                 await: await,
             };
 
-            ::client_cli::run::<Consumer>(consume_opts, context);
+            ::client_cli::run::<CliConsumer>(consume_opts, context);
         }
         (command, _) => {
             context.abort_process(format!("unknown command: '{}'", command));

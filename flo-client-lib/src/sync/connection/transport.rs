@@ -3,6 +3,7 @@ use std::time::Duration;
 use std::net::{TcpStream, ToSocketAddrs};
 
 use protocol::{ProtocolMessage, MessageStream, MessageWriter};
+use sync::Transport;
 
 const BUFFER_LENGTH: usize = 8 * 1024;
 
@@ -33,14 +34,21 @@ impl SyncStream {
     }
 }
 
-impl <T: IoStream> ClientStream<T> {
+impl <T: IoStream> Transport for ClientStream<T> {
+    fn is_connected(&self) -> bool {
+        unimplemented!()
+    }
 
-    pub fn write(&mut self, message: &mut ProtocolMessage) -> io::Result<()> {
-        let mut writer = MessageWriter::new(message);
+    fn reconnect(&mut self) -> io::Result<()> {
+        unimplemented!()
+    }
+
+    fn send(&mut self, mut message: ProtocolMessage) -> io::Result<()> {
+        let mut writer = MessageWriter::new(&mut message);
         self.io.write(&mut writer)
     }
 
-    pub fn read(&mut self) -> io::Result<ProtocolMessage> {
+    fn receive(&mut self) -> io::Result<ProtocolMessage> {
         self.io.read_next()
     }
 }

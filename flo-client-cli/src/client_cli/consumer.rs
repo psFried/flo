@@ -1,13 +1,13 @@
-use super::{FloCliCommand, Context, Verbosity};
-use flo_client_lib::{SyncConnection,
-    FloConsumer,
-    ConsumerOptions,
-    ConsumerContext,
+use super::{FloCliCommand, Context as CliContext, Verbosity};
+use flo_client_lib::sync::{
+    Consumer,
+    Context,
     ConsumerAction,
     ClientError,
-    FloEventId,
-    OwnedFloEvent,
 };
+use flo_client_lib::codec::LossyStringCodec;
+use flo_client_lib::sync::connection::{SyncConnection, ConsumerOptions};
+use flo_client_lib::{Event, FloEventId, VersionVector, Timestamp};
 
 use std::fmt::{self, Display};
 use std::io;
@@ -21,22 +21,34 @@ pub struct CliConsumerOptions {
     pub await: bool,
 }
 
+impl CliConsumerOptions {
+    fn get_version_vector(&self) -> VersionVector {
+        //TODO: allow multiple arguments for start_position so we can pass a real version vector
+        let mut vv = VersionVector::new();
+        if let Some(id) = self.start_position {
+            vv.update(id);
+        }
+        vv
+    }
+}
 
-pub struct Consumer;
 
-impl FloCliCommand for Consumer {
+pub struct CliConsumer;
+
+impl FloCliCommand for CliConsumer {
     type Input = CliConsumerOptions;
     type Error = ConsumerError;
 
-    fn run(input: Self::Input, output: &Context) -> Result<(), Self::Error> {
-        let CliConsumerOptions { host, port, namespace, start_position, limit, await } = input;
+    fn run(input: Self::Input, output: &CliContext) -> Result<(), Self::Error> {
+        let version_vector = input.get_version_vector();
+        let CliConsumerOptions { host, port, namespace, limit, await, .. } = input;
 
-        let consumer_opts = ConsumerOptions::simple(namespace, start_position, limit.unwrap_or(::std::u64::MAX));
+        let consumer_opts = ConsumerOptions::simple(namespace, version_vector, limit.unwrap_or(::std::u64::MAX));
 
         let address = format!("{}:{}", host, port);
 
         output.verbose(format!("Connecting to: {}", &address));
-        SyncConnection::connect(&address).map_err(|io_err| io_err.into())
+        SyncConnection::connect(&address, LossyStringCodec).map_err(|io_err| io_err.into())
                 .and_then(|mut connection| {
                     let mut consumer = PrintingConsumer{
                         context: &output,
@@ -58,46 +70,47 @@ impl FloCliCommand for Consumer {
 }
 
 struct PrintingConsumer<'a>{
-    context: &'a Context,
+    context: &'a CliContext,
     await: bool,
 }
 
-impl <'a> FloConsumer for PrintingConsumer<'a> {
+impl <'a> Consumer<String> for PrintingConsumer<'a> {
     fn name(&self) -> &str {
         "FloCliConsumer"
     }
 
-    fn on_event<C: ConsumerContext>(&mut self, event: Result<OwnedFloEvent, &ClientError>, _context: &mut C) -> ConsumerAction {
-        match event {
-            Ok(event) => {
-                print_event(&self.context, event);
-                ConsumerAction::Continue
-            }
-            Err(ref error) if (error.is_timeout() || error.is_end_of_stream()) && self.await => {
-                self.context.write_stdout('.', Verbosity::Verbose);
-                ConsumerAction::Continue
-            }
-            Err(ref error) if error.is_timeout() => {
-                ConsumerAction::Stop
-            }
-            Err(ref error) => {
-                self.context.debug(format!("Got error: {:?}", error));
-                ConsumerAction::Stop
-            }
+    fn on_event<C: Context<String>>(&mut self, event: Event<String>, _context: &mut C) -> ConsumerAction {
+        print_event(&self.context, event);
+        ConsumerAction::Continue
+    }
+
+    fn on_error(&mut self, error: &ClientError) -> ConsumerAction {
+        if self.await && (error.is_timeout() || error.is_end_of_stream()) {
+            self.context.write_stdout('.', Verbosity::Verbose);
+            ConsumerAction::Continue
+        } else if error.is_timeout() {
+            ConsumerAction::Stop
+        } else {
+            self.context.debug(format!("Got error: {:?}", error));
+            ConsumerAction::Stop
         }
     }
 }
 
 //TODO: come up with better ways to format the output. Maybe have a few different output options
-fn print_event(output: &Context, event: OwnedFloEvent) {
+fn print_event(output: &CliContext, event: Event<String>) {
     output.normal(""); //put a newline before the event to separate them
     let parent = if let Some(id) = event.parent_id {
         format!(", Parent: {}", id)
     } else {
         String::new()
     };
-    output.normal(format!("EventId: {}{}\nNamespace: {}\nTimestamp: {}", event.id, parent, event.namespace, event.timestamp));
-    output.normal(String::from_utf8_lossy(&event.data));
+    output.normal(format!("EventId: {}{}\nNamespace: {}\nTimestamp: {}\nBody: {}",
+                          event.id,
+                          parent,
+                          event.namespace,
+                          event.timestamp,
+                          event.data));
 }
 
 pub struct ConsumerError(ClientError);
@@ -110,14 +123,14 @@ impl From<ClientError> for ConsumerError {
 
 impl From<io::Error> for ConsumerError {
     fn from(io_err: io::Error) -> Self {
-        ConsumerError(ClientError::from(io_err))
+        ConsumerError(ClientError::Transport(io_err))
     }
 }
 
 impl Display for ConsumerError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self.0 {
-            ClientError::Io(ref io_err) => {
+            ClientError::Transport(ref io_err) => {
                 write!(f, "I/O Error: {:?} - {}", io_err.kind(), io_err)
             }
             ClientError::FloError(ref err_message) => {
@@ -128,6 +141,10 @@ impl Display for ConsumerError {
             }
             ClientError::EndOfStream => {
                 write!(f, "End of Stream")
+            }
+            ClientError::Codec(_) => {
+                // this is not reachable since we are using the LossyStringCodec, which cannot return an error
+                unreachable!()
             }
         }
     }
