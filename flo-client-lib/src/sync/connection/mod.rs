@@ -4,6 +4,7 @@ mod options;
 use std::net::{ToSocketAddrs, TcpStream};
 use std::collections::VecDeque;
 use std::io;
+use std::marker::PhantomData;
 
 use codec::EventCodec;
 use event::{FloEventId, OwnedFloEvent};
@@ -21,43 +22,45 @@ pub use self::options::ConsumerOptions;
 pub use self::transport::SyncStream;
 
 /// Convenience type to export for basic consumers to simplify generic type signatures
-pub type Connection<T> = SyncConnection<SyncStream, T>;
+pub type Connection<B, C> = SyncConnection<SyncStream, B, C>;
 
-pub struct SyncConnection<T: Transport + 'static, C: EventCodec + 'static> {
+pub struct SyncConnection<T: Transport + 'static, B: 'static, C: EventCodec<B> + 'static> {
     transport: T,
     codec: C,
     message_buffer: VecDeque<ProtocolMessage>,
     op_id: u32,
+    _phantom_data: PhantomData<B>,
 }
 
-impl <C: EventCodec> SyncConnection<SyncStream, C> {
-    pub fn connect<T: ToSocketAddrs>(addr: T, codec: C) -> io::Result<SyncConnection<SyncStream, C>> {
+impl <B: 'static, C: EventCodec<B>> SyncConnection<SyncStream, B, C> {
+    pub fn connect<T: ToSocketAddrs>(addr: T, codec: C) -> io::Result<SyncConnection<SyncStream, B, C>> {
         SyncStream::connect(addr).map(|stream| {
             SyncConnection::new(stream, codec)
         })
     }
 
-    pub fn from_tcp_stream(stream: TcpStream, codec: C) -> SyncConnection<SyncStream, C>  {
+    pub fn from_tcp_stream(stream: TcpStream, codec: C) -> SyncConnection<SyncStream, B, C>  {
         SyncConnection::new(SyncStream::from_stream(stream), codec)
     }
 }
 
-impl <T: Transport, C: EventCodec> SyncConnection<T, C> {
+impl <T: Transport, B, C: EventCodec<B>> SyncConnection<T, B, C> {
 
-    pub fn new(transport: T, codec: C) -> SyncConnection<T, C> {
+    pub fn new(transport: T, codec: C) -> SyncConnection<T, B, C> {
         SyncConnection {
             transport: transport,
             codec: codec,
             op_id: 1,
             message_buffer: VecDeque::new(),
+            _phantom_data: PhantomData,
         }
     }
 
-    pub fn produce<N: ToString, D: Into<C::Body>>(&mut self, namespace: N, data: D) -> Result<FloEventId, ClientError> {
+    pub fn produce<N: ToString, D: Into<B>>(&mut self, namespace: N, data: D) -> Result<FloEventId, ClientError> {
         self.produce_with_parent(None, namespace, data)
     }
 
-    pub fn produce_with_parent<N: ToString, D: Into<C::Body>>(&mut self, parent_id: Option<FloEventId>, namespace: N, data: D) -> Result<FloEventId, ClientError> {
+    pub fn produce_with_parent<N: ToString, D: Into<B>>(&mut self, parent_id: Option<FloEventId>, namespace: N, data: D) -> Result<FloEventId, ClientError> {
         self.op_id += 1;
 
         let namespace_string = namespace.to_string();
@@ -111,7 +114,7 @@ impl <T: Transport, C: EventCodec> SyncConnection<T, C> {
     }
 
     pub fn run_consumer<Con>(&mut self, options: ConsumerOptions, consumer: &mut Con) -> Result<(), ClientError>
-        where Con: Consumer<C::Body> {
+        where Con: Consumer<B> {
         let ConsumerOptions{namespace, version_vector, max_events} = options;
 
         for id in version_vector.snapshot() {
@@ -172,7 +175,7 @@ impl <T: Transport, C: EventCodec> SyncConnection<T, C> {
         }).unwrap_or(Ok(()))
     }
 
-    fn read_event(&mut self) -> Result<Event<C::Body>, ClientError> {
+    fn read_event(&mut self) -> Result<Event<B>, ClientError> {
         match self.read_next_message() {
             Ok(ProtocolMessage::ReceiveEvent(event)) => self.convert_event(event),
             Ok(ProtocolMessage::Error(err)) => Err(ClientError::FloError(err)),
@@ -182,7 +185,7 @@ impl <T: Transport, C: EventCodec> SyncConnection<T, C> {
         }
     }
 
-    fn convert_event(&self, event: OwnedFloEvent) -> Result<Event<C::Body>, ClientError> {
+    fn convert_event(&self, event: OwnedFloEvent) -> Result<Event<B>, ClientError> {
         let OwnedFloEvent{id, parent_id, namespace, timestamp, data} = event;
         self.codec.convert_received(&namespace, data).map(|converted| {
             Event{
@@ -212,18 +215,18 @@ impl <T: Transport, C: EventCodec> SyncConnection<T, C> {
 
 }
 
-struct ConsumerContextImpl<'a, T: Transport + 'static, C: EventCodec + 'static> {
+struct ConsumerContextImpl<'a, T: Transport + 'static, B: 'static, C: EventCodec<B> + 'static> {
     pub events_consumed: u64,
     current_event_id: FloEventId,
-    connection: &'a mut SyncConnection<T, C>
+    connection: &'a mut SyncConnection<T, B, C>
 }
 
-impl <'a, T: Transport, C: EventCodec> Context<C::Body> for ConsumerContextImpl<'a, T, C> {
+impl <'a, T: Transport, B: 'static, C: EventCodec<B>> Context<B> for ConsumerContextImpl<'a, T, B, C> {
     fn current_event_id(&self) -> FloEventId {
         self.current_event_id
     }
 
-    fn respond<N: ToString, D: Into<C::Body>>(&mut self, namespace: N, data: D) -> Result<FloEventId, ClientError> {
+    fn respond<N: ToString, D: Into<B>>(&mut self, namespace: N, data: D) -> Result<FloEventId, ClientError> {
         self.connection.produce_with_parent(Some(self.current_event_id), namespace, data)
     }
 }
