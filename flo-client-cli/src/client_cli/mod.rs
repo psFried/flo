@@ -2,7 +2,7 @@ mod producer;
 mod consumer;
 
 pub use self::producer::{Producer, ProduceOptions};
-pub use self::consumer::{CliConsumerOptions, Consumer};
+pub use self::consumer::{CliConsumerOptions, CliConsumer};
 
 use std::io::Write;
 use std::fmt::Display;

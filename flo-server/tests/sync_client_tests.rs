@@ -7,10 +7,10 @@ extern crate tempdir;
 mod test_utils;
 
 use test_utils::*;
-use flo_client_lib::sync::{
+use flo_client_lib::sync::basic::{
     SyncConnection,
-    FloConsumer,
-    ConsumerContext,
+    Consumer,
+    Context,
     ConsumerAction,
     ConsumerOptions,
     ClientError
@@ -19,8 +19,6 @@ use flo_client_lib::{FloEventId, OwnedFloEvent, ErrorKind};
 use std::thread;
 use std::time::Duration;
 use std::net::{TcpStream, SocketAddr, SocketAddrV4, Ipv4Addr};
-
-
 
 fn localhost(port: u16) -> SocketAddrV4 {
     SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), port)
@@ -40,12 +38,12 @@ impl TestConsumer {
     }
 }
 
-impl FloConsumer for TestConsumer {
+impl Consumer for TestConsumer {
     fn name(&self) -> &str {
         &self.name
     }
 
-    fn on_event<C: ConsumerContext>(&mut self, event_result: Result<OwnedFloEvent, &ClientError>, _context: &mut C) -> ConsumerAction {
+    fn on_event<C: Context>(&mut self, event_result: Result<OwnedFloEvent, &ClientError>, _context: &mut C) -> ConsumerAction {
         match event_result {
             Ok(event) => {
                 println!("Consumer {} received event: {:?}", &self.name, event);
@@ -98,11 +96,11 @@ integration_test!{consumer_responds_to_event, port, _tcp_stream, {
     let mut client = SyncConnection::connect(localhost(port)).expect("failed to create producer");
 
     struct RespondingConsumer;
-    impl FloConsumer for RespondingConsumer {
+    impl Consumer for RespondingConsumer {
         fn name(&self) -> &str {
             "consumer responds to event"
         }
-        fn on_event<C: ConsumerContext>(&mut self, event_result: Result<OwnedFloEvent, &ClientError>, context: &mut C) -> ConsumerAction {
+        fn on_event<C: Context>(&mut self, event_result: Result<OwnedFloEvent, &ClientError>, context: &mut C) -> ConsumerAction {
             println!("respondingConsumer got event: {:?}", event_result);
             if let Ok(event) = event_result {
                 let result = context.respond("/responses", event.data);

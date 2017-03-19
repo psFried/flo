@@ -1,129 +1,94 @@
-mod client_stream;
-mod error;
+mod transport;
+mod options;
 
-use std::io;
-use std::net::{TcpStream, ToSocketAddrs};
-
-use protocol::{ProtocolMessage, ProduceEvent, ConsumerStart, ErrorMessage};
-use event::{FloEventId, OwnedFloEvent};
+use std::net::ToSocketAddrs;
 use std::collections::VecDeque;
+use std::io;
 
-pub use self::error::ClientError;
-pub use self::client_stream::{SyncStream, ClientStream, IoStream};
+use codec::EventCodec;
+use event::{FloEventId, OwnedFloEvent};
+use protocol::{ProtocolMessage, ErrorMessage, ProduceEvent, ConsumerStart};
+use sync::{
+    ClientError,
+    Consumer,
+    Context,
+    Transport,
+    ConsumerAction,
+};
+use ::Event;
 
-#[derive(Debug, PartialEq, Clone)]
-pub struct ConsumerOptions {
-    pub namespace: String,
-    pub start_position: Option<FloEventId>,
-    pub max_events: u64,
-    pub username: String,
-    pub password: String,
-}
+pub use self::options::ConsumerOptions;
+pub use self::transport::SyncStream;
 
-impl ConsumerOptions {
-    pub fn simple<S: ToString>(namespace: S, start_position: Option<FloEventId>, max_events: u64) -> ConsumerOptions {
-        ConsumerOptions {
-            namespace: namespace.to_string(),
-            start_position: start_position,
-            max_events: max_events,
-            username: String::new(),
-            password: String::new(),
-        }
-    }
-}
+/// Convenience type to export for basic consumers to simplify generic type signatures
+pub type Connection<T> = SyncConnection<SyncStream, T>;
 
-pub trait ConsumerContext {
-    fn events_consumed(&self) -> u64;
-    fn current_event_id(&self) -> Option<FloEventId>;
-    fn respond<N: ToString, D: Into<Vec<u8>>>(&mut self, namespace: N, data: D) -> Result<FloEventId, ClientError>;
-}
-
-pub enum ConsumerAction {
-    Continue,
-    Stop,
-}
-
-impl <T, E> From<Result<T, E>> for ConsumerAction {
-    fn from(result: Result<T, E>) -> Self {
-        if result.is_ok() {
-            ConsumerAction::Continue
-        } else {
-            ConsumerAction::Stop
-        }
-    }
-}
-
-
-pub trait FloConsumer: Sized {
-    fn name(&self) -> &str;
-    fn on_event<C: ConsumerContext>(&mut self, event: Result<OwnedFloEvent, &ClientError>, context: &mut C) -> ConsumerAction;
-}
-
-pub struct SyncConnection<S: IoStream> {
-    stream: ClientStream<S>,
+pub struct SyncConnection<T: Transport + 'static, C: EventCodec + 'static> {
+    transport: T,
+    codec: C,
     message_buffer: VecDeque<ProtocolMessage>,
     op_id: u32,
 }
 
-impl SyncConnection<TcpStream> {
-    pub fn connect<T: ToSocketAddrs>(addr: T) -> io::Result<SyncConnection<TcpStream>> {
+impl <C: EventCodec> SyncConnection<SyncStream, C> {
+    pub fn connect<T: ToSocketAddrs>(addr: T, codec: C) -> io::Result<SyncConnection<SyncStream, C>> {
         SyncStream::connect(addr).map(|stream| {
-            SyncConnection {
-                stream: stream,
-                message_buffer: VecDeque::new(),
-                op_id: 0,
-            }
+            SyncConnection::new(stream, codec)
         })
-    }
-
-    pub fn from_tcp_stream(tcp_stream: TcpStream) -> SyncConnection<TcpStream> {
-        SyncConnection {
-            stream: SyncStream::from_stream(tcp_stream),
-            op_id: 1,
-            message_buffer: VecDeque::new(),
-        }
     }
 }
 
-impl <S: IoStream> SyncConnection<S> {
+impl <T: Transport, C: EventCodec> SyncConnection<T, C> {
 
-    pub fn new(stream: ClientStream<S>) -> SyncConnection<S> {
+    pub fn new(transport: T, codec: C) -> SyncConnection<T, C> {
         SyncConnection {
-            stream: stream,
+            transport: transport,
+            codec: codec,
             op_id: 1,
             message_buffer: VecDeque::new(),
         }
     }
 
-    pub fn produce<N: ToString, D: Into<Vec<u8>>>(&mut self, namespace: N, data: D) -> Result<FloEventId, ClientError> {
+    pub fn produce<N: ToString, D: Into<C::Body>>(&mut self, namespace: N, data: D) -> Result<FloEventId, ClientError> {
         self.produce_with_parent(None, namespace, data)
     }
 
-    pub fn produce_with_parent<N: ToString, D: Into<Vec<u8>>>(&mut self, parent_id: Option<FloEventId>, namespace: N, data: D) -> Result<FloEventId, ClientError> {
+    pub fn produce_with_parent<N: ToString, D: Into<C::Body>>(&mut self, parent_id: Option<FloEventId>, namespace: N, data: D) -> Result<FloEventId, ClientError> {
         self.op_id += 1;
-        let mut send_msg = ProtocolMessage::ProduceEvent(ProduceEvent {
-            namespace: namespace.to_string(),
-            parent_id: parent_id,
-            op_id: self.op_id,
-            data: data.into()  //TODO: Make protocolMessage enum generic so the message can just hold a slice
-        });
 
-        self.stream.write(&mut send_msg).map_err(|e| e.into()).and_then(|()| {
-            self.read_event_ack()
+        let namespace_string = namespace.to_string();
+
+        self.codec.convert_produced(&namespace_string, data.into()).map_err(|codec_error| {
+            ClientError::Codec(Box::new(codec_error))
+        }).and_then(move |binary_data| {
+            let mut send_msg = ProtocolMessage::ProduceEvent(ProduceEvent {
+                namespace: namespace_string,
+                parent_id: parent_id,
+                op_id: self.op_id,
+                data: binary_data  //TODO: Make protocolMessage enum generic so the message can just hold a slice
+            });
+
+            self.send_message(send_msg).and_then(|()| {
+                self.read_event_ack()
+            })
         })
+    }
+
+    fn send_message(&mut self, message: ProtocolMessage) -> Result<(), ClientError> {
+        self.transport.send(message).map_err(|err| ClientError::Transport(err))
     }
 
     fn read_next_message(&mut self) -> Result<ProtocolMessage, ClientError> {
         self.message_buffer.pop_front().map(|message| {
             Ok(message)
         }).unwrap_or_else(|| {
-            self.stream.read().map_err(|io_err| io_err.into())
+            self.transport.receive().map_err(|io_err| ClientError::Transport(io_err))
         })
     }
 
     fn read_event_ack(&mut self) -> Result<FloEventId, ClientError> {
         loop {
-            match self.stream.read() {
+            match self.transport.receive() {
                 Ok(ProtocolMessage::AckEvent(ref ack)) if ack.op_id == self.op_id => {
                     return Ok(ack.event_id);
                 }
@@ -135,52 +100,53 @@ impl <S: IoStream> SyncConnection<S> {
                     self.message_buffer.push_back(other);
                 }
                 Err(io_err) => {
-                    return Err(io_err.into());
+                    return Err(ClientError::Transport(io_err));
                 }
             }
         }
     }
 
-    pub fn run_consumer<C: FloConsumer>(&mut self, options: ConsumerOptions, consumer: &mut C) -> Result<(), ClientError> {
-        let ConsumerOptions{namespace, start_position, username, password, max_events} = options;
+    pub fn run_consumer<Con>(&mut self, options: ConsumerOptions, consumer: &mut Con) -> Result<(), ClientError>
+        where Con: Consumer<C::Body> {
+        let ConsumerOptions{namespace, version_vector, max_events} = options;
 
-        self.authenticate(namespace.clone(), username, password)?;
-        if let Some(id) = start_position {
+        for id in version_vector.snapshot() {
             self.send_event_marker(id)?;
         }
         self.start_consuming(namespace, max_events)?;
 
         let mut error: Option<ClientError> = None;
         let mut events_consumed = 0;
+        let mut event_id = FloEventId::zero();
 
         while events_consumed < max_events {
 
             let consumer_action = {
                 let read_result = self.read_event();
 
-                if read_result.is_ok() {
+                if let &Ok(ref event) = &read_result {
                     events_consumed += 1;
+                    event_id = event.id;
                 }
 
-                let mut context = ConsumerContextImpl {
-                    current_event_id: None,
-                    events_consumed: events_consumed,
-                    connection: self,
-                };
-
-                let for_consumer = match read_result {
+                match read_result {
                     Ok(event) => {
-                        trace!("Client '{}' received event: {:?}", consumer.name(), event.id);
-                        context.current_event_id = Some(event.id);
-                        Ok(event)
+                        let mut context = ConsumerContextImpl {
+                            current_event_id: event_id,
+                            events_consumed: events_consumed,
+                            connection: self,
+                        };
+                        trace!("Client '{}' received event: {:?}", consumer.name(), event_id);
+                        context.current_event_id = event_id;
+                        consumer.on_event(event, &mut context)
                     }
                     Err(err) => {
                         error!("Consumer: '{}' - Error reading event: {:?}", consumer.name(), err);
+                        let action = consumer.on_error(&err);
                         error = Some(err);
-                        Err(error.as_ref().unwrap())
+                        action
                     }
-                };
-                consumer.on_event(for_consumer, &mut context)
+                }
             };
 
             match consumer_action {
@@ -202,14 +168,29 @@ impl <S: IoStream> SyncConnection<S> {
         }).unwrap_or(Ok(()))
     }
 
-    fn read_event(&mut self) -> Result<OwnedFloEvent, ClientError> {
+    fn read_event(&mut self) -> Result<Event<C::Body>, ClientError> {
         match self.read_next_message() {
-            Ok(ProtocolMessage::ReceiveEvent(event)) => Ok(event),
+            Ok(ProtocolMessage::ReceiveEvent(event)) => self.convert_event(event),
             Ok(ProtocolMessage::Error(err)) => Err(ClientError::FloError(err)),
             Ok(ProtocolMessage::AwaitingEvents) => Err(ClientError::EndOfStream),
             Ok(other) => Err(ClientError::UnexpectedMessage(other)),
-            Err(io_err) => Err(io_err.into())
+            Err(transport_err) => Err(transport_err.into())
         }
+    }
+
+    fn convert_event(&self, event: OwnedFloEvent) -> Result<Event<C::Body>, ClientError> {
+        let OwnedFloEvent{id, parent_id, namespace, timestamp, data} = event;
+        self.codec.convert_received(&namespace, data).map(|converted| {
+            Event{
+                id: id,
+                parent_id: parent_id,
+                timestamp: timestamp,
+                namespace: namespace,
+                data: converted,
+            }
+        }).map_err(|codec_err| {
+            ClientError::Codec(Box::new(codec_err))
+        })
     }
 
     fn start_consuming(&mut self, namespace: String, max: u64) -> Result<(), ClientError> {
@@ -217,46 +198,28 @@ impl <S: IoStream> SyncConnection<S> {
             namespace: namespace,
             max_events: max
         });
-        self.stream.write(&mut msg).map_err(|e| e.into())
+        self.send_message(msg)
     }
 
     fn send_event_marker(&mut self, id: FloEventId) -> Result<(), ClientError> {
         let mut msg = ProtocolMessage::UpdateMarker(id);
-        self.stream.write(&mut msg).map_err(|e| e.into())
-    }
-
-    fn authenticate(&mut self, namespace: String, username: String, password: String) -> Result<(), ClientError> {
-        if username.is_empty() {
-            return Ok(())
-        }
-        let mut auth_msg = ProtocolMessage::ClientAuth{
-            username: username,
-            password: password,
-            namespace: namespace
-        };
-
-        self.stream.write(&mut auth_msg).map_err(|io_err| io_err.into())
+        self.send_message(msg)
     }
 
 }
 
-struct ConsumerContextImpl<'a, T: IoStream + 'a> {
+struct ConsumerContextImpl<'a, T: Transport + 'static, C: EventCodec + 'static> {
     pub events_consumed: u64,
-    current_event_id: Option<FloEventId>,
-    connection: &'a mut SyncConnection<T>
+    current_event_id: FloEventId,
+    connection: &'a mut SyncConnection<T, C>
 }
 
-impl <'a, T: IoStream + 'a> ConsumerContext for ConsumerContextImpl<'a, T> {
-    fn events_consumed(&self) -> u64 {
-        self.events_consumed
-    }
-
-    fn current_event_id(&self) -> Option<FloEventId> {
+impl <'a, T: Transport, C: EventCodec> Context<C::Body> for ConsumerContextImpl<'a, T, C> {
+    fn current_event_id(&self) -> FloEventId {
         self.current_event_id
     }
 
-    fn respond<N: ToString, D: Into<Vec<u8>>>(&mut self, namespace: N, data: D) -> Result<FloEventId, ClientError> {
-        self.connection.produce_with_parent(self.current_event_id, namespace, data)
+    fn respond<N: ToString, D: Into<C::Body>>(&mut self, namespace: N, data: D) -> Result<FloEventId, ClientError> {
+        self.connection.produce_with_parent(Some(self.current_event_id), namespace, data)
     }
 }
-
