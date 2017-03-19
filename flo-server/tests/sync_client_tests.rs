@@ -7,15 +7,10 @@ extern crate tempdir;
 mod test_utils;
 
 use test_utils::*;
-use flo_client_lib::sync::basic::{
-    SyncConnection,
-    Consumer,
-    Context,
-    ConsumerAction,
-    ConsumerOptions,
-    ClientError
-};
-use flo_client_lib::{FloEventId, OwnedFloEvent, ErrorKind};
+use flo_client_lib::sync::connection::{SyncConnection, ConsumerOptions};
+use flo_client_lib::sync::{Consumer, Context, ConsumerAction, ClientError};
+use flo_client_lib::{FloEventId, Event, ErrorKind};
+use flo_client_lib::codec::StringCodec;
 use std::thread;
 use std::time::Duration;
 use std::net::{TcpStream, SocketAddr, SocketAddrV4, Ipv4Addr};
@@ -26,7 +21,7 @@ fn localhost(port: u16) -> SocketAddrV4 {
 
 struct TestConsumer{
     name: String,
-    events: Vec<OwnedFloEvent>,
+    events: Vec<Event<String>>,
 }
 
 impl TestConsumer {
@@ -38,26 +33,23 @@ impl TestConsumer {
     }
 }
 
-impl Consumer for TestConsumer {
+impl Consumer<String> for TestConsumer {
     fn name(&self) -> &str {
         &self.name
     }
 
-    fn on_event<C: Context>(&mut self, event_result: Result<OwnedFloEvent, &ClientError>, _context: &mut C) -> ConsumerAction {
-        match event_result {
-            Ok(event) => {
-                println!("Consumer {} received event: {:?}", &self.name, event);
-                self.events.push(event);
-                ConsumerAction::Continue
-            },
-            Err(ref err) if err.is_end_of_stream() => {
-                println!("reached end of stream for: '{}'", &self.name);
-                ConsumerAction::Continue
-            }
-            Err(err) => {
-                println!("Consumer: {} - Error reading event #{}: {:?}", &self.name, self.events.len() + 1, err);
-                ConsumerAction::Stop
-            }
+    fn on_event<C: Context<String>>(&mut self, event: Event<String>, _context: &mut C) -> ConsumerAction {
+        println!("Consumer {} received event: {:?}", &self.name, event);
+        self.events.push(event);
+        ConsumerAction::Continue
+    }
+
+    fn on_error(&mut self, error: &ClientError) -> ConsumerAction {
+        println!("on_error for consumer: {} on event # {} - error: {:?}", self.name, self.events.len() + 1, error);
+        if error.is_end_of_stream() {
+            ConsumerAction::Continue
+        } else {
+            ConsumerAction::Stop
         }
     }
 }
@@ -75,13 +67,13 @@ fn consumer_transitions_from_reading_events_from_disk_to_reading_from_memory() {
         server_process = Some(FloServerProcess::with_args(port, tempdir, args));
     }
 
-    let mut client = SyncConnection::connect(localhost(port)).expect("failed to connect");
+    let mut client = SyncConnection::connect(localhost(port), StringCodec).expect("failed to connect");
     for i in 0..10 {
         client.produce("/the/namespace", format!("event data: {}", i)).expect("Failed to produce event");
     }
 
     let mut consumer = TestConsumer::new("consumer_transitions_from_reading_events_from_disk_to_reading_from_memory");
-    let options = ConsumerOptions::simple("/the/namespace", None, 10);
+    let options = ConsumerOptions::from_beginning("/the/namespace", 10);
     client.run_consumer(options, &mut consumer).expect("running consumer failed");
 
     assert_eq!(10, consumer.events.len());
@@ -93,33 +85,29 @@ fn consumer_transitions_from_reading_events_from_disk_to_reading_from_memory() {
 }
 
 integration_test!{consumer_responds_to_event, port, _tcp_stream, {
-    let mut client = SyncConnection::connect(localhost(port)).expect("failed to create producer");
+    let mut client = SyncConnection::connect(localhost(port), StringCodec).expect("failed to create producer");
 
     struct RespondingConsumer;
-    impl Consumer for RespondingConsumer {
+    impl Consumer<String> for RespondingConsumer {
         fn name(&self) -> &str {
             "consumer responds to event"
         }
-        fn on_event<C: Context>(&mut self, event_result: Result<OwnedFloEvent, &ClientError>, context: &mut C) -> ConsumerAction {
-            println!("respondingConsumer got event: {:?}", event_result);
-            if let Ok(event) = event_result {
-                let result = context.respond("/responses", event.data);
-                println!("Response to the response: {:?}", result);
-                result.into()
-            } else {
-                ConsumerAction::Stop
-            }
+        fn on_event<C: Context<String>>(&mut self, event: Event<String>, context: &mut C) -> ConsumerAction {
+            println!("respondingConsumer got event: {:?}", event);
+            let result = context.respond("/responses", event.data);
+            println!("Response to the response: {:?}", result);
+            result.into()
         }
     }
 
     let event_1_id = client.produce("/events", "data").unwrap();
     let event_2_id = client.produce("/events", "data 2").unwrap();
     let mut consumer = RespondingConsumer;
-    let options = ConsumerOptions::simple("/events", None, 2);
+    let options = ConsumerOptions::from_beginning("/events", 2);
     client.run_consumer(options, &mut consumer).expect("failed to run consumer");
 
     let mut consumer = TestConsumer::new("verify that response events exist");
-    let options = ConsumerOptions::simple("/responses", None, 2);
+    let options = ConsumerOptions::from_beginning("/responses", 2);
     client.run_consumer(options, &mut consumer).expect("failed to run second consumer");
 
     assert_eq!(2, consumer.events.len());
@@ -133,11 +121,11 @@ integration_test!{consumer_responds_to_event, port, _tcp_stream, {
 }}
 
 integration_test!{consumer_receives_error_after_starting_to_consume_with_invalid_namespace, port, _tcp_stream, {
-    let mut client = SyncConnection::connect(localhost(port)).expect("failed to create producer");
+    let mut client = SyncConnection::connect(localhost(port), StringCodec).expect("failed to create producer");
 
     let mut consumer = TestConsumer::new("consumer_receives_error_after_starting_to_consume_with_invalid_namespace");
 
-    let options = ConsumerOptions::simple("/***", None, 2);
+    let options = ConsumerOptions::from_beginning("/***", 2);
     let result = client.run_consumer(options, &mut consumer);
 
     assert!(result.is_err());
@@ -153,7 +141,7 @@ integration_test!{consumer_receives_error_after_starting_to_consume_with_invalid
 }}
 
 integration_test!{consumer_reads_events_matching_glob_pattern, port, tcp_stream, {
-    let mut client = SyncConnection::connect(localhost(port)).expect("failed to create producer");
+    let mut client = SyncConnection::connect(localhost(port), StringCodec).expect("failed to create producer");
 
     client.produce("/animal/mammal/koala", "data").expect("failed to produce event");
     client.produce("/animal/mammal/sorta/platypus", "data").expect("failed to produce event");
@@ -162,7 +150,7 @@ integration_test!{consumer_reads_events_matching_glob_pattern, port, tcp_stream,
     client.produce("/animal/bird/magpie", "data").expect("failed to produce event");
 
     let mut consumer = TestConsumer::new("consumer_reads_events_matching_glob_pattern");
-    let options = ConsumerOptions::simple("/animal/mammal/*", None, 2);
+    let options = ConsumerOptions::from_beginning("/animal/mammal/*", 2);
     client.run_consumer(options, &mut consumer).expect("failed to run consumer");
 
     assert_eq!(2, consumer.events.len());
@@ -173,7 +161,7 @@ integration_test!{consumer_reads_events_matching_glob_pattern, port, tcp_stream,
 
 integration_test!{consumer_only_receives_events_with_exactly_matching_namespace, port, tcp_stream, {
 
-    let mut client = SyncConnection::connect(localhost(port)).expect("failed to create producer");
+    let mut client = SyncConnection::connect(localhost(port), StringCodec).expect("failed to create producer");
 
     let namespace = "/test/namespace";
 
@@ -184,7 +172,7 @@ integration_test!{consumer_only_receives_events_with_exactly_matching_namespace,
     client.produce(namespace, "right data").expect("failed to produce event");
 
     let mut consumer = TestConsumer::new("consumer_only_receives_events_with_exactly_matching_namespace");
-    let options = ConsumerOptions::simple(namespace, None, 2);
+    let options = ConsumerOptions::from_beginning(namespace, 2);
     client.run_consumer(options, &mut consumer).expect("failed to run consumer");
 
     assert_eq!(2, consumer.events.len());
@@ -199,41 +187,40 @@ integration_test!{clients_can_connect_and_disconnect_multiple_times_without_maki
 
     let namespace = "/the/test/namespace";
     let opts = |start: Option<FloEventId>, max_events: u64| {
-        ConsumerOptions::simple(namespace, start, max_events)
+        ConsumerOptions::simple(namespace, start.unwrap_or(FloEventId::zero()), max_events)
     };
 
-
     {
-        let mut client = SyncConnection::from_tcp_stream(tcp_stream);
+        let mut client = SyncConnection::from_tcp_stream(tcp_stream, StringCodec);
         client.produce(namespace, "whatever data").expect("failed to produce first event");
     }
 
     {
-        let mut client = SyncConnection::connect(localhost(port)).expect("failed to create first consumer");
+        let mut client = SyncConnection::connect(localhost(port), StringCodec).expect("failed to create first consumer");
         let mut consumer = TestConsumer::new("consumer one");
         client.run_consumer(opts(None, 1), &mut consumer).expect("failed to run first consumer");
         assert_eq!(1, consumer.events.len());
     }
 
     let second_event_id = {
-        let mut client = SyncConnection::connect(localhost(port)).expect("failed to create second producer");
+        let mut client = SyncConnection::connect(localhost(port), StringCodec).expect("failed to create second producer");
         client.produce(namespace, "whatever data").expect("failed to produce second event")
     };
 
     {
-        let mut client = SyncConnection::connect(localhost(port)).expect("failed to create second consumer");
+        let mut client = SyncConnection::connect(localhost(port), StringCodec).expect("failed to create second consumer");
         let mut consumer = TestConsumer::new("consumer two");
         client.run_consumer(opts(None, 2), &mut consumer).expect("failed to run second consumer");
         assert_eq!(2, consumer.events.len());
     }
 
     {
-        let mut client = SyncConnection::connect(localhost(port)).expect("failed to create third producer");
+        let mut client = SyncConnection::connect(localhost(port), StringCodec).expect("failed to create third producer");
         client.produce(namespace, "whatever data").expect("failed to produce third event");
     }
 
     {
-        let mut client = SyncConnection::connect(localhost(port)).expect("failed to create third consumer");
+        let mut client = SyncConnection::connect(localhost(port), StringCodec).expect("failed to create third consumer");
         let mut consumer = TestConsumer::new("consumer three");
         client.run_consumer(opts(Some(second_event_id), 1), &mut consumer).expect("failed to run third consumer");
         assert_eq!(1, consumer.events.len());
@@ -242,7 +229,7 @@ integration_test!{clients_can_connect_and_disconnect_multiple_times_without_maki
 
 integration_test!{many_events_are_produced_using_sync_client, port, tcp_stream, {
 
-    let mut client = SyncConnection::connect(localhost(port)).expect("failed to create client");
+    let mut client = SyncConnection::connect(localhost(port), StringCodec).expect("failed to create client");
 
     for i in 0..1000 {
         match client.produce("/any/ns", "some bytes") {
@@ -260,7 +247,7 @@ integration_test!{events_are_consumed_as_they_are_written, port, tcp_stream, {
     let num_events: usize = 3;
 
     let join_handle = thread::spawn(move || {
-        let mut client = SyncConnection::connect(localhost(port)).expect("Failed to create client");
+        let mut client = SyncConnection::connect(localhost(port), StringCodec).expect("Failed to create client");
 
         (0..num_events).map(|i| {
             let event_data = format!("Event: {} data", i);
@@ -269,9 +256,9 @@ integration_test!{events_are_consumed_as_they_are_written, port, tcp_stream, {
     });
 
     let mut consumer = TestConsumer::new("events are consumed as they are written");
-    let mut client = SyncConnection::from_tcp_stream(tcp_stream);
+    let mut client = SyncConnection::from_tcp_stream(tcp_stream, StringCodec);
 
-    let options = ConsumerOptions::simple("/the/test/namespace", None, num_events as u64);
+    let options = ConsumerOptions::from_beginning("/the/test/namespace", num_events as u64);
     let result = client.run_consumer(options, &mut consumer);
 
     let produced_ids = join_handle.join().expect("Producer thread panicked!");
@@ -283,6 +270,6 @@ integration_test!{events_are_consumed_as_they_are_written, port, tcp_stream, {
 }}
 
 integration_test!{event_is_written_using_sync_connection, port, tcp_stream, {
-    let mut client = SyncConnection::connect(localhost(port)).expect("failed to connect");
+    let mut client = SyncConnection::connect(localhost(port), StringCodec).expect("failed to connect");
     client.produce("/this/namespace/is/boss", "this is the event data").unwrap();
 }}

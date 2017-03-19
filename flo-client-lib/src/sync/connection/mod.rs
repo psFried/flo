@@ -1,7 +1,7 @@
 mod transport;
 mod options;
 
-use std::net::ToSocketAddrs;
+use std::net::{ToSocketAddrs, TcpStream};
 use std::collections::VecDeque;
 use std::io;
 
@@ -35,6 +35,10 @@ impl <C: EventCodec> SyncConnection<SyncStream, C> {
         SyncStream::connect(addr).map(|stream| {
             SyncConnection::new(stream, codec)
         })
+    }
+
+    pub fn from_tcp_stream(stream: TcpStream, codec: C) -> SyncConnection<SyncStream, C>  {
+        SyncConnection::new(SyncStream::from_stream(stream), codec)
     }
 }
 

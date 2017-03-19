@@ -16,22 +16,11 @@ pub struct CliConsumerOptions {
     pub host: String,
     pub port: u16,
     pub namespace: String,
+    //TODO: allow passing multiple start position arguments so we can properly use a VersionVector
     pub start_position: Option<FloEventId>,
     pub limit: Option<u64>,
     pub await: bool,
 }
-
-impl CliConsumerOptions {
-    fn get_version_vector(&self) -> VersionVector {
-        //TODO: allow multiple arguments for start_position so we can pass a real version vector
-        let mut vv = VersionVector::new();
-        if let Some(id) = self.start_position {
-            vv.update(id);
-        }
-        vv
-    }
-}
-
 
 pub struct CliConsumer;
 
@@ -40,10 +29,9 @@ impl FloCliCommand for CliConsumer {
     type Error = ConsumerError;
 
     fn run(input: Self::Input, output: &CliContext) -> Result<(), Self::Error> {
-        let version_vector = input.get_version_vector();
-        let CliConsumerOptions { host, port, namespace, limit, await, .. } = input;
+        let CliConsumerOptions { host, port, namespace, limit, await, start_position} = input;
 
-        let consumer_opts = ConsumerOptions::simple(namespace, version_vector, limit.unwrap_or(::std::u64::MAX));
+        let consumer_opts = ConsumerOptions::simple(namespace, start_position.unwrap_or(FloEventId::zero()), limit.unwrap_or(::std::u64::MAX));
 
         let address = format!("{}:{}", host, port);
 
