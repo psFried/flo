@@ -1,3 +1,6 @@
+#[cfg(feature = "serde-json-codec")]
+mod serde;
+
 use std::string::FromUtf8Error;
 use std::error::Error;
 

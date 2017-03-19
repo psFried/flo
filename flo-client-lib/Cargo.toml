@@ -3,10 +3,16 @@ name = "flo-client-lib"
 version = "0.1.0"
 authors = ["pfried <philipsfried@gmail.com>"]
 
+[features]
+default = ["serde-json-codec"]
+serde-json-codec = ["serde", "serde_json"]
+
 [dependencies]
 flo-protocol = { path = "../flo-protocol" }
 flo-event = { path = "../flo-event" }
 log = "0.3"
+serde = { optional = true, version = "^0.9" }
+serde_json = { optional = true, version = "^0.9" }
 
 [dev-dependencies]
 env_logger = "*"

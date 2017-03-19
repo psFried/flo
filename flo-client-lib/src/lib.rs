@@ -1,3 +1,8 @@
+#[cfg(feature = "serde-json-codec")]
+extern crate serde;
+#[cfg(feature = "serde-json-codec")]
+extern crate serde_json;
+
 extern crate flo_event as event;
 extern crate flo_protocol as protocol;
 
