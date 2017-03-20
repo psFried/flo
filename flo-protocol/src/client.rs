@@ -30,6 +30,9 @@ pub mod headers {
     pub const ACK_HEADER: u8 = 9;
     pub const ERROR_HEADER: u8 = 10;
     pub const CLUSTER_STATE: u8 = 11;
+    pub const SET_BATCH_SIZE: u8 = 12;
+    pub const NEXT_BATCH: u8 = 13;
+    pub const END_OF_BATCH: u8 = 14;
 }
 
 use self::headers::*;
@@ -171,6 +174,13 @@ pub enum ProtocolMessage {
     UpdateMarker(FloEventId),
     /// sent by a client to start reading events from the stream
     StartConsuming(ConsumerStart),
+    /// Sent by the client to set the batch size to use for consuming. It is an error to send this message while consuming.
+    SetBatchSize(u32),
+    /// Sent by the client to tell the server that it is ready for the next batch
+    NextBatch,
+    /// Sent by the server to notify a consumer that it has reached the end of a batch and that more events can be sent
+    /// upon receipt of a `NextBatch` message by the server.
+    EndOfBatch,
     /// Sent by the server to an active consumer to indicate that it has reached the end of the stream. The server will
     /// continue to send events as more come in, but this just lets the client know that it may be some time before more
     /// events are available. This message will only be sent at most once to a given consumer.
@@ -416,6 +426,17 @@ named!{parse_error_message<ProtocolMessage>,
 
 named!{parse_awaiting_events<ProtocolMessage>, map!(tag!(&[AWAITING_EVENTS]), |_| {ProtocolMessage::AwaitingEvents})}
 
+named!{parse_set_batch_size<ProtocolMessage>, chain!(
+    _tag: tag!(&[SET_BATCH_SIZE]) ~
+    batch_size: be_u32,
+    || {
+        ProtocolMessage::SetBatchSize(batch_size)
+    }
+)}
+
+named!{parse_next_batch<ProtocolMessage>, map!(tag!(&[NEXT_BATCH]), |_| {ProtocolMessage::NextBatch})}
+named!{parse_end_of_batch<ProtocolMessage>, map!(tag!(&[END_OF_BATCH]), |_| {ProtocolMessage::EndOfBatch})}
+
 named!{pub parse_any<ProtocolMessage>, alt!(
         parse_event_ack |
         parse_receive_event_header |
@@ -426,7 +447,10 @@ named!{pub parse_any<ProtocolMessage>, alt!(
         parse_auth |
         parse_error_message |
         parse_awaiting_events |
-        parse_new_producer_event
+        parse_new_producer_event |
+        parse_set_batch_size |
+        parse_next_batch |
+        parse_end_of_batch
 )}
 
 fn serialize_new_produce_header(header: &ProduceEvent, mut buf: &mut [u8]) -> usize {
@@ -528,6 +552,19 @@ impl ProtocolMessage {
             ProtocolMessage::Error(ref err_message) => {
                 serialize_error_message(err_message, buf)
             }
+            ProtocolMessage::SetBatchSize(batch_size) => {
+                Serializer::new(buf).write_u8(SET_BATCH_SIZE)
+                                    .write_u32(batch_size)
+                                    .finish()
+            }
+            ProtocolMessage::NextBatch => {
+                buf[0] = NEXT_BATCH;
+                1
+            }
+            ProtocolMessage::EndOfBatch => {
+                buf[0] = END_OF_BATCH;
+                1
+            }
         }
     }
 
@@ -552,12 +589,12 @@ mod test {
     use event::FloEventId;
     use std::net::{SocketAddr, SocketAddrV4, Ipv4Addr};
 
-    fn test_serialize_then_deserialize(message: &mut ProtocolMessage) {
+    fn test_serialize_then_deserialize(message: &ProtocolMessage) {
         let result  = ser_de(message);
         assert_eq!(*message, result);
     }
 
-    fn ser_de(message: &mut ProtocolMessage) -> ProtocolMessage {
+    fn ser_de(message: &ProtocolMessage) -> ProtocolMessage {
         let mut buffer = [0; 1024];
 
         let len = message.serialize(&mut buffer[..]);
@@ -576,6 +613,21 @@ mod test {
                 panic!("Got incomplete: {:?}", need)
             }
         }
+    }
+
+    #[test]
+    fn next_batch_is_serialized_and_parsed() {
+        test_serialize_then_deserialize(&ProtocolMessage::NextBatch);
+    }
+
+    #[test]
+    fn end_of_batch_is_serialized_and_parsed() {
+        test_serialize_then_deserialize(&ProtocolMessage::EndOfBatch);
+    }
+
+    #[test]
+    fn set_batch_size_is_serialized_and_parsed() {
+        test_serialize_then_deserialize(&ProtocolMessage::SetBatchSize(1234567));
     }
 
     #[test]

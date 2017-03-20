@@ -46,10 +46,13 @@ impl ClientMessage {
             m @ ProtocolMessage::PeerUpdate {..} => producer_message(connection_id, m),
             m @ ProtocolMessage::AwaitingEvents => producer_message(connection_id, m),
             m @ ProtocolMessage::ReceiveEvent(_) => producer_message(connection_id, m),
+            m @ ProtocolMessage::EndOfBatch => producer_message(connection_id, m),
 
             m @ ProtocolMessage::AckEvent(_) => consumer_message(connection_id, m),
             m @ ProtocolMessage::StartConsuming(_) => consumer_message(connection_id, m),
             m @ ProtocolMessage::UpdateMarker(_) => consumer_message(connection_id, m),
+            m @ ProtocolMessage::SetBatchSize(_) => consumer_message(connection_id, m),
+            m @ ProtocolMessage::NextBatch => consumer_message(connection_id, m),
 
             m @ ProtocolMessage::ClientAuth {..} => both(connection_id, m),
         }
