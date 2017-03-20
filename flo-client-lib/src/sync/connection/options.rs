@@ -1,6 +1,4 @@
 use event::{FloEventId, VersionVector};
-use std::net::{SocketAddr, ToSocketAddrs};
-use std::time::Duration;
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct ConsumerOptions {

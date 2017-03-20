@@ -8,7 +8,7 @@ use std::marker::PhantomData;
 
 use codec::EventCodec;
 use event::{FloEventId, OwnedFloEvent};
-use protocol::{ProtocolMessage, ErrorMessage, ProduceEvent, ConsumerStart};
+use protocol::{ProtocolMessage, ProduceEvent, ConsumerStart};
 use sync::{
     ClientError,
     Consumer,
@@ -68,7 +68,7 @@ impl <T: Transport, B, C: EventCodec<B>> SyncConnection<T, B, C> {
         self.codec.convert_produced(&namespace_string, data.into()).map_err(|codec_error| {
             ClientError::Codec(Box::new(codec_error))
         }).and_then(move |binary_data| {
-            let mut send_msg = ProtocolMessage::ProduceEvent(ProduceEvent {
+            let send_msg = ProtocolMessage::ProduceEvent(ProduceEvent {
                 namespace: namespace_string,
                 parent_id: parent_id,
                 op_id: self.op_id,
@@ -201,7 +201,7 @@ impl <T: Transport, B, C: EventCodec<B>> SyncConnection<T, B, C> {
     }
 
     fn start_consuming(&mut self, namespace: String, max: u64) -> Result<(), ClientError> {
-        let mut msg = ProtocolMessage::StartConsuming(ConsumerStart {
+        let msg = ProtocolMessage::StartConsuming(ConsumerStart {
             namespace: namespace,
             max_events: max
         });
@@ -209,7 +209,7 @@ impl <T: Transport, B, C: EventCodec<B>> SyncConnection<T, B, C> {
     }
 
     fn send_event_marker(&mut self, id: FloEventId) -> Result<(), ClientError> {
-        let mut msg = ProtocolMessage::UpdateMarker(id);
+        let msg = ProtocolMessage::UpdateMarker(id);
         self.send_message(msg)
     }
 

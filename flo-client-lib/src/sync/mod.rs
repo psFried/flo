@@ -1,8 +1,6 @@
 mod error;
 
-use std::net::ToSocketAddrs;
 use std::io;
-use std::error::Error;
 
 use event::FloEventId;
 use protocol::ProtocolMessage;
@@ -10,16 +8,11 @@ use ::Event;
 
 pub mod connection;
 pub mod basic;
-#[cfg(feature = "serde-client")]
-pub mod serde;
 
 pub use self::error::ClientError;
 
 
 pub trait Transport: Sized {
-    fn is_connected(&self) -> bool;
-    fn reconnect(&mut self) -> io::Result<()>;
-
     fn send(&mut self, message: ProtocolMessage) -> io::Result<()>;
     fn receive(&mut self) -> io::Result<ProtocolMessage>;
 }
