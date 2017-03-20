@@ -82,29 +82,6 @@ impl ErrorKind {
     }
 }
 
-/// The header of an event that a client (producer) wishes to add to the stream. This message MUST always be directly
-/// followed by the entire body of the event.
-#[derive(Debug, PartialEq, Clone)]
-pub struct ProduceEventHeader {
-    /// An opaque, client-generated number that can be used to correlate request/response pairs. The response to producing
-    /// an event will always be either an EventAck or an ErrorMessage with the same `op_id` as was sent in the header
-    pub op_id: u32,
-
-    /// The namespace to produce the event onto. Technically, a namespace can be any valid utf-8 string (except it cannot
-    /// contain any newline `\n` characters), but by convention they take the form of a path with segments separated by
-    /// forward slash `/` characters.
-    pub namespace: String,
-
-    /// Technically, this can be any FloEventId, but the convention is to set it to the id of the event that was being processed
-    /// when this event was produced. This allows correlation of request and response, as well as more sophisticated things
-    /// like tracing events through a complex system of services.
-    pub parent_id: Option<FloEventId>,
-
-    /// The length of the event data (body). This is the number of bytes that will be read immediately following the header.
-    /// This _can_ be 0, as events with no extra data (just a header) are totally valid.
-    pub data_length: u32,
-}
-
 /// The body of a ProduceEvent `ProtocolMessage`. This is sent from a client producer to the server, and the server will
 /// respond with either an `EventAck` or an `ErrorMessage` to indicate success or failure respectively. Although the flo
 /// protocol is pipelined, this message includes an `op_id` field to aid in correlation of requests and responses.
@@ -464,21 +441,6 @@ fn serialize_new_produce_header(header: &ProduceEvent, mut buf: &mut [u8]) -> us
                         .write_u32(header.op_id)
                         .write_u32(header.data.len() as u32)
                         .finish()
-}
-
-fn serialize_produce_header(header: &ProduceEventHeader, mut buf: &mut [u8]) -> usize {
-
-    let (counter, actor) = header.parent_id.map(|id| {
-        (id.event_counter, id.actor)
-    }).unwrap_or((0, 0));
-
-    Serializer::new(buf).write_u8(PRODUCE_EVENT)
-            .newline_term_string(&header.namespace)
-            .write_u64(counter)
-            .write_u16(actor)
-            .write_u32(header.op_id)
-            .write_u32(header.data_length)
-            .finish()
 }
 
 fn serialize_event_ack(ack: &EventAck, buf: &mut [u8]) -> usize {
