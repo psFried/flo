@@ -18,7 +18,6 @@ use std::io::{self, Read};
 use std::fmt::Write;
 use std::str::FromStr;
 
-// TODO: probably about time to just change these to just a single byte each
 pub mod headers {
     pub const CLIENT_AUTH: u8 = 1;
     pub const PRODUCE_EVENT: u8 = 2;
