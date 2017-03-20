@@ -4,7 +4,8 @@ mod serde;
 use std::string::FromUtf8Error;
 use std::error::Error;
 
-use event::{OwnedFloEvent, FloEventId, Timestamp};
+#[cfg(feature = "serde-json-codec")]
+pub use self::serde::{SerdeJsonCodec, SerdePrettyJsonCodec};
 
 /// Trait that allows events to be converted to application-specific types. An `EventCodec` is associated with a
 /// connection, and is used to convert all incoming and outgoing events. Note that the types that are produced and consumed
@@ -65,7 +66,7 @@ impl EventCodec<String> for LossyStringCodec {
 pub struct ImpossibleError;
 
 impl ::std::fmt::Display for ImpossibleError {
-    fn fmt(&self, formatter: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
+    fn fmt(&self, _f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
         unimplemented!()
     }
 }

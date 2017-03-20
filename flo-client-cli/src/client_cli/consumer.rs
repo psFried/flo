@@ -7,7 +7,7 @@ use flo_client_lib::sync::{
 };
 use flo_client_lib::codec::LossyStringCodec;
 use flo_client_lib::sync::connection::{SyncConnection, ConsumerOptions};
-use flo_client_lib::{Event, FloEventId, VersionVector, Timestamp};
+use flo_client_lib::{Event, FloEventId};
 
 use std::fmt::{self, Display};
 use std::io;
