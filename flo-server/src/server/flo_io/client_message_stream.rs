@@ -72,6 +72,7 @@ mod test {
     use event::FloEventId;
     use server::engine::api::{ClientMessage, ProducerManagerMessage};
     use protocol::ProtocolMessage;
+    use protocol::headers;
 
     fn address() -> SocketAddr {
         "127.0.0.1:3000".parse().unwrap()
@@ -81,15 +82,17 @@ mod test {
     fn multiple_events_are_read_in_sequence() {
         let reader = {
             let mut b = Vec::new();
-            b.extend_from_slice(b"FLO_PRO\n/foo/bar\n");
+            b.push(headers::PRODUCE_EVENT);
+            b.extend_from_slice(b"/foo/bar\n");
             b.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, 9, 0, 5]);
             b.extend_from_slice(&[0, 0, 0, 4, 0, 0, 0, 7]);
             b.extend_from_slice(b"evt_one");
-            b.extend_from_slice(b"FLO_AUT\n");
+            b.push(headers::CLIENT_AUTH);
             b.extend_from_slice(b"the namespace\n");
             b.extend_from_slice(b"the username\n");
             b.extend_from_slice(b"the password\n");
-            b.extend_from_slice(b"FLO_PRO\n/baz\n");
+            b.push(headers::PRODUCE_EVENT);
+            b.extend_from_slice(b"/baz\n");
             b.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, 9, 0, 5]);
             b.extend_from_slice(&[0, 0, 0, 5, 0, 0, 0, 7]);
             b.extend_from_slice(b"evt_two");

@@ -20,17 +20,17 @@ use std::str::FromStr;
 
 // TODO: probably about time to just change these to just a single byte each
 pub mod headers {
-    pub const CLIENT_AUTH: &'static str = "FLO_AUT\n";
-    pub const PRODUCE_EVENT: &'static str = "FLO_PRO\n";
-    pub const RECEIVE_EVENT: &'static str = "FLO_EVT\n";
-    pub const UPDATE_MARKER: &'static str = "FLO_UMK\n";
-    pub const START_CONSUMING: &'static str = "FLO_CNS\n";
-    pub const AWAITING_EVENTS: &'static str = "FLO_AWT\n";
-    pub const PEER_ANNOUNCE: &'static str = "FLO_PAN\n";
-    pub const PEER_UPDATE: &'static str = "FLO_PUD\n";
-    pub const ACK_HEADER: &'static [u8; 8] = b"FLO_ACK\n";
-    pub const ERROR_HEADER: &'static [u8; 8] = b"FLO_ERR\n";
-    pub const CLUSTER_STATE: &'static [u8; 8] = b"FLO_CLS\n";
+    pub const CLIENT_AUTH: u8 = 1;
+    pub const PRODUCE_EVENT: u8 = 2;
+    pub const RECEIVE_EVENT: u8 = 3;
+    pub const UPDATE_MARKER: u8 = 4;
+    pub const START_CONSUMING: u8 = 5;
+    pub const AWAITING_EVENTS: u8 = 6;
+    pub const PEER_ANNOUNCE: u8 = 7;
+    pub const PEER_UPDATE: u8 = 8;
+    pub const ACK_HEADER: u8 = 9;
+    pub const ERROR_HEADER: u8 = 10;
+    pub const CLUSTER_STATE: u8 = 11;
 }
 
 use self::headers::*;
@@ -234,7 +234,7 @@ named!{parse_string_slice<&str>,
 
 named!{pub parse_auth<ProtocolMessage>,
     chain!(
-        _tag: tag!(CLIENT_AUTH) ~
+        _tag: tag!(&[CLIENT_AUTH]) ~
         namespace: parse_str ~
         username: parse_str ~
         password: parse_str,
@@ -272,7 +272,7 @@ named!{pub parse_event_id<Option<FloEventId>>,
 
 named!{pub parse_new_producer_event<ProtocolMessage>,
     chain!(
-        _tag: tag!(PRODUCE_EVENT) ~
+        _tag: tag!(&[PRODUCE_EVENT]) ~
         namespace: parse_str ~
         parent_id: parse_event_id ~
         op_id: be_u32 ~
@@ -294,7 +294,7 @@ named!{parse_timestamp<Timestamp>,
 
 named!{parse_receive_event_header<ProtocolMessage>,
     chain!(
-        _tag: tag!(RECEIVE_EVENT) ~
+        _tag: tag!(&[RECEIVE_EVENT]) ~
         id: parse_non_zero_event_id ~
         parent_id: parse_event_id ~
         timestamp: parse_timestamp ~
@@ -314,7 +314,7 @@ named!{parse_receive_event_header<ProtocolMessage>,
 
 named!{parse_event_ack<ProtocolMessage>,
     chain!(
-        _tag: tag!(ACK_HEADER) ~
+        _tag: tag!(&[ACK_HEADER]) ~
         op_id: be_u32 ~
         counter: be_u64 ~
         actor_id: be_u16,
@@ -329,7 +329,7 @@ named!{parse_event_ack<ProtocolMessage>,
 
 named!{parse_update_marker<ProtocolMessage>,
     chain!(
-        _tag: tag!(UPDATE_MARKER) ~
+        _tag: tag!(&[UPDATE_MARKER]) ~
         counter: be_u64 ~
         actor: be_u16,
         || {
@@ -342,7 +342,7 @@ named!{parse_update_marker<ProtocolMessage>,
 
 named!{parse_start_consuming<ProtocolMessage>,
     chain!(
-        _tag: tag!(START_CONSUMING) ~
+        _tag: tag!(&[START_CONSUMING]) ~
         namespace: parse_str ~
         count: be_u64,
         || {
@@ -398,7 +398,7 @@ named!{parse_cluster_member_status<ClusterMember>,
 
 named!{parse_peer_announce<ProtocolMessage>,
     chain!(
-        _tag: tag!(PEER_ANNOUNCE) ~
+        _tag: tag!(&[PEER_ANNOUNCE]) ~
         state: parse_cluster_state,
         || {
             ProtocolMessage::PeerAnnounce(state)
@@ -412,7 +412,7 @@ named!{parse_version_vec<Vec<FloEventId>>,
 
 named!{parse_peer_update<ProtocolMessage>,
     chain!(
-        _tag: tag!(PEER_UPDATE) ~
+        _tag: tag!(&[PEER_UPDATE]) ~
         state: parse_cluster_state,
         || {
             ProtocolMessage::PeerUpdate(state)
@@ -422,7 +422,7 @@ named!{parse_peer_update<ProtocolMessage>,
 
 named!{parse_error_message<ProtocolMessage>,
     chain!(
-        _tag: tag!(ERROR_HEADER) ~
+        _tag: tag!(&[ERROR_HEADER]) ~
         op_id: be_u32 ~
         kind: map_res!(take!(1), |res: &[u8]| {
             ErrorKind::from_u8(res[0])
@@ -438,7 +438,7 @@ named!{parse_error_message<ProtocolMessage>,
     )
 }
 
-named!{parse_awaiting_events<ProtocolMessage>, map!(tag!(AWAITING_EVENTS), |_| {ProtocolMessage::AwaitingEvents})}
+named!{parse_awaiting_events<ProtocolMessage>, map!(tag!(&[AWAITING_EVENTS]), |_| {ProtocolMessage::AwaitingEvents})}
 
 named!{pub parse_any<ProtocolMessage>, alt!(
         parse_event_ack |
@@ -458,7 +458,7 @@ fn serialize_new_produce_header(header: &ProduceEvent, mut buf: &mut [u8]) -> us
         (id.event_counter, id.actor)
     }).unwrap_or((0, 0));
 
-    Serializer::new(buf).write_bytes(PRODUCE_EVENT)
+    Serializer::new(buf).write_u8(PRODUCE_EVENT)
                         .newline_term_string(&header.namespace)
                         .write_u64(counter)
                         .write_u16(actor)
@@ -473,7 +473,7 @@ fn serialize_produce_header(header: &ProduceEventHeader, mut buf: &mut [u8]) -> 
         (id.event_counter, id.actor)
     }).unwrap_or((0, 0));
 
-    Serializer::new(buf).write_bytes(PRODUCE_EVENT)
+    Serializer::new(buf).write_u8(PRODUCE_EVENT)
             .newline_term_string(&header.namespace)
             .write_u64(counter)
             .write_u16(actor)
@@ -483,7 +483,7 @@ fn serialize_produce_header(header: &ProduceEventHeader, mut buf: &mut [u8]) -> 
 }
 
 fn serialize_event_ack(ack: &EventAck, buf: &mut [u8]) -> usize {
-    Serializer::new(buf).write_bytes(ACK_HEADER)
+    Serializer::new(buf).write_u8(ACK_HEADER)
             .write_u32(ack.op_id)
             .write_u64(ack.event_id.event_counter)
             .write_u16(ack.event_id.actor)
@@ -491,17 +491,17 @@ fn serialize_event_ack(ack: &EventAck, buf: &mut [u8]) -> usize {
 }
 
 fn serialize_error_message(err: &ErrorMessage, buf: &mut [u8]) -> usize {
-    Serializer::new(buf).write_bytes(ERROR_HEADER)
+    Serializer::new(buf).write_u8(ERROR_HEADER)
             .write_u32(err.op_id)
             .write_u8(err.kind.u8_value())
             .newline_term_string(&err.description)
             .finish()
 }
 
-fn serialize_cluster_state(header: &'static str, state: &ClusterState, buf: &mut [u8]) -> usize {
+fn serialize_cluster_state(header: u8, state: &ClusterState, buf: &mut [u8]) -> usize {
     let mut addr_buffer = String::new();
 
-    let mut ser = Serializer::new(buf).write_bytes(header)
+    let mut ser = Serializer::new(buf).write_u8(header)
             .write_u16(state.actor_id)
             .write_u16(state.actor_port)
             .write_u16(state.version_vector.len() as u16);
@@ -531,25 +531,25 @@ impl ProtocolMessage {
                 unimplemented!() //TODO: This message _shouldn't_ typically be serialized in this way, but should probably implement it anyway
             }
             ProtocolMessage::AwaitingEvents => {
-                Serializer::new(buf).write_bytes(AWAITING_EVENTS).finish()
+                Serializer::new(buf).write_u8(AWAITING_EVENTS).finish()
             }
             ProtocolMessage::ProduceEvent(ref header) => {
                 serialize_new_produce_header(header, buf)
             }
             ProtocolMessage::StartConsuming(ConsumerStart{ref namespace, ref max_events}) => {
-                Serializer::new(buf).write_bytes(START_CONSUMING)
+                Serializer::new(buf).write_u8(START_CONSUMING)
                                     .newline_term_string(namespace)
                                     .write_u64(*max_events)
                                     .finish()
             }
             ProtocolMessage::UpdateMarker(id) => {
-                Serializer::new(buf).write_bytes(UPDATE_MARKER)
+                Serializer::new(buf).write_u8(UPDATE_MARKER)
                                     .write_u64(id.event_counter)
                                     .write_u16(id.actor)
                                     .finish()
             }
             ProtocolMessage::ClientAuth {ref namespace, ref username, ref password} => {
-                Serializer::new(buf).write_bytes(CLIENT_AUTH)
+                Serializer::new(buf).write_u8(CLIENT_AUTH)
                                     .newline_term_string(namespace)
                                     .newline_term_string(username)
                                     .newline_term_string(password)
@@ -733,8 +733,7 @@ mod test {
 
     #[test]
     fn parse_client_auth_returns_incomplete_result_when_password_is_missing() {
-        let mut input = Vec::new();
-        input.extend_from_slice(b"FLO_AUT\n");
+        let mut input = vec![headers::CLIENT_AUTH];
         input.extend_from_slice(b"hello\n");
         input.extend_from_slice(b"world\n");
 
