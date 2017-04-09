@@ -1,9 +1,10 @@
 mod client;
 mod cache;
+mod filecursor;
 
-pub use self::client::{ClientImpl, NamespaceGlob};
+pub use self::client::{ClientImpl};
 
-use engine::api::{ConnectionId, ClientConnect, ConsumerManagerMessage, ReceivedMessage};
+use engine::api::{ConnectionId, ClientConnect, ConsumerManagerMessage, ReceivedMessage, NamespaceGlob};
 use protocol::{ProtocolMessage, ErrorMessage, ErrorKind, ConsumerStart};
 use event::{FloEvent, OwnedFloEvent, FloEventId, ActorId, VersionVector};
 use std::sync::{Arc, mpsc};
@@ -59,21 +60,8 @@ impl <R: EventReader + 'static> ConsumerManager<R> {
                 self.consumers.remove(connection_id);
                 Ok(())
             }
-            ConsumerManagerMessage::ContinueConsuming(connection_id, last_event_id, _limit) => {
-                let result = self.require_client(connection_id, move |mut client, mut state| {
-                    //TODO: remove limit from continueConsuming message, since the reader thread has no idea which ones actually match the namespace
-                    if let Some(remaining) = client.continue_consuming() {
-                        ConsumerManager::send_events(state, client, last_event_id, remaining);
-                    } else {
-                        warn!("Got ContinueConsuming message for connection_id: {} but client has since be moved to NotConsuming state", connection_id);
-                    }
-                    Ok(())
-                });
-                // This condition is a little weird, but not necessarily an error from the server's perspective
-                if let Err(_) = result {
-                    warn!("connection_id: {} was disconnected, so ContinueConsuming will not be processed", connection_id);
-                }
-                Ok(())
+            ConsumerManagerMessage::ContinueConsuming(consumer_state) => {
+                unimplemented!()
             }
             ConsumerManagerMessage::StartPeerReplication(connection_id, actor_id, peer_versions) => {
                 self.start_peer_replication(connection_id, actor_id, peer_versions)
@@ -223,35 +211,35 @@ fn consume_from_file<R: EventReader + 'static>(event_sender: mpsc::Sender<Consum
                                                event_reader: &mut R,
                                                start_id: FloEventId,
                                                limit: u64) {
-
-    // need to read event from disk since it isn't in the cache
-    let event_iter = event_reader.load_range(start_id, limit as usize);
-
-    thread::spawn(move || {
-        let mut sent_events = 0;
-        let mut last_sent_id = FloEventId::zero();
-        for event in event_iter {
-            match event {
-                Ok(owned_event) => {
-                    trace!("Reader thread sending event: {:?} to consumer manager", owned_event.id());
-                    //TODO: is unwrap the right thing here?
-                    last_sent_id = *owned_event.id();
-                    event_sender.send(ConsumerManagerMessage::EventLoaded(connection_id, owned_event)).expect("Failed to send EventLoaded message");
-                    sent_events += 1;
-                }
-                Err(err) => {
-                    error!("Error reading event: {:?}", err);
-                    //TODO: send error message to consumer manager instead of just dying silently
-                    break;
-                }
-            }
-        }
-        debug!("Finished reader thread for connection_id: {}, sent_events: {}, last_send_event: {:?}", connection_id, sent_events, last_sent_id);
-        if sent_events < limit as usize {
-            let continue_message = ConsumerManagerMessage::ContinueConsuming(connection_id, last_sent_id, limit - sent_events as u64);
-            event_sender.send(continue_message).expect("Failed to send continue_message");
-        }
-    });
+    unimplemented!()
+//    // need to read event from disk since it isn't in the cache
+//    let event_iter = event_reader.load_range(start_id, limit as usize);
+//
+//    thread::spawn(move || {
+//        let mut sent_events = 0;
+//        let mut last_sent_id = FloEventId::zero();
+//        for event in event_iter {
+//            match event {
+//                Ok(owned_event) => {
+//                    trace!("Reader thread sending event: {:?} to consumer manager", owned_event.id());
+//                    //TODO: is unwrap the right thing here?
+//                    last_sent_id = *owned_event.id();
+//                    event_sender.send(ConsumerManagerMessage::EventLoaded(connection_id, owned_event)).expect("Failed to send EventLoaded message");
+//                    sent_events += 1;
+//                }
+//                Err(err) => {
+//                    error!("Error reading event: {:?}", err);
+//                    //TODO: send error message to consumer manager instead of just dying silently
+//                    break;
+//                }
+//            }
+//        }
+//        debug!("Finished reader thread for connection_id: {}, sent_events: {}, last_send_event: {:?}", connection_id, sent_events, last_sent_id);
+//        if sent_events < limit as usize {
+//            let continue_message = ConsumerManagerMessage::ContinueConsuming(connection_id, last_sent_id, limit - sent_events as u64);
+//            event_sender.send(continue_message).expect("Failed to send continue_message");
+//        }
+//    });
 }
 
 pub struct ConsumerMap(HashMap<ConnectionId, ClientImpl>);

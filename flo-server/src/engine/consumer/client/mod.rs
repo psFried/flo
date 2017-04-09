@@ -1,9 +1,9 @@
-mod namespace;
-
-pub use self::namespace::NamespaceGlob;
+mod connection_manager;
+mod context;
+mod connection_state;
 
 use event::{FloEvent, FloEventId, ActorId, OwnedFloEvent, VersionVector};
-use engine::api::{ConnectionId, ClientConnect};
+use engine::api::{ConnectionId, ClientConnect, NamespaceGlob, ConsumerState};
 use protocol::{ServerMessage, ProtocolMessage};
 use channels::Sender;
 
@@ -33,33 +33,17 @@ impl ::std::fmt::Display for ClientSendError {
 
 pub type ClientImpl = Client<UnboundedSender<ServerMessage>>;
 
-#[derive(Debug, PartialEq)]
-enum ConsumerState {
-    Consumer{
-        namespace: NamespaceGlob,
-        remaining_events: u64,
-    },
-    Peer(ActorId),
-    NotConsuming,
-}
-
-impl ConsumerState {
-    fn is_not_consuming(&self) -> bool {
-        if let ConsumerState::NotConsuming = *self {
-            true
-        } else {
-            false
-        }
-    }
-}
-
+#[derive(Clone)]
 pub struct Client<T: Sender<ServerMessage>> {
     pub connection_id: ConnectionId,
     pub addr: SocketAddr,
     sender: T,
     version_vector: VersionVector,
-    new_consumer_state: ConsumerState,
+    new_consumer_state: Option<ConsumerState>,
+    batch_size: u64,
 }
+
+pub const DEFAULT_BATCH_SIZE: u64 = 10_000;
 
 impl Client<UnboundedSender<ServerMessage>> {
     pub fn from_client_connect(connect_message: ClientConnect) -> Client<UnboundedSender<ServerMessage>> {
@@ -68,7 +52,8 @@ impl Client<UnboundedSender<ServerMessage>> {
             addr: connect_message.client_addr,
             sender: connect_message.message_sender,
             version_vector: VersionVector::new(),
-            new_consumer_state: ConsumerState::NotConsuming,
+            new_consumer_state: None,
+            batch_size: DEFAULT_BATCH_SIZE,
         }
     }
 }
@@ -82,7 +67,8 @@ impl <T: Sender<ServerMessage>> Client<T> {
             addr: addr,
             sender: sender,
             version_vector: VersionVector::new(),
-            new_consumer_state: ConsumerState::NotConsuming,
+            new_consumer_state: None,
+            batch_size: DEFAULT_BATCH_SIZE,
         }
     }
 
@@ -90,61 +76,34 @@ impl <T: Sender<ServerMessage>> Client<T> {
         self.connection_id
     }
 
-    pub fn should_send_event<E: FloEvent>(&self, event: &E) -> bool {
-        let current_id = self.version_vector.get(event.id().actor);
-        if event.id().event_counter > current_id {
-            match &self.new_consumer_state {
-                &ConsumerState::Consumer { ref namespace, .. } => namespace.matches(event.namespace()),
-                &ConsumerState::Peer(actor) => {
-                    actor != event.id().actor
-                }
-                _ => false
-            }
-        } else {
-            false
-        }
+    pub fn get_batch_size(&self) -> u64 {
+        self.batch_size
+    }
+
+    pub fn should_send_event(&self, event: &OwnedFloEvent) -> bool {
+        self.new_consumer_state.as_ref().map(|state| {
+            state.should_send_event(event)
+        }).unwrap_or(false)
     }
 
     pub fn update_version_vector(&mut self, id: FloEventId) {
         self.version_vector.update_if_greater(id);
     }
 
-    pub fn continue_consuming(&self) -> Option<u64> {
-        match self.new_consumer_state {
-            ConsumerState::Consumer {remaining_events, ..} => Some(remaining_events),
-            ConsumerState::Peer(_) => Some(::std::u64::MAX),
-            _ => None
-        }
+    pub fn get_version_vec(&self) -> &VersionVector {
+        &self.version_vector
     }
 
     pub fn consume_from_namespace(&mut self, namespace: NamespaceGlob, limit: u64) -> Result<&VersionVector, String> {
-        if self.new_consumer_state.is_not_consuming() {
-            self.new_consumer_state = ConsumerState::Consumer {
-                namespace: namespace,
-                remaining_events: limit,
-            };
-            Ok(&self.version_vector)
-        } else {
-            Err(format!("Cannot start consuming for connection_id: {} because the client state is already: {:?}",
-                        self.connection_id,
-                        self.new_consumer_state))
-        }
+        unimplemented!()
     }
 
     pub fn start_peer_replication(&mut self, from_actor: ActorId, version_vec: VersionVector) -> Result<(), String> {
-        if self.new_consumer_state.is_not_consuming() {
-            self.new_consumer_state = ConsumerState::Peer(from_actor);
-            self.version_vector = version_vec;
-            Ok(())
-        } else {
-            Err(format!("Cannot start peer replication for connection_id: {} because state is already: {:?}",
-                        self.connection_id,
-                        self.new_consumer_state))
-        }
+        unimplemented!()
     }
 
     pub fn stop_consuming(&mut self) {
-        self.new_consumer_state = ConsumerState::NotConsuming;
+        self.new_consumer_state = None;
     }
 
     pub fn send_message(&self, message: ProtocolMessage) -> Result<(), String> {
@@ -158,24 +117,7 @@ impl <T: Sender<ServerMessage>> Client<T> {
     }
 
     pub fn send_event(&mut self, event: Arc<OwnedFloEvent>) -> Result<(), String> {
-        let stop_consuming = match self.new_consumer_state {
-            ConsumerState::NotConsuming => {
-                return Err(format!("Tried to send an event to connection_id: {} while in NotConsuming state", self.connection_id));
-            }
-            ConsumerState::Consumer {ref mut remaining_events, ..} => {
-                *remaining_events -= 1;
-                *remaining_events == 0
-            }
-            _ => false
-        };
-
-        if stop_consuming {
-            debug!("connection_id: {} transitioning from consuming to NotConsuming", self.connection_id);
-            self.new_consumer_state = ConsumerState::NotConsuming;
-        }
-        self.version_vector.update(event.id).and_then(|()| {
-            self.do_send(ServerMessage::Event(event))
-        })
+        unimplemented!()
     }
 
     fn do_send(&self, message: ServerMessage) -> Result<(), String> {
@@ -190,28 +132,13 @@ impl <T: Sender<ServerMessage>> Client<T> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use super::namespace::NamespaceGlob;
+    use engine::api::NamespaceGlob;
     use event::{OwnedFloEvent, ActorId, EventCounter, FloEventId, VersionVector};
     use channels::MockSender;
     use std::sync::Arc;
 
     fn glob_all() -> NamespaceGlob {
         NamespaceGlob::new("/**/*").unwrap()
-    }
-
-    #[test]
-    fn continue_consuming_returns_max_u64_when_client_is_a_peer() {
-        let mut subject = subject();
-        subject.start_peer_replication(3, VersionVector::new()).unwrap();
-
-        let result = subject.continue_consuming();
-        assert_eq!(Some(::std::u64::MAX), result);
-    }
-
-    #[test]
-    fn continue_consuming_returns_none_when_client_has_not_started_consuming() {
-        let subject = subject();
-        assert!(subject.continue_consuming().is_none());
     }
 
     #[test]
@@ -222,30 +149,12 @@ mod test {
         subject.consume_from_namespace(NamespaceGlob::new("/**/*").unwrap(), limit).unwrap();
 
         for i in 0..(limit) {
-            let expected_remaining = limit - i;
-            assert_eq!(Some(expected_remaining), subject.continue_consuming());
-
             let event = event(5, i + 1, "/internet/porn");
             subject.send_event(event).unwrap();
         }
-        assert!(subject.continue_consuming().is_none());
-        assert_eq!(ConsumerState::NotConsuming, subject.new_consumer_state);
+        assert!(subject.new_consumer_state.is_none());
     }
 
-    #[test]
-    fn continue_consuming_returns_none_when_client_has_been_sent_number_limit_of_events() {
-        let limit = 3;
-        let mut subject = subject();
-
-        subject.consume_from_namespace(NamespaceGlob::new("/**/*").unwrap(), limit).unwrap();
-
-        for i in 0..limit {
-            let event = event(5, i + 1, "/internet/porn");
-            subject.send_event(event).unwrap();
-        }
-
-        assert!(subject.continue_consuming().is_none());
-    }
 
     #[test]
     fn start_peer_replication_returns_error_when_client_has_already_started_consuming() {
