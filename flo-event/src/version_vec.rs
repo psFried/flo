@@ -33,6 +33,11 @@ impl VersionVector {
         }
     }
 
+    /// Sets the counter for the given actor, overwriting a previous value if it was present
+    pub fn set(&mut self, id: FloEventId) {
+        self.0.insert(id.actor, id.event_counter);
+    }
+
     /// Returns true if the current couner for the given actor is greater than or equal to the given id's counter
     /// If the current counter is less, or if the actor_id is not present at all, returns false
     pub fn contains(&self, id: FloEventId) -> bool {

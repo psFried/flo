@@ -17,3 +17,5 @@ events.json
 
 .vscode
 
+CMakeLists.txt
+cmake-build-debug

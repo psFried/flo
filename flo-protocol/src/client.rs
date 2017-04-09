@@ -39,6 +39,7 @@ use self::headers::*;
 pub const ERROR_INVALID_NAMESPACE: u8 = 15;
 pub const ERROR_INVALID_CONSUMER_STATE: u8 = 16;
 pub const ERROR_INVALID_VERSION_VECTOR: u8 = 17;
+pub const ERROR_STORAGE_ENGINE_IO: u8 = 18;
 
 /// Describes the type of error. This gets serialized a u8
 #[derive(Debug, PartialEq, Clone)]
@@ -48,7 +49,9 @@ pub enum ErrorKind {
     /// Indicates that the client connection was in an invalid state when it attempted some consumer operation
     InvalidConsumerState,
     /// Indicates that the provided version vector was invalid (contained more than one entry for at least one actor id)
-    InvalidVersionVector
+    InvalidVersionVector,
+    /// Unable to read or write to events file
+    StorageEngineError,
 }
 
 /// Represents a response to any request that results in an error
@@ -71,6 +74,7 @@ impl ErrorKind {
             ERROR_INVALID_NAMESPACE => Ok(ErrorKind::InvalidNamespaceGlob),
             ERROR_INVALID_CONSUMER_STATE => Ok(ErrorKind::InvalidConsumerState),
             ERROR_INVALID_VERSION_VECTOR => Ok(ErrorKind::InvalidVersionVector),
+            ERROR_STORAGE_ENGINE_IO => Ok(ErrorKind::StorageEngineError),
             other => Err(other)
         }
     }
@@ -81,6 +85,7 @@ impl ErrorKind {
             &ErrorKind::InvalidNamespaceGlob => ERROR_INVALID_NAMESPACE,
             &ErrorKind::InvalidConsumerState => ERROR_INVALID_CONSUMER_STATE,
             &ErrorKind::InvalidVersionVector => ERROR_INVALID_VERSION_VECTOR,
+            &ErrorKind::StorageEngineError => ERROR_STORAGE_ENGINE_IO,
         }
     }
 }

@@ -1,3 +1,6 @@
+mod consumer;
+mod namespace;
+
 use protocol::{ProtocolMessage, ServerMessage};
 use event::{FloEventId, ActorId, OwnedFloEvent};
 
@@ -8,6 +11,8 @@ use std::sync::atomic;
 use std::fmt::{self, Debug};
 use std::net::SocketAddr;
 
+pub use self::consumer::{ConsumerState, ConsumerFilter};
+pub use self::namespace::NamespaceGlob;
 pub type ConnectionId = usize;
 
 static CURRENT_CONNECTION_ID: atomic::AtomicUsize = atomic::ATOMIC_USIZE_INIT;
@@ -111,11 +116,12 @@ impl ReceivedMessage {
     }
 }
 
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum ConsumerManagerMessage {
     Connect(ClientConnect),
     Disconnect(ConnectionId, SocketAddr),
-    ContinueConsuming(ConnectionId, FloEventId, u64),
+    ContinueConsuming(ConsumerState),
     EventPersisted(ConnectionId, OwnedFloEvent),
     StartPeerReplication(ConnectionId, ActorId, Vec<FloEventId>),
     EventLoaded(ConnectionId, OwnedFloEvent),
