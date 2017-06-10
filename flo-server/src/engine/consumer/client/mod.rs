@@ -2,6 +2,9 @@ mod connection_manager;
 mod context;
 mod connection_state;
 
+pub use self::context::{ConnectionContext, CursorType};
+pub use self::connection_manager::ClientConnection;
+
 use event::{FloEvent, FloEventId, ActorId, OwnedFloEvent, VersionVector};
 use engine::api::{ConnectionId, ClientConnect, NamespaceGlob, ConsumerState};
 use protocol::{ServerMessage, ProtocolMessage};
@@ -9,9 +12,35 @@ use channels::Sender;
 
 use futures::sync::mpsc::UnboundedSender;
 
+use std::collections::HashMap;
 use std::error::Error;
 use std::net::SocketAddr;
 use std::sync::Arc;
+
+
+//pub struct ConnectionMap<C: ConnectionContext> {
+//    connections: HashMap<ConnectionId, ClientConnection>,
+//    cursor_creator: C,
+//}
+//
+//impl ConnectionMap {
+//
+//    pub fn handle(&mut self, connection_id: ConnectionId, message: ProtocolMessage) -> Result<(), ProtocolMessage> {
+//        let ConnectionMap{ref mut connections, ref mut cursor_creator} = *self;
+//
+//        if let Some(connection) = connections.get_mut(&connection_id) {
+//            if let Err(()) = connection.message_received(message, cursor_creator) {
+//                error!("Error handling message for connection_id: {}", connection_id);
+//            }
+//            Ok(())
+//        } else {
+//            Err(message)
+//        }
+//    }
+//
+//    pub fn new_connection(&mut self, )
+//}
+
 
 
 static SEND_ERROR_DESC: &'static str = "Failed to send message through Client Channel";

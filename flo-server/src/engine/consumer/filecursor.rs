@@ -10,6 +10,7 @@ use event::{OwnedFloEvent, FloEventId, VersionVector};
 use engine::api::{ConnectionId, ConsumerState};
 use engine::event_store::EventReader;
 use protocol::{ErrorMessage, ErrorKind, ProtocolMessage, ServerMessage};
+use channels::Sender;
 
 pub trait Cursor {
     fn send(&mut self, message: CursorMessage) -> Result<(), ()>;
@@ -54,8 +55,8 @@ impl PartialEq for Cursor {
     }
 }
 
-pub fn start<R: EventReader + 'static>(mut state: ConsumerState,
-                                       sender: f_mpsc::UnboundedSender<ServerMessage>,
+pub fn start<S: Sender<ServerMessage> + 'static, R: EventReader + 'static>(mut state: ConsumerState,
+                                       sender: S,
                                        mut reader: &mut R) -> io::Result<CursorImpl> {
 
     let connection_id = state.connection_id;
@@ -123,7 +124,7 @@ pub fn start<R: EventReader + 'static>(mut state: ConsumerState,
     })
 }
 
-fn send_next_event<I, E: Debug>(iter: &mut I, client: &mut ConsumerState, sender: &f_mpsc::UnboundedSender<ServerMessage>) -> Result<bool, String> where I: Iterator<Item=Result<OwnedFloEvent, E>> {
+fn send_next_event<I, S: Sender<ServerMessage>, E: Debug>(iter: &mut I, client: &mut ConsumerState, sender: &S) -> Result<bool, String> where I: Iterator<Item=Result<OwnedFloEvent, E>> {
     loop {
         let next_event = match iter.next() {
             Some(event_result) => {

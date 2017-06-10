@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use std::collections::{BTreeMap, Bound};
+use std::collections::btree_map::Range;
 
 use event::{FloEventId, FloEvent, OwnedFloEvent};
 use server::MemoryLimit;
@@ -38,6 +39,10 @@ impl Cache {
                 break;
             }
         }
+    }
+
+    pub fn iter(&self, start_exclusive: FloEventId) -> Range<FloEventId, Arc<OwnedFloEvent>> {
+        self.entries.range((Bound::Excluded(&start_exclusive), Bound::Unbounded))
     }
 
     pub fn insert(&mut self, event: OwnedFloEvent) -> Arc<OwnedFloEvent> {

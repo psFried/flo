@@ -2,18 +2,21 @@ mod client;
 mod cache;
 mod filecursor;
 
-pub use self::client::{ClientImpl};
-
-use engine::api::{ConnectionId, ClientConnect, ConsumerManagerMessage, ReceivedMessage, NamespaceGlob};
-use protocol::{ProtocolMessage, ErrorMessage, ErrorKind, ConsumerStart};
+use engine::api::{ConnectionId, ClientConnect, ConsumerManagerMessage, ReceivedMessage, NamespaceGlob, ConsumerState};
+use protocol::{ProtocolMessage, ErrorMessage, ErrorKind, ConsumerStart, ServerMessage};
 use event::{FloEvent, OwnedFloEvent, FloEventId, ActorId, VersionVector};
 use std::sync::{Arc, mpsc};
 use std::thread;
 use std::collections::HashMap;
 
+use self::client::{ClientConnection, ConnectionContext, CursorType};
 use self::cache::Cache;
 use server::MemoryLimit;
 use engine::event_store::EventReader;
+use futures::sync::mpsc::UnboundedSender;
+use channels::Sender;
+
+pub const DEFAULT_BATCH_SIZE: u64 = 10_000;
 
 struct ManagerState<R: EventReader + 'static> {
     event_reader: R,
@@ -29,11 +32,55 @@ impl <R: EventReader + 'static> ManagerState<R> {
             self.greatest_event_id = id;
         }
     }
+
 }
 
+impl <R: EventReader + 'static> ConnectionContext for ManagerState<R> {
+    fn start_consuming<S: Sender<ServerMessage> + 'static>(&mut self, mut consumer_state: ConsumerState, client_sender: &S) -> Result<CursorType, String> {
+        use std::clone::Clone;
+
+        let last_cache_evicted = self.cache.last_evicted_id();
+        let connection_id = consumer_state.connection_id;
+        let start_id = consumer_state.version_vector.min();
+        debug!("connection_id: {} starting to consume starting at: {:?}, cache last evicted id: {:?}", connection_id, start_id, last_cache_evicted);
+        if start_id < last_cache_evicted {
+            // Clone the client sender since we'll need to pass it over to the cursor's thread
+            self::filecursor::start(consumer_state, (*client_sender).clone(), &mut self.event_reader).map(|cursor| {
+                CursorType::File(Box::new(cursor))
+            }).map_err(|io_err| {
+                error!("Failed to create file cursor for consumer: {:?}, err: {:?}", connection_id, io_err);
+                format!("Error creating cursor: {}", io_err)
+            })
+        } else {
+            debug!("Sending events from cache for connection_id: {}", connection_id);
+
+            for (ref id, ref event) in self.cache.iter(start_id) {
+                if consumer_state.should_send_event(&*event) {
+                    trace!("Sending event from cache. connection_id: {}, event_id: {:?}", connection_id, id);
+                    client_sender.send(ServerMessage::Event((*event).clone())).map_err(|_| {
+                        error!("Failed to send event: {} to client sender for connection_id: {}", id, connection_id);
+                        format!("Failed to send event: {} to client sender for connection_id: {}", id, connection_id)
+                    })?; //early return with error if send fails
+                    consumer_state.event_sent(**id); // update consumer state
+                } else {
+                    trace!("Not sending event: {:?} to connection_id: {} due to mismatched namespace", id, connection_id);
+                }
+                // if the batch is not yet exhausted, then keep going
+                if consumer_state.is_batch_exhausted() {
+                    break;
+                }
+            }
+
+            debug!("Finished sending events from cache for consumer: {:?}", consumer_state);
+            Ok(CursorType::InMemory(consumer_state))
+        }
+    }
+} 
+
 pub struct ConsumerManager<R: EventReader + 'static> {
-    consumers: ConsumerMap,
+    consumers: ConsumerMap<UnboundedSender<ServerMessage>>,
     state: ManagerState<R>,
+    default_batch_size: u64,
 }
 
 impl <R: EventReader + 'static> ConsumerManager<R> {
@@ -46,13 +93,17 @@ impl <R: EventReader + 'static> ConsumerManager<R> {
                 greatest_event_id: greatest_event_id,
                 cache: Cache::new(max_cached_events, max_cache_memory, greatest_event_id),
             },
+            default_batch_size: DEFAULT_BATCH_SIZE,
         }
     }
 
     pub fn process(&mut self, message: ConsumerManagerMessage) -> Result<(), String> {
         match message {
             ConsumerManagerMessage::Connect(connect) => {
-                self.consumers.add(connect);
+                let ClientConnect {connection_id, client_addr, message_sender} = connect;
+
+                let consumer = ClientConnection::new(connection_id, client_addr, message_sender, self.default_batch_size);
+                self.consumers.add(consumer);
                 Ok(())
             }
             ConsumerManagerMessage::Disconnect(connection_id, client_address) => {
@@ -60,21 +111,20 @@ impl <R: EventReader + 'static> ConsumerManager<R> {
                 self.consumers.remove(connection_id);
                 Ok(())
             }
+            // TODO: Remove these three messages
             ConsumerManagerMessage::ContinueConsuming(consumer_state) => {
                 unimplemented!()
             }
             ConsumerManagerMessage::StartPeerReplication(connection_id, actor_id, peer_versions) => {
-                self.start_peer_replication(connection_id, actor_id, peer_versions)
+                unimplemented!()
+            }
+            ConsumerManagerMessage::EventLoaded(connection_id, event) => {
+                unimplemented!()
             }
             ConsumerManagerMessage::EventPersisted(_connection_id, event) => {
                 self.state.update_greatest_event(event.id);
                 let event_rc = self.state.cache.insert(event);
                 self.consumers.send_event_to_all(event_rc)
-            }
-            ConsumerManagerMessage::EventLoaded(connection_id, event) => {
-                //TODO: think about caching events as they are loaded from disk. Currently we prefer to only cache the most recent events
-                self.state.update_greatest_event(event.id);
-                self.consumers.send_event(connection_id, Arc::new(event))
             }
             ConsumerManagerMessage::Receive(received_message) => {
                 self.process_received_message(received_message)
@@ -83,218 +133,49 @@ impl <R: EventReader + 'static> ConsumerManager<R> {
     }
 
     fn process_received_message(&mut self, ReceivedMessage{sender, message, ..}: ReceivedMessage) -> Result<(), String> {
-        match message {
-            ProtocolMessage::UpdateMarker(event_id) => {
-                self.consumers.update_consumer_position(sender, event_id);
-                Ok(())
-            }
-            ProtocolMessage::StartConsuming(ConsumerStart{max_events, namespace}) => {
-                self.require_client(sender, move |mut client, mut state| {
-                    ConsumerManager::start_consuming(state, client, namespace, max_events)
-                })
-            }
-            ProtocolMessage::AckEvent(ack) => {
-                self.consumers.update_consumer_position(sender, ack.event_id);
-                Ok(())
-            }
-            other @ _ => {
-                error!("Unexpected message: {:?}", other);
-//                Err(format!("Unexpected message: {:?}", other))
-                Ok(())
-            }
-        }
-    }
-
-    fn start_peer_replication(&mut self, connection_id: ConnectionId, from_actor: ActorId, actor_versions: Vec<FloEventId>) -> Result<(), String> {
-        debug!("Attempting to start peer replication to connection_id: {}, actor_id: {}, version_vector: {:?}",
-                connection_id, from_actor, actor_versions);
-
-        self.require_client(connection_id, |client, manager_state|{
-            VersionVector::from_vec(actor_versions).map_err(|err| {
-                ErrorMessage {
-                    op_id: 0,
-                    kind: ErrorKind::InvalidVersionVector,
-                    description: err,
-                }
-            }).and_then(|version_vec| {
-                let start_id = version_vec.min();
-                client.start_peer_replication(from_actor, version_vec).map_err(|err| {
-                    ErrorMessage {
-                        op_id: 0,
-                        kind: ErrorKind::InvalidConsumerState,
-                        description: err,
-                    }
-                }).map(|()| start_id)
-            }).map(|start_id| {
-                ConsumerManager::send_events(manager_state, client, start_id, ::std::u64::MAX);
+        let ConsumerManager{ref mut consumers, ref mut state, ..} = *self;
+        consumers.get_mut(sender).and_then(|client| {
+            client.message_received(message, state).map_err(|()| {
+                format!("Error processing message for connection_id: {}", client.connection_id)
             })
         })
     }
 
 
-    fn require_client<F>(&mut self, connection_id: ConnectionId, with_client: F) -> Result<(), String>
-            where F: FnOnce(&mut ClientImpl, &mut ManagerState<R>) -> Result<(), ErrorMessage> {
 
-        let ConsumerManager{ref mut consumers, ref mut state, ..} = *self;
-
-        consumers.get_mut(connection_id).and_then(|client| {
-
-            if let Err(message) = with_client(client, state) {
-                debug!("Sending error message to connection_id: {} - {:?}", connection_id, message);
-                client.send_message(ProtocolMessage::Error(message))
-            } else {
-                Ok(())
-            }
-        })
-    }
-
-    fn start_consuming(state: &mut ManagerState<R>, client: &mut ClientImpl, namespace: String, limit: u64) -> Result<(), ErrorMessage> {
-
-        let namespace_glob = NamespaceGlob::new(&namespace).map_err(|description| {
-            ErrorMessage{
-                op_id: 0,
-                kind: ErrorKind::InvalidNamespaceGlob,
-                description: description
-            }
-        })?; // early return if namespace glob parse fails
-
-        let start_id = {
-            let version_vec = client.consume_from_namespace(namespace_glob, limit).map_err(|description| {
-                ErrorMessage{
-                    op_id: 0,
-                    kind: ErrorKind::InvalidConsumerState,
-                    description: description
-                }
-            })?; // early return if the client is not in a valid state to start consuming
-            version_vec.min()
-        };
-
-        ConsumerManager::send_events(state, client, start_id, limit);
-        Ok(())
-    }
-
-    fn send_events(state: &mut ManagerState<R>, client: &mut ClientImpl, start_id: FloEventId, limit: u64) {
-        let last_cache_evicted = state.cache.last_evicted_id();
-        let connection_id = client.connection_id;
-        debug!("connection_id: {} starting to consume starting at: {:?}, cache last evicted id: {:?}", connection_id, start_id, last_cache_evicted);
-        if start_id < last_cache_evicted {
-
-            consume_from_file(state.my_sender.clone(), connection_id, &mut state.event_reader, start_id, limit);
-
-        } else {
-            debug!("Sending events from cache for connection_id: {}", connection_id);
-            let mut remaining = limit;
-            state.cache.do_with_range(start_id, |id, event| {
-                if client.should_send_event(&*event) {
-                    trace!("Sending event from cache. connection_id: {}, event_id: {:?}", connection_id, id);
-                    remaining -= 1;
-                    let result = client.send_event(event.clone());
-                    result.is_ok() && remaining > 0
-                } else {
-                    trace!("Not sending event: {:?} to connection_id: {} due to mismatched namespace", id, connection_id);
-                    true
-                }
-            });
-
-            if remaining > 0 {
-                debug!("Sent all existing events for connection_id: {}, Awaiting new Events", connection_id);
-                client.send_message_log_error(ProtocolMessage::AwaitingEvents, "AwaitingEvents");
-            } else {
-                debug!("Finished sending requested number of events for connection_id: {}, not awaiting more", connection_id);
-            }
-        }
-    }
 }
 
-fn consume_from_file<R: EventReader + 'static>(event_sender: mpsc::Sender<ConsumerManagerMessage>,
-                                               connection_id: ConnectionId,
-                                               event_reader: &mut R,
-                                               start_id: FloEventId,
-                                               limit: u64) {
-    unimplemented!()
-//    // need to read event from disk since it isn't in the cache
-//    let event_iter = event_reader.load_range(start_id, limit as usize);
-//
-//    thread::spawn(move || {
-//        let mut sent_events = 0;
-//        let mut last_sent_id = FloEventId::zero();
-//        for event in event_iter {
-//            match event {
-//                Ok(owned_event) => {
-//                    trace!("Reader thread sending event: {:?} to consumer manager", owned_event.id());
-//                    //TODO: is unwrap the right thing here?
-//                    last_sent_id = *owned_event.id();
-//                    event_sender.send(ConsumerManagerMessage::EventLoaded(connection_id, owned_event)).expect("Failed to send EventLoaded message");
-//                    sent_events += 1;
-//                }
-//                Err(err) => {
-//                    error!("Error reading event: {:?}", err);
-//                    //TODO: send error message to consumer manager instead of just dying silently
-//                    break;
-//                }
-//            }
-//        }
-//        debug!("Finished reader thread for connection_id: {}, sent_events: {}, last_send_event: {:?}", connection_id, sent_events, last_sent_id);
-//        if sent_events < limit as usize {
-//            let continue_message = ConsumerManagerMessage::ContinueConsuming(connection_id, last_sent_id, limit - sent_events as u64);
-//            event_sender.send(continue_message).expect("Failed to send continue_message");
-//        }
-//    });
-}
+pub struct ConsumerMap<S: Sender<ServerMessage> + 'static>(HashMap<ConnectionId, ClientConnection<S>>);
 
-pub struct ConsumerMap(HashMap<ConnectionId, ClientImpl>);
-impl ConsumerMap {
-    pub fn new() -> ConsumerMap {
+
+impl <S: Sender<ServerMessage> + 'static> ConsumerMap<S> {
+    pub fn new() -> ConsumerMap<S> {
         ConsumerMap(HashMap::with_capacity(32))
     }
 
-    pub fn add(&mut self, connect: ClientConnect) {
-        let connection_id = connect.connection_id;
-        self.0.insert(connection_id, ClientImpl::from_client_connect(connect));
+    pub fn add(&mut self, conn: ClientConnection<S>) {
+        let connection_id = conn.connection_id;
+        self.0.insert(connection_id, conn);
     }
 
     pub fn remove(&mut self, connection_id: ConnectionId) {
         self.0.remove(&connection_id);
     }
 
-    pub fn get_mut(&mut self, connection_id: ConnectionId) -> Result<&mut ClientImpl, String> {
+    pub fn get_mut(&mut self, connection_id: ConnectionId) -> Result<&mut ClientConnection<S>, String> {
         self.0.get_mut(&connection_id).ok_or_else(|| {
             format!("No Client exists for connection id: {}", connection_id)
         })
     }
 
-    pub fn update_consumer_position(&mut self, connection_id: ConnectionId, new_position: FloEventId) {
-        if let Some(consumer) = self.0.get_mut(&connection_id) {
-            consumer.update_version_vector(new_position);
-        }
-    }
-
-    pub fn send_event(&mut self, connection_id: ConnectionId, event: Arc<OwnedFloEvent>) -> Result<(), String> {
-        self.0.get_mut(&connection_id).ok_or_else(|| {
-            format!("Cannot send event to consumer because consumer: {} does not exist", connection_id)
-        }).and_then(|mut client| {
-            ConsumerMap::maybe_send_event_to_client(client, &event)
-        })
-    }
-
     pub fn send_event_to_all(&mut self, event: Arc<OwnedFloEvent>) -> Result<(), String> {
         for client in self.0.values_mut() {
-            let result = ConsumerMap::maybe_send_event_to_client(client, &event);
-            if let Err(message) = result {
-                warn!("Failed to send event: {} to connection_id: {} due to error: '{}'", event.id(), client.connection_id, message);
+            let result = client.maybe_send_event(&event);
+            if let Err(()) = result {
+                warn!("Failed to send event: {} to connection_id: {}", event.id(), client.connection_id);
             }
         }
         Ok(())
-    }
-
-    fn maybe_send_event_to_client(client: &mut ClientImpl, event: &Arc<OwnedFloEvent>) -> Result<(), String> {
-        let should_send = client.should_send_event(&**event);
-        trace!("Checking to send event: {:?}, to connection_id: {}, {:?}", event.id(), client.connection_id(), should_send);
-        if should_send {
-            client.send_event(event.clone())
-        } else {
-            Ok(())
-        }
     }
 }
 
@@ -311,6 +192,7 @@ mod test {
     use server::{MemoryLimit, MemoryUnit};
     use std::sync::mpsc::{channel, Receiver};
     use std::sync::{Arc, Mutex};
+    use channels::MockSender;
 
     use futures::sync::mpsc::{unbounded, UnboundedReceiver};
 
@@ -333,6 +215,7 @@ mod test {
                 greatest_event_id: max_event_id,
                 cache: cache,
             },
+            default_batch_size: super::DEFAULT_BATCH_SIZE,
         };
         (consumer_manager, rx)
     }

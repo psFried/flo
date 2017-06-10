@@ -6,28 +6,34 @@ use engine::api::{ConnectionId, NamespaceGlob, ConsumerFilter, ConsumerState, Cl
 use protocol::{ProtocolMessage, ServerMessage, ErrorMessage, ErrorKind};
 use super::connection_state::{ConnectionState};
 
+use std::sync::Arc;
 use std::fmt::{self, Debug};
 use std::net::SocketAddr;
 use futures::sync::mpsc::UnboundedSender;
+use channels::Sender;
 
 
-pub struct ClientConnection {
-    connection_id: ConnectionId,
-    address: SocketAddr,
-    client_sender: UnboundedSender<ServerMessage>,
+pub struct ClientConnection<S: Sender<ServerMessage> + 'static> {
+    pub connection_id: ConnectionId,
+    pub address: SocketAddr,
+    client_sender: S,
     state: ConnectionState,
 }
 
-impl ClientConnection {
+impl <S: Sender<ServerMessage> + 'static> ClientConnection<S> {
 
-    fn from_client_connect(conn: ClientConnect, batch_size: u64) -> ClientConnection {
-        let ClientConnect {connection_id, client_addr, message_sender} = conn;
+    pub fn new(connection_id: ConnectionId, addr: SocketAddr, sender: S, batch_size: u64) -> ClientConnection<S> {
         ClientConnection {
             connection_id: connection_id,
-            address: client_addr,
-            client_sender: message_sender,
+            address: addr,
+            client_sender: sender,
             state: ConnectionState::init(batch_size),
         }
+    }
+
+    pub fn from_client_connect(conn: ClientConnect, batch_size: u64) -> ClientConnection<UnboundedSender<ServerMessage>> {
+        let ClientConnect {connection_id, client_addr, message_sender} = conn;
+        ClientConnection::new(connection_id, client_addr, message_sender, batch_size)
     }
 
     pub fn message_received<C: ConnectionContext>(&mut self, message: ProtocolMessage, context: &mut C) -> Result<(), ()> {
@@ -43,7 +49,7 @@ impl ClientConnection {
             }
             &ProtocolMessage::StartConsuming(ref start) => {
                 self.state.create_consumer_state(self.connection_id, start).and_then(|consumer_state| {
-                    ClientConnection::create_cursor(context, consumer_state, self.client_sender.clone()).map(|cursor| {
+                    ClientConnection::create_cursor(context, consumer_state, &self.client_sender).map(|cursor| {
                         self.state = ConnectionState::new(cursor);
                     })
                 })
@@ -66,6 +72,26 @@ impl ClientConnection {
         }
     }
 
+    pub fn maybe_send_event(&mut self, event: &Arc<OwnedFloEvent>) -> Result<(), ()> {
+        let should_send = {
+            let event_ref = event.as_ref();
+            self.state.should_send_event(event_ref)
+        };
+        if should_send {
+            let id = event.id;
+            let result = self.client_sender.send(ServerMessage::Event(event.clone())).map_err(|_| ());
+            if result.is_ok() {
+                debug!("Sent event: {} to connection_id: {}", id, self.connection_id);
+                self.state.event_sent(id);
+            }
+            result
+        } else {
+            Ok(())
+        }
+    }
+
+
+
     fn next_batch<C: ConnectionContext>(&mut self, context: &mut C) -> Result<(), ErrorMessage> {
         let mut new_state: Option<ConnectionState> = None;
 
@@ -79,8 +105,9 @@ impl ClientConnection {
                     }
                 })?;
             }
-            ConnectionState::InMemoryConsumer(ref state) => {
-                let new_cursor = ClientConnection::create_cursor(context, state.clone(), self.client_sender.clone())?;
+            ConnectionState::InMemoryConsumer(ref mut state) => {
+                state.start_new_batch();
+                let new_cursor = ClientConnection::create_cursor(context, state.clone(), &self.client_sender)?;
                 new_state = Some(ConnectionState::new(new_cursor));
             }
             ConnectionState::NotConsuming(_) => {
@@ -98,7 +125,7 @@ impl ClientConnection {
         Ok(())
     }
 
-    fn create_cursor<C: ConnectionContext>(context: &mut C, consumer: ConsumerState, sender: UnboundedSender<ServerMessage>) -> Result<CursorType, ErrorMessage> {
+    fn create_cursor<C: ConnectionContext>(context: &mut C, consumer: ConsumerState, sender: &S) -> Result<CursorType, ErrorMessage> {
         context.start_consuming(consumer, sender).map_err(|err| {
             ErrorMessage {
                 op_id: 0,
@@ -122,86 +149,137 @@ impl ClientConnection {
 #[cfg(test)]
 mod test {
     use super::*;
-    use event::{FloEventId, OwnedFloEvent, VersionVector};
+    use event::{FloEventId, OwnedFloEvent, VersionVector, Timestamp};
+    use event::time::from_millis_since_epoch;
     use engine::consumer::client::context::{ConnectionContext, CursorType};
     use engine::consumer::client::connection_state::{IdleState, ConnectionState};
     use engine::consumer::filecursor::{Cursor, CursorMessage};
     use engine::api::{ConnectionId, NamespaceGlob, ConsumerFilter, ConsumerState, ClientConnect};
     use protocol::{ProtocolMessage, ServerMessage, ConsumerStart};
 
+    use channels::{Sender, MockSender};
     use futures::sync::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
     use std::net::{SocketAddr, SocketAddrV4, Ipv4Addr};
 
     #[test]
-    fn continue_batch_continues_the_batch() {
-        let mut subject = TestConnection::with_state(ConnectionState::init(999));
+    fn maybe_send_event_sends_only_events_matching_filter() {
+        let namespace = "/foo".to_owned();
+        let mut subject = subject_with_state(ConnectionState::init(999));
 
-        let mut ctx = MockContext::new();
+        let mut ctx = InMemoryMockContext::new();
         let start_message = ConsumerStart{
             max_events: 3,
-            namespace: "/foo".to_owned(),
+            namespace: namespace.clone(),
         };
-        subject.connection.message_received(ProtocolMessage::StartConsuming(start_message), &mut ctx).unwrap();
+        subject.message_received(ProtocolMessage::StartConsuming(start_message), &mut ctx).unwrap();
+
+        let expected_state = ConsumerState::new(CONNECTION_ID,
+                                                VersionVector::new(),
+                                                ConsumerFilter::Namespace(NamespaceGlob::new(&namespace).unwrap()),
+                                                999);
+
+        ctx.assert_argument_received(expected_state);
+
+        let data = "data for event".to_owned().into_bytes();
+        let timestamp = from_millis_since_epoch(678910);
+        let expected_event = Arc::new(OwnedFloEvent::new(FloEventId::new(1, 7), None, timestamp, namespace.clone(), data.clone()));
+        let extra_event = Arc::new(OwnedFloEvent::new(FloEventId::new(1, 8), None, timestamp, "/bar".to_owned(), data));
+
+        subject.maybe_send_event(&expected_event).unwrap();
+        subject.maybe_send_event(&extra_event).unwrap();
+
+        subject.client_sender.assert_message_sent(ServerMessage::Event(expected_event));
+        subject.client_sender.assert_no_more_messages_sent();
     }
 
     #[test]
-    fn start_consuming_creates_consumer_with_default_options() {
-        let mut subject = TestConnection::with_state(ConnectionState::init(999));
+    fn continue_batch_continues_the_batch() {
+        let namespace = "/foo".to_owned();
+        let mut subject = subject_with_state(ConnectionState::init(888888));
 
-        let mut ctx = MockContext::new();
+        let mut ctx = InMemoryMockContext::new();
+        subject.message_received(ProtocolMessage::SetBatchSize(5), &mut ctx).unwrap();
+
+        let start_message = ConsumerStart{
+            max_events: 3, //TODO: remove max_events field
+            namespace: namespace.clone(),
+        };
+        subject.message_received(ProtocolMessage::StartConsuming(start_message), &mut ctx).unwrap();
+        let expected_state = ConsumerState::new(CONNECTION_ID,
+                                                VersionVector::new(),
+                                                ConsumerFilter::Namespace(NamespaceGlob::new(&namespace).unwrap()),
+                                                5);
+
+        ctx.assert_argument_received(expected_state);
+
+        let data = "data for event".to_owned().into_bytes();
+        let timestamp = from_millis_since_epoch(678910);
+        for i in 1..6 {
+            let id = FloEventId::new(1, i);
+            let expected_event = Arc::new(OwnedFloEvent::new(id, None, timestamp, namespace.clone(), data.clone()));
+            subject.maybe_send_event(&expected_event).unwrap();
+            subject.client_sender.assert_message_sent(ServerMessage::Event(expected_event));
+        }
+
+        let extra_event = Arc::new(OwnedFloEvent::new(FloEventId::new(1, 7), None, timestamp, namespace.clone(), data.clone()));
+        subject.maybe_send_event(&extra_event).unwrap();
+        subject.client_sender.assert_no_more_messages_sent();
+
+        let mut ctx = InMemoryMockContext::new();
+        subject.message_received(ProtocolMessage::NextBatch, &mut ctx).unwrap();
+
+        let mut expected_version_vec = VersionVector::new();
+        expected_version_vec.set(FloEventId::new(1, 5));
+        let expected_state = ConsumerState::new(CONNECTION_ID,
+                                                expected_version_vec,
+                                                ConsumerFilter::Namespace(NamespaceGlob::new(&namespace).unwrap()),
+                                                5);
+        ctx.assert_argument_received(expected_state);
+
+        subject.maybe_send_event(&extra_event).unwrap();
+
+        subject.client_sender.assert_message_sent(ServerMessage::Event(extra_event));
+    }
+
+
+    #[test]
+    fn start_consuming_creates_consumer_with_default_options() {
+        let mut subject = subject_with_state(ConnectionState::init(999));
+
+        let mut ctx = MockContext::returning_file_cursor();
         let start_message = ConsumerStart{
             max_events: 3,
             namespace: "/foo".to_owned(),
         };
-        subject.connection.message_received(ProtocolMessage::StartConsuming(start_message), &mut ctx).unwrap();
+        subject.message_received(ProtocolMessage::StartConsuming(start_message), &mut ctx).unwrap();
 
-        let (state, _) = ctx.file_cursor_args.unwrap();
+        let state = ctx.start_consuming_args.unwrap();
         assert_eq!(ConsumerFilter::Namespace(NamespaceGlob::new("/foo").unwrap()), state.filter);
     }
 
     #[test]
     fn update_marker_sets_id_in_version_vec_when_connection_is_not_consuming() {
-        let mut subject = TestConnection::with_state(ConnectionState::init(999));
+        let mut subject = subject_with_state(ConnectionState::init(999));
         let id = FloEventId::new(8, 9);
-        subject.connection.message_received(ProtocolMessage::UpdateMarker(id), &mut MockContext::new());
+        subject.message_received(ProtocolMessage::UpdateMarker(id), &mut MockContext::returning_file_cursor());
 
-        expect_not_consuming_state(&subject.connection, |idle_state| {
+        expect_not_consuming_state(&subject, |idle_state| {
             assert_eq!(9, idle_state.version_vector.get(8));
         });
     }
 
     #[test]
     fn set_batch_size_updates_batch_size_when_connection_is_not_consuming() {
-        let mut subject = TestConnection::with_state(ConnectionState::init(999));
+        let mut subject = subject_with_state(ConnectionState::init(999));
 
-        subject.connection.message_received(ProtocolMessage::SetBatchSize(888), &mut MockContext::new());
+        subject.message_received(ProtocolMessage::SetBatchSize(888), &mut MockContext::returning_file_cursor());
 
-        expect_not_consuming_state(&subject.connection, |idle_state| {
+        expect_not_consuming_state(&subject, |idle_state| {
             assert_eq!(888, idle_state.batch_size);
         });
     }
 
-    #[test]
-    fn connection_is_created_from_client_connect() {
-        let (tx, rx) = unbounded();
-        let input = ClientConnect{
-            connection_id: CONNECTION_ID,
-            client_addr: address(),
-            message_sender: tx,
-        };
-
-        let result = ClientConnection::from_client_connect(input, BATCH_SIZE);
-        assert_eq!(CONNECTION_ID, result.connection_id);
-        assert_eq!(address(), result.address);
-
-        let expected_state = ConnectionState::NotConsuming(IdleState{
-            version_vector: VersionVector::new(),
-            batch_size: BATCH_SIZE
-        });
-        assert_eq!(expected_state, result.state);
-    }
-
-    fn expect_not_consuming_state<F>(conn: &ClientConnection, fun: F) where F: Fn(&IdleState) {
+    fn expect_not_consuming_state<F>(conn: &ClientConnection<MockSender<ServerMessage>>, fun: F) where F: Fn(&IdleState) {
         match &conn.state {
             &ConnectionState::NotConsuming(ref idle) => fun(&idle),
             other @ _ => {
@@ -216,46 +294,73 @@ mod test {
         SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(1, 2, 3, 4), 6789))
     }
 
-    struct TestConnection {
-        connection: ClientConnection,
-        receiver: UnboundedReceiver<ServerMessage>,
+    type TestConnection = ClientConnection<MockSender<ServerMessage>>;
+
+    fn subject_with_state(state: ConnectionState) -> TestConnection {
+        ClientConnection {
+            connection_id: CONNECTION_ID,
+            address: address(),
+            client_sender: MockSender::new(),
+            state: state,
+        }
     }
 
-    impl TestConnection {
-        fn with_state(state: ConnectionState) -> TestConnection {
-            let (tx, rx) = unbounded();
-            let conn = ClientConnection {
-                connection_id: CONNECTION_ID,
-                address: address(),
-                client_sender: tx,
-                state: state,
-            };
-            TestConnection {
-                connection: conn,
-                receiver: rx
-            }
+
+    fn assert_events_sent_in_order(subject: &TestConnection, expected: Vec<Arc<OwnedFloEvent>>) {
+        let mut count = 0;
+        let expected_count = expected.len();
+
+        for expected_event in expected {
+
         }
     }
 
     struct MockContext {
-        file_cursor_return_val: Option<Result<CursorType, String>>,
-        file_cursor_args: Option<(ConsumerState, UnboundedSender<ServerMessage>)>,
+        start_consuming_return_val: Option<Result<CursorType, String>>,
+        start_consuming_args: Option<ConsumerState>,
     }
 
     impl ConnectionContext for MockContext {
-        fn start_consuming(&mut self, consumer_state: ConsumerState, client_sender: UnboundedSender<ServerMessage>) -> Result<CursorType, String> {
-            let ret_val = self.file_cursor_return_val.take().unwrap();
-            self.file_cursor_args = Some((consumer_state, client_sender));
+        fn start_consuming<S: Sender<ServerMessage>>(&mut self, consumer_state: ConsumerState, client_sender: &S) -> Result<CursorType, String> {
+            let ret_val = self.start_consuming_return_val.take().unwrap();
+            self.start_consuming_args = Some(consumer_state);
             ret_val
         }
     }
 
     impl MockContext {
-        fn new() -> MockContext {
+        fn returning_file_cursor() -> MockContext {
             MockContext {
-                file_cursor_return_val: Some(Ok(CursorType::File(Box::new(MockCursor::new())))),
-                file_cursor_args: None
+                start_consuming_return_val: Some(Ok(CursorType::File(Box::new(MockCursor::new())))),
+                start_consuming_args: None
             }
+        }
+
+        fn assert_argument_received(&self, expected: ConsumerState) {
+            assert_eq!(Some(expected), self.start_consuming_args)
+        }
+    }
+
+    struct InMemoryMockContext {
+        arg: Option<ConsumerState>
+    }
+
+    impl ConnectionContext for InMemoryMockContext {
+        fn start_consuming<S: Sender<ServerMessage> + 'static>(&mut self, consumer_state: ConsumerState, client_sender: &S) -> Result<CursorType, String> {
+            assert!(self.arg.is_none(), "start_consuming has already been called");
+            self.arg = Some(consumer_state.clone());
+            Ok(CursorType::InMemory(consumer_state))
+        }
+    }
+
+    impl InMemoryMockContext {
+        fn new() -> InMemoryMockContext {
+            InMemoryMockContext {
+                arg: None
+            }
+        }
+        fn assert_argument_received(&self, expected: ConsumerState) {
+            assert_eq!(Some(expected), self.arg);
         }
     }
 

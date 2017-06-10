@@ -36,7 +36,7 @@ impl <T> From<stdchannels::SendError<T>> for SendError<T> {
     }
 }
 
-pub trait Sender<T> {
+pub trait Sender<T>: Clone + Send {
     fn send(&self, message: T) -> Result<(), SendError<T>>;
 }
 
@@ -46,7 +46,8 @@ impl <T> Sender<T> for fchannels::UnboundedSender<T> where T: Send {
     }
 }
 
-impl <T> Sender<T> for stdchannels::Sender<T> where T: Send {
+//TODO: remove +Clone bound
+impl <T> Sender<T> for stdchannels::Sender<T> where T: Send + Clone {
     fn send(&self, message: T) -> Result<(), SendError<T>> {
         self.send(message).map_err(|err| err.into())
     }
@@ -59,13 +60,15 @@ pub use self::test_util::MockSender;
 #[allow(dead_code)]
 mod test_util {
     use super::*;
+    use std::fmt::Debug;
     use std::sync::{Arc, Mutex};
 
+    #[derive(Clone)]
     pub struct MockSender<T> {
         sent_values: Arc<Mutex<Vec<T>>>
     }
 
-    impl <T> MockSender<T> {
+    impl <T: Debug> MockSender<T> {
         pub fn new() -> MockSender<T> {
             MockSender {
                 sent_values: Arc::new(Mutex::new(Vec::new()))
@@ -82,9 +85,14 @@ mod test_util {
                     assert_eq!(expected, message);
                 }
                 None => {
-                    panic!("Expected message: {:?}, but no messages were sent")
+                    panic!("Expected message: {:?}, but no messages were sent", expected)
                 }
             }
+        }
+
+        pub fn assert_no_more_messages_sent(&self) {
+            let messages = self.sent_values.lock().unwrap();
+            assert!(messages.is_empty(), "Expected no more messages, got: {:?}", *messages)
         }
 
         pub fn get_sent_messages(&mut self) -> Vec<T> {
@@ -94,7 +102,7 @@ mod test_util {
 
     }
 
-    impl <T> Sender<T> for MockSender<T> {
+    impl <T> Sender<T> for MockSender<T> where T: Clone + Send {
         fn send(&self, message: T) -> Result<(), SendError<T>> {
             let mut values = self.sent_values.lock().unwrap();
             values.push(message);
