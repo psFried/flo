@@ -1,9 +1,10 @@
-use event::{FloEventId, VersionVector};
+use event::{FloEventId, VersionVector, OwnedFloEvent};
 use engine::api::{ConsumerState, ConnectionId, NamespaceGlob, ConsumerFilter};
 use engine::consumer::client::context::CursorType;
 use engine::consumer::filecursor::Cursor;
 use protocol::{ErrorMessage, ErrorKind, ConsumerStart};
 
+use std::sync::Arc;
 use std::fmt::{self, Debug};
 
 #[derive(Debug, PartialEq, Clone)]
@@ -83,6 +84,27 @@ impl ConnectionState {
             }
             CursorType::InMemory(consumer) => {
                 ConnectionState::InMemoryConsumer(consumer)
+            }
+        }
+    }
+
+    pub fn should_send_event(&self, event: &OwnedFloEvent) -> bool {
+        match self {
+            &ConnectionState::InMemoryConsumer(ref state) => {
+                state.should_send_event(event)
+            }
+            _ => false
+        }
+    }
+
+    pub fn event_sent(&mut self, event_id: FloEventId) {
+        match self {
+            &mut ConnectionState::InMemoryConsumer(ref mut state) => {
+                state.event_sent(event_id);
+                return;
+            }
+            other @ _ => {
+                error!("event_sent while in an invalid state: {:?}", other);
             }
         }
     }
