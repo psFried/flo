@@ -67,6 +67,7 @@ impl <R: EventReader + 'static> ConnectionContext for ManagerState<R> {
                 }
                 // if the batch is not yet exhausted, then keep going
                 if consumer_state.is_batch_exhausted() {
+                    trace!("connection_id: {} exhausted batch", connection_id);
                     break;
                 }
             }
