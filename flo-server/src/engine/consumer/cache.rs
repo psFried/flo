@@ -91,3 +91,36 @@ fn size_of(event: &OwnedFloEvent) -> usize {
             event.namespace.len()
 }
 
+
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use event::{FloEventId, ActorId, EventCounter, OwnedFloEvent};
+    use server::{MemoryLimit, MemoryUnit};
+
+    #[test]
+    fn events_are_inserted_and_retrieved_by_range() {
+        let max = 5;
+        let mut subject = Cache::new(max, MemoryLimit::new(5, MemoryUnit::Megabyte), FloEventId::zero());
+
+        let one = subject.insert(event(1, 1));
+        let two = subject.insert(event(1, 2));
+        let three = subject.insert(event(1, 3));
+        let four = subject.insert(event(1, 4));
+        let five = subject.insert(event(1, 5));
+
+        let all_events: Vec<Arc<OwnedFloEvent>> = subject.iter(FloEventId::zero()).map(|(_, e)| e.clone()).collect();
+        assert_eq!(vec![one.clone(), two.clone(), three.clone(), four.clone(), five.clone()], all_events);
+
+        let last_two: Vec<Arc<OwnedFloEvent>> = subject.iter(FloEventId::new(1, 3)).map(|(_, e)| e.clone()).collect();
+        assert_eq!(vec![four, five], last_two);
+    }
+
+    fn event(actor: ActorId, count: EventCounter) -> OwnedFloEvent {
+        let id = FloEventId::new(actor, count);
+        let timestamp = ::event::time::from_millis_since_epoch(5678);
+        OwnedFloEvent::new(id, None, timestamp, "/foo/bar".to_owned(), vec![1, 2, 3])
+    }
+
+}

@@ -53,7 +53,7 @@ impl ConsumerState {
     }
 
     pub fn should_send_event(&self, event: &OwnedFloEvent) -> bool {
-        self.batch_remaining > 0 && self.filter.apply(event)
+        self.batch_remaining > 0 && !self.version_vector.contains(event.id) && self.filter.apply(event)
     }
 
     pub fn event_sent(&mut self, id: FloEventId) {
@@ -63,7 +63,7 @@ impl ConsumerState {
     }
 
     pub fn is_batch_exhausted(&self) -> bool {
-        self.batch_remaining > 0
+        self.batch_remaining == 0
     }
 
     pub fn start_new_batch(&mut self) {
