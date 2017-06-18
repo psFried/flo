@@ -170,9 +170,20 @@ impl <T: Transport, B, C: EventCodec<B>> SyncConnection<T, B, C> {
 
         }
 
-        error.map(|err| {
-            Err(err)
-        }).unwrap_or(Ok(()))
+        // Sends a StopConsuming message to the server to let it know that we're done
+        let stop_result = self.stop_consuming();
+
+        match error {
+            None => stop_result,
+            Some(e) => {
+                // ignore the error from stopping, since the earlier error will likely be more informative
+                Err(e)
+            }
+        }
+    }
+
+    fn stop_consuming(&mut self) -> Result<(), ClientError> {
+        self.transport.send(ProtocolMessage::StopConsuming).map_err(|e| e.into())
     }
 
     fn read_event(&mut self) -> Result<Event<B>, ClientError> {

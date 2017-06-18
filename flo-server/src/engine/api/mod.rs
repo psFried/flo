@@ -55,6 +55,7 @@ impl ClientMessage {
 
             m @ ProtocolMessage::AckEvent(_) => consumer_message(connection_id, m),
             m @ ProtocolMessage::StartConsuming(_) => consumer_message(connection_id, m),
+            m @ ProtocolMessage::StopConsuming => consumer_message(connection_id, m),
             m @ ProtocolMessage::UpdateMarker(_) => consumer_message(connection_id, m),
             m @ ProtocolMessage::SetBatchSize(_) => consumer_message(connection_id, m),
             m @ ProtocolMessage::NextBatch => consumer_message(connection_id, m),

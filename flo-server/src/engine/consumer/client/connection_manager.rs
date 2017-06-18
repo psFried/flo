@@ -49,10 +49,14 @@ impl <S: Sender<ServerMessage> + 'static> ClientConnection<S> {
             }
             &ProtocolMessage::StartConsuming(ref start) => {
                 self.state.create_consumer_state(self.connection_id, start).and_then(|consumer_state| {
+                    let batch_size = consumer_state.batch_size;
                     ClientConnection::create_cursor(context, consumer_state, &self.client_sender).map(|cursor| {
-                        self.state = ConnectionState::new(cursor);
+                        self.state = ConnectionState::new(cursor, batch_size);
                     })
                 })
+            }
+            &ProtocolMessage::StopConsuming => {
+                self.state.stop_consuming()
             }
             other @ _ => {
                 Err(ErrorMessage {
@@ -96,7 +100,7 @@ impl <S: Sender<ServerMessage> + 'static> ClientConnection<S> {
         let mut new_state: Option<ConnectionState> = None;
 
         match self.state {
-            ConnectionState::FileCursor(ref mut cursor) => {
+            ConnectionState::FileCursor(ref mut cursor, _) => {
                 cursor.continue_batch().map_err(|()| {
                     ErrorMessage {
                         op_id: 0,
@@ -106,9 +110,10 @@ impl <S: Sender<ServerMessage> + 'static> ClientConnection<S> {
                 })?;
             }
             ConnectionState::InMemoryConsumer(ref mut state) => {
+                let batch_size = state.batch_size;
                 state.start_new_batch();
                 let new_cursor = ClientConnection::create_cursor(context, state.clone(), &self.client_sender)?;
-                new_state = Some(ConnectionState::new(new_cursor));
+                new_state = Some(ConnectionState::new(new_cursor, batch_size));
             }
             ConnectionState::NotConsuming(_) => {
                 return Err(ErrorMessage {
