@@ -34,6 +34,7 @@ pub mod headers {
     pub const NEXT_BATCH: u8 = 13;
     pub const END_OF_BATCH: u8 = 14;
     pub const STOP_CONSUMING: u8 = 15;
+    pub const CURSOR_CREATED: u8 = 16;
 }
 
 use self::headers::*;
@@ -167,6 +168,16 @@ pub struct ClusterState {
     pub other_members: Vec<ClusterMember>,
 }
 
+/// Sent in a CursorCreated message from the server to a client to indicate that a cursor was successfully created.
+/// Currently, this message only contains the batch size, but more fields may be added as they become necessary.
+#[derive(Debug, PartialEq, Clone)]
+pub struct CursorInfo {
+    /// The actual batch size that will be used by the server for sending events. Note that this value _may_ differ from the
+    /// batch size that was explicitly set by the consumer, depending on server settings. This behavior is not currently
+    /// implemented by the server, but it's definitely possible to change in the near future.
+    pub batch_size: u32,
+}
+
 
 /// Defines all the distinct messages that can be sent over the wire between client and server.
 #[derive(Debug, PartialEq, Clone)]
@@ -181,6 +192,8 @@ pub enum ProtocolMessage {
     UpdateMarker(FloEventId),
     /// sent by a client to start reading events from the stream
     StartConsuming(ConsumerStart),
+    /// send by the server to a client in response to a StartConsuming message to indicate the start of a series of events
+    CursorCreated(CursorInfo),
     /// sent by a client to a server to tell the server to stop sending events. This is required in order to reuse the connection for multiple queries
     StopConsuming,
     /// Sent by the client to set the batch size to use for consuming. It is an error to send this message while consuming.
@@ -447,6 +460,16 @@ named!{parse_next_batch<ProtocolMessage>, map!(tag!(&[NEXT_BATCH]), |_| {Protoco
 named!{parse_end_of_batch<ProtocolMessage>, map!(tag!(&[END_OF_BATCH]), |_| {ProtocolMessage::EndOfBatch})}
 named!{parse_stop_consuming<ProtocolMessage>, map!(tag!(&[headers::STOP_CONSUMING]), |_| {ProtocolMessage::StopConsuming})}
 
+named!{parse_cursor_created<ProtocolMessage>, chain!(
+    _tag: tag!(&[headers::CURSOR_CREATED]) ~
+    batch_size: be_u32,
+    || {
+        ProtocolMessage::CursorCreated(CursorInfo{
+            batch_size: batch_size
+        })
+    }
+)}
+
 named!{pub parse_any<ProtocolMessage>, alt!(
         parse_event_ack |
         parse_receive_event_header |
@@ -461,7 +484,8 @@ named!{pub parse_any<ProtocolMessage>, alt!(
         parse_set_batch_size |
         parse_next_batch |
         parse_end_of_batch |
-        parse_stop_consuming
+        parse_stop_consuming |
+        parse_cursor_created
 )}
 
 fn serialize_new_produce_header(header: &ProduceEvent, mut buf: &mut [u8]) -> usize {
@@ -525,6 +549,9 @@ impl ProtocolMessage {
         match *self {
             ProtocolMessage::ReceiveEvent(ref event) => {
                 unimplemented!() //TODO: This message _shouldn't_ typically be serialized in this way, but should probably implement it anyway
+            }
+            ProtocolMessage::CursorCreated(ref info) => {
+                Serializer::new(buf).write_u8(headers::CURSOR_CREATED).write_u32(info.batch_size).finish()
             }
             ProtocolMessage::AwaitingEvents => {
                 Serializer::new(buf).write_u8(AWAITING_EVENTS).finish()
@@ -627,6 +654,16 @@ mod test {
                 panic!("Got incomplete: {:?}", need)
             }
         }
+    }
+
+    #[test]
+    fn stop_consuming_is_serialized_and_parsed() {
+        test_serialize_then_deserialize(&ProtocolMessage::StopConsuming);
+    }
+
+    #[test]
+    fn cursor_created_is_serialized_and_parsed() {
+        test_serialize_then_deserialize(&ProtocolMessage::CursorCreated(CursorInfo{batch_size: 78910}));
     }
 
     #[test]

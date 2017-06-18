@@ -28,6 +28,8 @@ pub struct SyncConnection<T: Transport + 'static, B: 'static, C: EventCodec<B> +
     transport: T,
     codec: C,
     message_buffer: VecDeque<ProtocolMessage>,
+    batch_size: u32,
+    batch_remaining: u32,
     op_id: u32,
     _phantom_data: PhantomData<B>,
 }
@@ -50,10 +52,18 @@ impl <T: Transport, B, C: EventCodec<B>> SyncConnection<T, B, C> {
         SyncConnection {
             transport: transport,
             codec: codec,
+            batch_size: 0,
+            batch_remaining: 0,
             op_id: 1,
             message_buffer: VecDeque::new(),
             _phantom_data: PhantomData,
         }
+    }
+
+    /// Sets the batch size for the server to use when sending events to the consumer
+    pub fn set_batch_size(&mut self, batch_size: u32) -> Result<(), ClientError> {
+        //TODO: this is currently a fire-and-forget method. It returns as soon as the protocol message is written to the transport layer and does not wait for an acknowledgement from the server. We may or may not want to have the server explicitly ack these messages.
+        self.transport.send(ProtocolMessage::SetBatchSize(batch_size)).map_err(|e| e.into())
     }
 
     pub fn produce<N: ToString, D: Into<B>>(&mut self, namespace: N, data: D) -> Result<FloEventId, ClientError> {
@@ -120,6 +130,7 @@ impl <T: Transport, B, C: EventCodec<B>> SyncConnection<T, B, C> {
         for id in version_vector.snapshot() {
             self.send_event_marker(id)?;
         }
+
         self.start_consuming(namespace, max_events)?;
 
         let mut error: Option<ClientError> = None;
@@ -133,6 +144,7 @@ impl <T: Transport, B, C: EventCodec<B>> SyncConnection<T, B, C> {
 
                 if let &Ok(ref event) = &read_result {
                     events_consumed += 1;
+                    self.batch_remaining -= 1;
                     event_id = event.id;
                 }
 
@@ -140,6 +152,7 @@ impl <T: Transport, B, C: EventCodec<B>> SyncConnection<T, B, C> {
                     Ok(event) => {
                         let mut context = ConsumerContextImpl {
                             current_event_id: event_id,
+                            batch_remaining: self.batch_remaining,
                             events_consumed: events_consumed,
                             connection: self,
                         };
@@ -183,11 +196,22 @@ impl <T: Transport, B, C: EventCodec<B>> SyncConnection<T, B, C> {
     }
 
     fn stop_consuming(&mut self) -> Result<(), ClientError> {
+        // Reset batch state just so a debug output of the connection doesn't confuse anyone
+        self.batch_size = 0;
+        self.batch_remaining = 0;
         self.transport.send(ProtocolMessage::StopConsuming).map_err(|e| e.into())
     }
 
     fn read_event(&mut self) -> Result<Event<B>, ClientError> {
         match self.read_next_message() {
+            Ok(ProtocolMessage::EndOfBatch) => {
+                // if we've hit the end of the batch, then we need to tell the server to send more
+                self.transport.send(ProtocolMessage::NextBatch).map_err(|e| e.into()).and_then(|()| {
+                    // restart batch
+                    self.batch_remaining = self.batch_size;
+                    self.read_event()
+                })
+            }
             Ok(ProtocolMessage::ReceiveEvent(event)) => self.convert_event(event),
             Ok(ProtocolMessage::Error(err)) => Err(ClientError::FloError(err)),
             Ok(ProtocolMessage::AwaitingEvents) => Err(ClientError::EndOfStream),
@@ -216,7 +240,25 @@ impl <T: Transport, B, C: EventCodec<B>> SyncConnection<T, B, C> {
             namespace: namespace,
             max_events: max
         });
-        self.send_message(msg)
+
+        self.send_message(msg)?; // early return if sending the start message fails
+
+        let next_message = self.read_next_message()?;
+
+        match next_message {
+            ProtocolMessage::CursorCreated(cursor_info) => {
+                // initialize batch state
+                self.batch_size = cursor_info.batch_size;
+                self.batch_remaining = cursor_info.batch_size;
+                Ok(())
+            }
+            ProtocolMessage::Error(err) => {
+                Err(ClientError::FloError(err))
+            }
+            other @ _ => {
+                Err(ClientError::UnexpectedMessage(other))
+            }
+        }
     }
 
     fn send_event_marker(&mut self, id: FloEventId) -> Result<(), ClientError> {
@@ -228,6 +270,7 @@ impl <T: Transport, B, C: EventCodec<B>> SyncConnection<T, B, C> {
 
 struct ConsumerContextImpl<'a, T: Transport + 'static, B: 'static, C: EventCodec<B> + 'static> {
     pub events_consumed: u64,
+    batch_remaining: u32,
     current_event_id: FloEventId,
     connection: &'a mut SyncConnection<T, B, C>
 }
@@ -239,5 +282,9 @@ impl <'a, T: Transport, B: 'static, C: EventCodec<B>> Context<B> for ConsumerCon
 
     fn respond<N: ToString, D: Into<B>>(&mut self, namespace: N, data: D) -> Result<FloEventId, ClientError> {
         self.connection.produce_with_parent(Some(self.current_event_id), namespace, data)
+    }
+
+    fn batch_remaining(&self) -> u32 {
+        self.batch_remaining
     }
 }

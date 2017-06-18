@@ -227,7 +227,7 @@ integration_test!{clients_can_connect_and_disconnect_multiple_times_without_maki
     }
 }}
 
-integration_test!{many_events_are_produced_using_sync_client, port, tcp_stream, {
+integration_test!{many_events_are_produced_and_read_in_batches, port, tcp_stream, {
 
     let mut client = SyncConnection::connect(localhost(port), StringCodec).expect("failed to create client");
 
@@ -239,8 +239,39 @@ integration_test!{many_events_are_produced_using_sync_client, port, tcp_stream, 
             }
         }
     }
+
+    client.set_batch_size(100).expect("failed to set batch size");
+
+    let mut consumer = BatchTestConsumer {
+        batch_size: 100,
+        current_count: 0
+    };
+    client.run_consumer(ConsumerOptions::from_beginning("/**/*", 1000), &mut consumer).expect("failed to run the BatchConsumer");
 }}
 
+pub struct BatchTestConsumer{
+    batch_size: u32,
+    current_count: u32,
+}
+
+impl <T> Consumer<T> for BatchTestConsumer {
+    fn name(&self) -> &str {
+        "BatchTestConsumer"
+    }
+
+    fn on_event<C>(&mut self, event: Event<T>, context: &mut C) -> ConsumerAction where C: Context<T> {
+        self.current_count += 1;
+
+        let remaining = context.batch_remaining();
+
+        if remaining > 0 {
+            assert_eq!(self.current_count % self.batch_size, self.batch_size - remaining);
+        } else {
+            assert_eq!(self.current_count % self.batch_size, 0);
+        }
+        ConsumerAction::Continue
+    }
+}
 
 integration_test!{events_are_consumed_as_they_are_written, port, tcp_stream, {
 
