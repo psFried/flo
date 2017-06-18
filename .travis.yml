@@ -2,7 +2,7 @@ language: rust
 env:
   - RUST_BACKTRACE=1
 rust:
-  - nightly-2017-03-04
+  - nightly-2017-04-07
 os:
   - linux
   - osx
