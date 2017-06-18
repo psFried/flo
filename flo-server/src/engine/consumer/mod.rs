@@ -116,16 +116,6 @@ impl <R: EventReader + 'static> ConsumerManager<R> {
                 self.consumers.remove(connection_id);
                 Ok(())
             }
-            // TODO: Remove these three messages
-            ConsumerManagerMessage::ContinueConsuming(consumer_state) => {
-                unimplemented!()
-            }
-            ConsumerManagerMessage::StartPeerReplication(connection_id, actor_id, peer_versions) => {
-                unimplemented!()
-            }
-            ConsumerManagerMessage::EventLoaded(connection_id, event) => {
-                unimplemented!()
-            }
             ConsumerManagerMessage::EventPersisted(_connection_id, event) => {
                 self.state.update_greatest_event(event.id);
                 let event_rc = self.state.cache.insert(event);

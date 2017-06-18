@@ -186,11 +186,8 @@ impl <S: EventWriter> ProducerManager<S> {
         let my_state = self.get_my_cluster_state_message();
         let ::protocol::ClusterState {actor_id, version_vector, ..} = peer_cluster_state;
 
-        self.clients.send(connection_id, ProtocolMessage::PeerUpdate(my_state)).and_then(|()| {
-            let peer_replication_message = ConsumerManagerMessage::StartPeerReplication(connection_id, actor_id, version_vector);
-            self.consumer_manager_channel.send( peer_replication_message).map_err(|send_err| {
-                format!("Failed to send message to consumer manager: {:?}", send_err)
-            })
+        self.clients.send(connection_id, ProtocolMessage::PeerUpdate(my_state)).map_err(|err| {
+            format!("Error sending response to PeerAnnounce to actor_id: {}, connection_id: {}", actor_id, connection_id)
         })
     }
 
@@ -376,17 +373,6 @@ mod test {
                 other @ _ => {
                     panic!("expected PeerUpdate, got: {:?}", other);
                 }
-            }
-        });
-
-        assert_consumer_manager_message_sent(consumer_manager, |msg| {
-            match msg {
-                ConsumerManagerMessage::StartPeerReplication(connection_id, actor_id, versions) => {
-                    assert_eq!(peer_versions, versions);
-                    assert_eq!(client_id, connection_id);
-                    assert_eq!(peer_actor_id, actor_id);
-                }
-                other @ _ => panic!("Expected StartPeerReplication message, got: {:?}", other)
             }
         });
     }

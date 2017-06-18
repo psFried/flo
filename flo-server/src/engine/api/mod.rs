@@ -123,10 +123,7 @@ impl ReceivedMessage {
 pub enum ConsumerManagerMessage {
     Connect(ClientConnect),
     Disconnect(ConnectionId, SocketAddr),
-    ContinueConsuming(ConsumerState),
     EventPersisted(ConnectionId, OwnedFloEvent),
-    StartPeerReplication(ConnectionId, ActorId, Vec<FloEventId>),
-    EventLoaded(ConnectionId, OwnedFloEvent),
     Receive(ReceivedMessage),
 }
 
