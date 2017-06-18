@@ -192,14 +192,7 @@ impl <S: EventWriter> ProducerManager<S> {
     }
 
     fn process_peer_cluster_state(&mut self, connection_id: ConnectionId, peer_state: &::protocol::ClusterState) {
-        let rectified_address = {
-            // Safe unwrap since this is the client that just sent us the message
-            let mut client_remote_address = self.clients.get_client_address(connection_id).unwrap();
-            debug!("Rectifying peer address for connection_id: {} from remote connection address: {} and setting port from message: {}",
-                    connection_id, client_remote_address, peer_state.actor_port);
-            client_remote_address.set_port(peer_state.actor_port);
-            client_remote_address
-        };
+        let rectified_address = self.rectify_peer_address(connection_id, peer_state);
         info!("Received PeerUpdate from connection_id: {}, remote address: {}, peer_state: {:?}", connection_id, rectified_address, peer_state);
 
         self.cluster_state.peer_message_received(rectified_address, connection_id, peer_state.actor_id);
@@ -209,6 +202,30 @@ impl <S: EventWriter> ProducerManager<S> {
                 self.cluster_state.add_peer_address(member.addr);
             }
         }
+    }
+
+    /// Returns the address that this server instance should use for connecting to the peer server identified by the given
+    /// `ConnectionId`, from which we received the given `ClusterState`.
+    ///
+    /// We have the remote address of the peer from when we accepted the connection, but the port from that address is not going to be the
+    /// same as the port that the peer is listening on. The only way to know which port the peer server is listening on
+    /// is for them to tell us.
+    /// The situation for the ip address is similar, but reversed. When we accept the connection, we know exactly the ip
+    /// address that we should try to connect to for that peer. The peer server may _not_ know which address other should
+    /// use to connect to it, though.
+    ///
+    /// We assume that the given `connection_id` will
+    /// exist in the client map since we are processing a message that is from that client. This function will panic if
+    /// that's not the case.
+    fn rectify_peer_address(&self, connection_id: ConnectionId, peer_state: &::protocol::ClusterState) -> SocketAddr {
+        /*
+        */
+        // Safe unwrap since this is the client that just sent us the message
+        let mut client_remote_address = self.clients.get_client_address(connection_id).unwrap();
+        debug!("Rectifying peer address for connection_id: {} from remote connection address: {} and setting port from message: {}",
+        connection_id, client_remote_address, peer_state.actor_port);
+        client_remote_address.set_port(peer_state.actor_port);
+        client_remote_address
     }
 
     fn persist_event(&mut self, connection_id: ConnectionId, op_id: u32, event: OwnedFloEvent) -> Result<(), String> {
