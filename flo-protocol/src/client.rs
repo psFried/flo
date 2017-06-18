@@ -33,9 +33,11 @@ pub mod headers {
     pub const SET_BATCH_SIZE: u8 = 12;
     pub const NEXT_BATCH: u8 = 13;
     pub const END_OF_BATCH: u8 = 14;
+    pub const STOP_CONSUMING: u8 = 15;
 }
 
 use self::headers::*;
+
 pub const ERROR_INVALID_NAMESPACE: u8 = 15;
 pub const ERROR_INVALID_CONSUMER_STATE: u8 = 16;
 pub const ERROR_INVALID_VERSION_VECTOR: u8 = 17;
@@ -179,6 +181,8 @@ pub enum ProtocolMessage {
     UpdateMarker(FloEventId),
     /// sent by a client to start reading events from the stream
     StartConsuming(ConsumerStart),
+    /// sent by a client to a server to tell the server to stop sending events. This is required in order to reuse the connection for multiple queries
+    StopConsuming,
     /// Sent by the client to set the batch size to use for consuming. It is an error to send this message while consuming.
     SetBatchSize(u32),
     /// Sent by the client to tell the server that it is ready for the next batch
@@ -441,6 +445,7 @@ named!{parse_set_batch_size<ProtocolMessage>, chain!(
 
 named!{parse_next_batch<ProtocolMessage>, map!(tag!(&[NEXT_BATCH]), |_| {ProtocolMessage::NextBatch})}
 named!{parse_end_of_batch<ProtocolMessage>, map!(tag!(&[END_OF_BATCH]), |_| {ProtocolMessage::EndOfBatch})}
+named!{parse_stop_consuming<ProtocolMessage>, map!(tag!(&[headers::STOP_CONSUMING]), |_| {ProtocolMessage::StopConsuming})}
 
 named!{pub parse_any<ProtocolMessage>, alt!(
         parse_event_ack |
@@ -455,7 +460,8 @@ named!{pub parse_any<ProtocolMessage>, alt!(
         parse_new_producer_event |
         parse_set_batch_size |
         parse_next_batch |
-        parse_end_of_batch
+        parse_end_of_batch |
+        parse_stop_consuming
 )}
 
 fn serialize_new_produce_header(header: &ProduceEvent, mut buf: &mut [u8]) -> usize {
@@ -522,6 +528,9 @@ impl ProtocolMessage {
             }
             ProtocolMessage::AwaitingEvents => {
                 Serializer::new(buf).write_u8(AWAITING_EVENTS).finish()
+            }
+            ProtocolMessage::StopConsuming => {
+                Serializer::new(buf).write_u8(headers::STOP_CONSUMING).finish()
             }
             ProtocolMessage::ProduceEvent(ref header) => {
                 serialize_new_produce_header(header, buf)

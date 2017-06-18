@@ -35,6 +35,12 @@ impl From<ErrorMessage> for ClientError {
     }
 }
 
+impl From<io::Error> for ClientError {
+    fn from(e: io::Error) -> Self {
+        ClientError::Transport(e)
+    }
+}
+
 impl Display for ClientError {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "{}", self.description())?;

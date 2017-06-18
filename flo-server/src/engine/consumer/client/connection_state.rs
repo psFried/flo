@@ -14,6 +14,13 @@ pub struct IdleState {
 }
 
 impl IdleState {
+    fn new(batch_size: u64) -> IdleState {
+        IdleState {
+            version_vector: VersionVector::new(),
+            batch_size: batch_size
+        }
+    }
+
     fn create_consumer_state(&self, connection_id: ConnectionId, start_message: &ConsumerStart) -> Result<ConsumerState, ErrorMessage> {
         NamespaceGlob::new(&start_message.namespace).map(|glob| {
             ConsumerState{
@@ -36,7 +43,7 @@ impl IdleState {
 
 pub enum ConnectionState {
     NotConsuming(IdleState),
-    FileCursor(Box<Cursor>),
+    FileCursor(Box<Cursor>, u64),
     InMemoryConsumer(ConsumerState),
 }
 
@@ -46,10 +53,18 @@ impl PartialEq for ConnectionState {
 
         match (self, rhs) {
             (&NotConsuming(ref l), &NotConsuming(ref r)) => l == r,
-            (&FileCursor(ref l), &FileCursor(ref r)) => l.get_thread_name() == r.get_thread_name(),
+            (&FileCursor(ref l, ref l_batch), &FileCursor(ref r, ref r_batch)) => {
+                l.get_thread_name() == r.get_thread_name() && l_batch == r_batch
+            },
             (&InMemoryConsumer(ref l), &InMemoryConsumer(ref r)) => l == r,
             _ => false
         }
+    }
+}
+
+fn log_warning<T, E: Debug>(result: Result<T, E>, message: &'static str) {
+    if let Err(e) = result {
+        warn!("{}, Err: {:?}", message, e)
     }
 }
 
@@ -59,8 +74,8 @@ impl Debug for ConnectionState {
             &ConnectionState::NotConsuming(ref idle) => {
                 write!(f, "ConnectionState::NotConsuming({:?})", idle)
             }
-            &ConnectionState::FileCursor(ref cursor) => {
-                write!(f, "ConnectionState::FileCursor(thread = \"{}\")", cursor.get_thread_name())
+            &ConnectionState::FileCursor(ref cursor, ref batch_size) => {
+                write!(f, "ConnectionState::FileCursor(thread = \"{}\", batch_size = {})", cursor.get_thread_name(), batch_size)
             }
             &ConnectionState::InMemoryConsumer(ref state) => {
                 write!(f, "ConnectionState::InMemoryConsumer({:?})", state)
@@ -71,20 +86,50 @@ impl Debug for ConnectionState {
 
 impl ConnectionState {
     pub fn init(batch_size: u64) -> ConnectionState {
-        ConnectionState::NotConsuming(IdleState{
-            version_vector: VersionVector::new(),
-            batch_size: batch_size,
-        })
+        ConnectionState::NotConsuming(IdleState::new(batch_size))
     }
 
-    pub fn new(cursor: CursorType) -> ConnectionState {
+    pub fn new(cursor: CursorType, batch_size: u64) -> ConnectionState {
         match cursor {
             CursorType::File(file_cursor) => {
-                ConnectionState::FileCursor(file_cursor)
+                ConnectionState::FileCursor(file_cursor, batch_size)
             }
             CursorType::InMemory(consumer) => {
                 ConnectionState::InMemoryConsumer(consumer)
             }
+        }
+    }
+
+    pub fn stop_consuming(&mut self) -> Result<(), ErrorMessage> {
+        if let ConnectionState::FileCursor(ref mut cursor, _) = *self {
+            // if there's a cursor open, then we need to close it down
+            log_warning(cursor.close_cursor(), "Error closing cursor after client stopped consuming");
+        }
+
+        // Only reset the state if it is in a consuming state. This allows consumers to send multiple stop_consuming
+        // messages without accidentally resetting their version vector
+        if self.is_consuming() {
+            let batch_size = self.get_batch_size();
+            let new_state = IdleState::new(batch_size);
+            *self = ConnectionState::NotConsuming(new_state);
+        }
+        // TODO: think about maybe propagating the error from closing the cursor. Not sure if that's appropriate or not
+        Ok(())
+    }
+
+    pub fn get_batch_size(&self) -> u64 {
+        match self {
+            &ConnectionState::InMemoryConsumer(ref state) => state.batch_size,
+            &ConnectionState::FileCursor(_, batch_size) => batch_size,
+            &ConnectionState::NotConsuming(ref idle) => idle.batch_size
+        }
+    }
+
+    pub fn is_consuming(&self) -> bool {
+        match self {
+            &ConnectionState::InMemoryConsumer(_) => true,
+            &ConnectionState::FileCursor(_, _) => true,
+            &ConnectionState::NotConsuming(_) => false
         }
     }
 
