@@ -52,6 +52,7 @@ impl ClientMessage {
             m @ ProtocolMessage::AwaitingEvents => producer_message(connection_id, m),
             m @ ProtocolMessage::ReceiveEvent(_) => producer_message(connection_id, m),
             m @ ProtocolMessage::EndOfBatch => producer_message(connection_id, m),
+            m @ ProtocolMessage::CursorCreated(_) => producer_message(connection_id, m),
 
             m @ ProtocolMessage::AckEvent(_) => consumer_message(connection_id, m),
             m @ ProtocolMessage::StartConsuming(_) => consumer_message(connection_id, m),

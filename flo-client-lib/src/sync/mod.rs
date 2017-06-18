@@ -22,6 +22,9 @@ pub trait Context<Pro>: Sized {
     /// Returns the id of the event currently being processed
     fn current_event_id(&self) -> FloEventId;
 
+    /// Returns the number of events remaining in the current batch
+    fn batch_remaining(&self) -> u32;
+
     /// Produces an event to the given namespace with the `current_event_id` as it's parent. This is the primary method
     /// that consumers should use to produce events to the stream, as it automatically preserves the cause-effect relationship
     /// between events. This method produces the event synchronously and immediately. If this method returns a successful

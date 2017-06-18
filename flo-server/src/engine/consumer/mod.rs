@@ -68,6 +68,10 @@ impl <R: EventReader + 'static> ConnectionContext for ManagerState<R> {
                 // if the batch is not yet exhausted, then keep going
                 if consumer_state.is_batch_exhausted() {
                     trace!("connection_id: {} exhausted batch", connection_id);
+                    client_sender.send(ServerMessage::Other(ProtocolMessage::EndOfBatch)).map_err(|send_err| {
+                        error!("Failed to send EndOfBatch for connection_id: {}", connection_id);
+                        format!("Failed to send EndOfBatch for connection_id: {}", connection_id)
+                    })?; //return early if we can't send messages to the client
                     break;
                 }
             }

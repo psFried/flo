@@ -3,7 +3,7 @@ use event::{FloEventId, ActorId, OwnedFloEvent, VersionVector};
 use engine::consumer::client::context::{ConnectionContext, CursorType};
 use engine::consumer::filecursor::{Cursor, CursorMessage};
 use engine::api::{ConnectionId, NamespaceGlob, ConsumerFilter, ConsumerState, ClientConnect};
-use protocol::{ProtocolMessage, ServerMessage, ErrorMessage, ErrorKind};
+use protocol::{ProtocolMessage, ServerMessage, ErrorMessage, ErrorKind, CursorInfo, ConsumerStart};
 use super::connection_state::{ConnectionState};
 
 use std::sync::Arc;
@@ -48,12 +48,7 @@ impl <S: Sender<ServerMessage> + 'static> ClientConnection<S> {
                 self.next_batch(context)
             }
             &ProtocolMessage::StartConsuming(ref start) => {
-                self.state.create_consumer_state(self.connection_id, start).and_then(|consumer_state| {
-                    let batch_size = consumer_state.batch_size;
-                    ClientConnection::create_cursor(context, consumer_state, &self.client_sender).map(|cursor| {
-                        self.state = ConnectionState::new(cursor, batch_size);
-                    })
-                })
+                self.start_consuming(start, context)
             }
             &ProtocolMessage::StopConsuming => {
                 self.state.stop_consuming()
@@ -95,9 +90,32 @@ impl <S: Sender<ServerMessage> + 'static> ClientConnection<S> {
     }
 
 
+    fn start_consuming<C: ConnectionContext>(&mut self, start: &ConsumerStart, context: &mut C) -> Result<(), ErrorMessage> {
+        self.state.create_consumer_state(self.connection_id, start).and_then(|consumer_state| {
+            let batch_size = consumer_state.batch_size;
+
+            let start_message = ProtocolMessage::CursorCreated(CursorInfo{
+                batch_size: batch_size as u32
+            });
+
+            self.client_sender.send(ServerMessage::Other(start_message)).map_err(|_| {
+                ErrorMessage{
+                    op_id: 0,
+                    kind: ErrorKind::InvalidConsumerState,
+                    description: "Error sending start message to client".to_owned(),
+                }
+            })?; // early return if sending the start message fails
+
+            ClientConnection::create_cursor(context, consumer_state, &self.client_sender).map(|cursor| {
+                self.state = ConnectionState::new(cursor, batch_size);
+            })
+        })
+    }
 
     fn next_batch<C: ConnectionContext>(&mut self, context: &mut C) -> Result<(), ErrorMessage> {
         let mut new_state: Option<ConnectionState> = None;
+
+        debug!("processing next batch for connection_id: {}", self.connection_id);
 
         match self.state {
             ConnectionState::FileCursor(ref mut cursor, _) => {
@@ -184,6 +202,7 @@ mod test {
                                                 999);
 
         ctx.assert_argument_received(expected_state);
+        subject.client_sender.assert_message_sent(ServerMessage::Other(ProtocolMessage::CursorCreated(CursorInfo{batch_size: 999})));
 
         let data = "data for event".to_owned().into_bytes();
         let timestamp = from_millis_since_epoch(678910);
@@ -216,6 +235,7 @@ mod test {
                                                 5);
 
         ctx.assert_argument_received(expected_state);
+        subject.client_sender.assert_message_sent(ServerMessage::Other(ProtocolMessage::CursorCreated(CursorInfo{batch_size: 5})));
 
         let data = "data for event".to_owned().into_bytes();
         let timestamp = from_millis_since_epoch(678910);
