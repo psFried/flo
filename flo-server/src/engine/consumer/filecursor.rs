@@ -7,7 +7,7 @@ use std::sync::Arc;
 use futures::sync::mpsc as f_mpsc;
 
 use event::{OwnedFloEvent, FloEventId, VersionVector};
-use engine::api::{ConnectionId, ConsumerState};
+use engine::api::{ConnectionId, ConsumerState, ConsumerManagerMessage};
 use engine::event_store::EventReader;
 use protocol::{ErrorMessage, ErrorKind, ProtocolMessage, ServerMessage};
 use channels::Sender;
@@ -55,9 +55,10 @@ impl PartialEq for Cursor {
     }
 }
 
-pub fn start<S: Sender<ServerMessage> + 'static, R: EventReader + 'static>(mut state: ConsumerState,
-                                       sender: S,
-                                       mut reader: &mut R) -> io::Result<CursorImpl> {
+pub fn start<S: Sender<ServerMessage> + 'static, R: EventReader + 'static, C: Sender<ConsumerManagerMessage> + 'static>(mut state: ConsumerState,
+                                                                           client_sender: S,
+                                                                           mut reader: &mut R,
+                                                                           consumer_manager_sender: C) -> io::Result<CursorImpl> {
 
     let connection_id = state.connection_id;
     let start = state.version_vector.min();
@@ -71,22 +72,24 @@ pub fn start<S: Sender<ServerMessage> + 'static, R: EventReader + 'static>(mut s
 
         while !cursor_closed {
             while !cursor_closed && !state.is_batch_exhausted() {
-                match send_next_event(&mut event_iter, &mut state, &sender) {
+                match send_next_event(&mut event_iter, &mut state, &client_sender) {
                     Ok(true) => {
                         // This means that an event was sent so we should just loop around
                     }
                     Ok(false) => {
                         // we've reached the end of stored events, so will transition to consuming from memory
+                        consumer_manager_sender.send(ConsumerManagerMessage::FileCursorExhausted(state.clone())).unwrap();
                         cursor_closed = true;
                     }
                     Err(err) => {
+                        // TODO: it's possible that we could hit this error condition due to reading a partially written event
                         cursor_closed = true;
                         let error_message = ErrorMessage {
                             op_id: 0,
                             kind: ErrorKind::StorageEngineError,
                             description: format!("{}", err)
                         };
-                        sender.send(ServerMessage::Other(ProtocolMessage::Error(error_message))).unwrap();
+                        client_sender.send(ServerMessage::Other(ProtocolMessage::Error(error_message))).unwrap();
                     }
                 }
 
@@ -94,7 +97,7 @@ pub fn start<S: Sender<ServerMessage> + 'static, R: EventReader + 'static>(mut s
 
             if state.is_batch_exhausted() && !cursor_closed {
                 let message = ServerMessage::Other(ProtocolMessage::EndOfBatch);
-                sender.send(message).unwrap();
+                client_sender.send(message).unwrap();
                 // wait for message to tell us when to proceed
                 match my_receiver.recv() {
                     Ok(CursorMessage::NextBatch) => {

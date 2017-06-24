@@ -45,7 +45,8 @@ impl <R: EventReader + 'static> ConnectionContext for ManagerState<R> {
         debug!("connection_id: {} starting to consume starting at: {:?}, cache last evicted id: {:?}", connection_id, start_id, last_cache_evicted);
         if start_id < last_cache_evicted {
             // Clone the client sender since we'll need to pass it over to the cursor's thread
-            self::filecursor::start(consumer_state, (*client_sender).clone(), &mut self.event_reader).map(|cursor| {
+            let my_sender = self.my_sender.clone();
+            self::filecursor::start(consumer_state, (*client_sender).clone(), &mut self.event_reader, my_sender).map(|cursor| {
                 CursorType::File(Box::new(cursor))
             }).map_err(|io_err| {
                 error!("Failed to create file cursor for consumer: {:?}, err: {:?}", connection_id, io_err);
@@ -120,6 +121,15 @@ impl <R: EventReader + 'static> ConsumerManager<R> {
                 self.state.update_greatest_event(event.id);
                 let event_rc = self.state.cache.insert(event);
                 self.consumers.send_event_to_all(event_rc)
+            }
+            ConsumerManagerMessage::FileCursorExhausted(consumer_state) => {
+                let ConsumerManager{ref mut consumers, ref mut state, ..} = *self;
+                let connection_id = consumer_state.connection_id;
+                consumers.get_mut(connection_id).and_then(|client| {
+                    client.continue_cursor(consumer_state, state).map_err(|()| {
+                        format!("Unable to Continue cursor for conneciton_id: {}", connection_id)
+                    })
+                })
             }
             ConsumerManagerMessage::Receive(received_message) => {
                 self.process_received_message(received_message)

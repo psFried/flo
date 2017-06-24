@@ -53,6 +53,10 @@ impl <S: Sender<ServerMessage> + 'static> ClientConnection<S> {
             &ProtocolMessage::StopConsuming => {
                 self.state.stop_consuming()
             }
+            &ProtocolMessage::AckEvent(ref ack) => {
+                trace!("received AckEvent from connection_id: {}: {:?}", self.connection_id, ack);
+                Ok(())
+            }
             other @ _ => {
                 Err(ErrorMessage {
                     op_id: 0,
@@ -84,6 +88,37 @@ impl <S: Sender<ServerMessage> + 'static> ClientConnection<S> {
                 self.state.event_sent(id);
             }
             result
+        } else {
+            Ok(())
+        }
+    }
+
+    pub fn continue_cursor<C: ConnectionContext>(&mut self, last_state: ConsumerState, context: &mut C) -> Result<(), ()> {
+        let batch_size = last_state.batch_size;
+        let cursor_result = ClientConnection::create_cursor(context, last_state, &self.client_sender);
+
+        if let Err(ref err) = cursor_result {
+            error!("Error continuing cursor for connection_id: {}, err: {:?}", self.connection_id, err);
+            let new_state = ConnectionState::init(batch_size);
+            self.set_state(new_state);
+        }
+
+        let result = cursor_result.map(|cursor_type| {
+            match cursor_type {
+                CursorType::File(file_cursor) => {
+                    self.set_state(ConnectionState::FileCursor(file_cursor, batch_size));
+                }
+                CursorType::InMemory(new_state) => {
+                    self.set_state(ConnectionState::InMemoryConsumer(new_state));
+                }
+            }
+        });
+
+        if let Err(err_message) = result {
+            self.client_sender.send(ServerMessage::Other(ProtocolMessage::Error(err_message))).map_err(|send_err| {
+                // map to ()
+                warn!("Unable to send error message to connection_id: {}, message: {:?}", self.connection_id, send_err);
+            })
         } else {
             Ok(())
         }

@@ -138,13 +138,17 @@ impl <S: EventWriter> ProducerManager<S> {
                 self.new_produce_event(sender, produce)
             }
             ProtocolMessage::PeerAnnounce(cluster_state) => {
-                let result = self.on_peer_announce(sender, cluster_state);
+                // PeerAnnounce is an outgoing message sent to a peer to announce our presence. The peer is expected to eventually respond with a PeerUpdate
+                let result = self.on_peer_announce(sender, &cluster_state);
                 self.cluster_state.log_state();
+                self.start_replication_from_peer(sender, &cluster_state);
                 result
             }
             ProtocolMessage::PeerUpdate(cluster_state) => {
+                info!("Received PeerUpdate response from connection_id: {}: {:?}", sender, cluster_state);
                 self.process_peer_cluster_state(sender, &cluster_state);
                 self.cluster_state.log_state();
+                self.start_replication_from_peer(sender, &cluster_state);
                 Ok(())
             }
             ProtocolMessage::ReceiveEvent(event) => {
@@ -159,12 +163,35 @@ impl <S: EventWriter> ProducerManager<S> {
                 info!("Replication is caught up for peer connection_id: {}", sender);
                 Ok(())
             }
+            ProtocolMessage::CursorCreated(cursor_info) => {
+                let peer_actor_id = self.cluster_state.connected_peers.get(&sender).and_then(|it| it.actor_id);
+                info!("CursorCreated from connection_id: {}, actor_id: {:?}, batch_size: {}", sender, peer_actor_id, cursor_info.batch_size);
+                Ok(())
+            }
+            ProtocolMessage::EndOfBatch => {
+                let peer_actor_id = self.cluster_state.connected_peers.get(&sender).and_then(|it| it.actor_id);
+                debug!("EndOfBatch for connection_id: {}, actor_id: {:?}", sender, peer_actor_id);
+                self.clients.send(sender, ProtocolMessage::NextBatch)
+            }
             other @ _ => {
                 error!("Unhandled message: {:?}", other);
 //                Err(format!("Unhandled message: {:?}", other))
                 Ok(())
             }
         }
+    }
+
+    fn start_replication_from_peer(&mut self, connection_id: ConnectionId, peer_cluster_state: &::protocol::ClusterState) -> Result<(), String> {
+        info!("Requesting to replicate events from connection_id: {}, actor_id: {}", connection_id, peer_cluster_state.actor_id);
+        for id in self.version_vec.snapshot() {
+            let msg = ::protocol::ProtocolMessage::UpdateMarker(id);
+            self.clients.send(connection_id, msg)?; // return early if sending any of these fails
+        }
+        let start_message = ::protocol::ProtocolMessage::StartConsuming(::protocol::ConsumerStart{
+            max_events: ::std::u64::MAX,
+            namespace: "/**/*".to_owned(),
+        });
+        self.clients.send(connection_id, start_message)
     }
 
     fn on_tick(&mut self) -> Result<(), String> {
@@ -179,21 +206,21 @@ impl <S: EventWriter> ProducerManager<S> {
         Ok(())
     }
 
-    fn on_peer_announce(&mut self, connection_id: ConnectionId, peer_cluster_state: ::protocol::ClusterState) -> Result<(), String> {
+    fn on_peer_announce(&mut self, connection_id: ConnectionId, peer_cluster_state: &::protocol::ClusterState) -> Result<(), String> {
         info!("Upgrading to peer connection_id: {}, peer_cluster_state: {:?}", connection_id, peer_cluster_state);
         self.process_peer_cluster_state(connection_id, &peer_cluster_state);
 
         let my_state = self.get_my_cluster_state_message();
-        let ::protocol::ClusterState {actor_id, version_vector, ..} = peer_cluster_state;
+        let peer_actor_id = peer_cluster_state.actor_id;
 
         self.clients.send(connection_id, ProtocolMessage::PeerUpdate(my_state)).map_err(|err| {
-            format!("Error sending response to PeerAnnounce to actor_id: {}, connection_id: {}", actor_id, connection_id)
+            format!("Error sending response to PeerAnnounce to actor_id: {}, connection_id: {}", peer_actor_id, connection_id)
         })
     }
 
     fn process_peer_cluster_state(&mut self, connection_id: ConnectionId, peer_state: &::protocol::ClusterState) {
         let rectified_address = self.rectify_peer_address(connection_id, peer_state);
-        info!("Received PeerUpdate from connection_id: {}, remote address: {}, peer_state: {:?}", connection_id, rectified_address, peer_state);
+        debug!("process_peer_cluster_state from connection_id: {}, remote address: {}, peer_state: {:?}", connection_id, rectified_address, peer_state);
 
         self.cluster_state.peer_message_received(rectified_address, connection_id, peer_state.actor_id);
 
@@ -218,8 +245,6 @@ impl <S: EventWriter> ProducerManager<S> {
     /// exist in the client map since we are processing a message that is from that client. This function will panic if
     /// that's not the case.
     fn rectify_peer_address(&self, connection_id: ConnectionId, peer_state: &::protocol::ClusterState) -> SocketAddr {
-        /*
-        */
         // Safe unwrap since this is the client that just sent us the message
         let mut client_remote_address = self.clients.get_client_address(connection_id).unwrap();
         debug!("Rectifying peer address for connection_id: {} from remote connection address: {} and setting port from message: {}",

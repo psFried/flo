@@ -40,6 +40,15 @@ impl IdleState {
     }
 }
 
+impl From<ConsumerState> for IdleState {
+    fn from(ConsumerState{version_vector, batch_size, ..}: ConsumerState) -> IdleState {
+        IdleState {
+            version_vector: version_vector,
+            batch_size: batch_size,
+        }
+    }
+}
+
 
 pub enum ConnectionState {
     NotConsuming(IdleState),
