@@ -35,7 +35,7 @@ pub fn get_server_port() -> (ServerProcessType, u16) {
         (ServerProcessType::Detached, value.parse::<u16>().unwrap())
     }).unwrap_or_else(|| {
         unsafe {
-            (ServerProcessType::Child, 3001u16 + PORT.fetch_add(1, Ordering::Relaxed) as u16)
+            (ServerProcessType::Child, 3001u16 + PORT.fetch_add(1, Ordering::SeqCst) as u16)
         }
     })
 }
@@ -75,6 +75,7 @@ macro_rules! integration_test {
     )
 }
 
+#[derive(Debug)]
 pub struct FloServerProcess {
     child_proc: Option<Child>,
     port: u16,
@@ -85,6 +86,19 @@ pub struct FloServerProcess {
 impl FloServerProcess {
     pub fn new(port: u16, data_dir: TempDir) -> FloServerProcess {
         FloServerProcess::with_args(port, data_dir, Vec::new())
+    }
+
+    pub fn clustered(my_port: u16, my_actor: u16, data_dir: TempDir, peer_ports: &Vec<u16>, mut additional_args: Vec<String>) -> FloServerProcess {
+        additional_args.push("-A".to_owned());
+        additional_args.push(my_actor.to_string());
+
+        for port in peer_ports {
+            let address = format!("127.0.0.1:{}", port);
+            additional_args.push("-P".to_owned());
+            additional_args.push(address);
+        }
+
+        FloServerProcess::with_args(my_port, data_dir, additional_args)
     }
 
     pub fn with_args(port: u16, data_dir: TempDir, args: Vec<String>) -> FloServerProcess {
