@@ -82,6 +82,14 @@ impl Iterator for MultiActorEventIter {
 pub struct FSEventIter(EventIterInner, ActorId);
 
 impl FSEventIter {
+    /// Creates a new `FSEventIter`
+    ///
+    /// # Arguments
+    ///
+    /// * `offset` - the byte offset within the file to start at. The iterator will seek this number of bytes from the start of the file
+    /// * `max_id` - Represents the inclusive stopping point for this iterator. This iterator will only return events with an id <= `max_id`. This parameter should never be greater than the largest id that is know to be stored to the file. This prevents the iterator from trying to read a partially flushed event and returning an error
+    /// * `path` - the path of the file to open for reading events
+    /// * `actor_id` - the id of the actor that this file path corresponds to. This is provided for informational purposes only
     pub fn initialize(offset: u64, max_id: FloEventId, path: &Path, actor_id: ActorId) -> Result<FSEventIter, io::Error> {
         trace!("opening file at path: {:?}", path);
         OpenOptions::new().read(true).open(path).and_then(|mut file| {
@@ -108,7 +116,8 @@ impl Iterator for FSEventIter {
     type Item = Result<OwnedFloEvent, io::Error>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self.0 {
+        let mut exhausted = false;
+        let next_result = match self.0 {
             EventIterInner::Empty => None,
             EventIterInner::Error(ref mut err) => {
                 err.take().map(|e| {
@@ -121,6 +130,9 @@ impl Iterator for FSEventIter {
                         match read_event(file_reader) {
                             Ok(event) => {
                                 if event.id <= *max_id {
+                                    // if this is the last event we're going to send, then change state to Empty now
+                                    // this lets us avoid the attempt to read beyond the known max
+                                    exhausted = event.id == *max_id;
                                     Some(Ok(event))
                                 } else {
                                     None
@@ -139,7 +151,13 @@ impl Iterator for FSEventIter {
                     }
                 }
             }
+        };
+
+        if exhausted {
+            self.0 = EventIterInner::Empty;
         }
+
+        next_result
     }
 }
 
@@ -321,7 +339,7 @@ impl EventReader for FSEventReader {
             index.get_next_entry_for_actor(range_start, actor_id).map(|entry| {
                 let event_file = get_events_file(&storage_dir, entry.id.actor);
 
-                trace!("range_start: {:?}, next_entry: {:?}, file: {:?}", range_start, entry, event_file);
+                trace!("range_start: {:?}, next_entry: {:?}, file: {:?}, max_id: {}", range_start, entry, event_file, id);
                 FSEventIter::initialize(entry.offset, *id, &event_file, actor_id).unwrap_or_else(|err| {
                     error!("Unable to create event iterator: {:?}", err);
                     FSEventIter::error(err, actor_id)

@@ -82,7 +82,6 @@ pub fn start<S: Sender<ServerMessage> + 'static, R: EventReader + 'static, C: Se
                         cursor_closed = true;
                     }
                     Err(err) => {
-                        // TODO: it's possible that we could hit this error condition due to reading a partially written event
                         cursor_closed = true;
                         let error_message = ErrorMessage {
                             op_id: 0,
