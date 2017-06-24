@@ -215,7 +215,10 @@ impl <T: Transport, B, C: EventCodec<B>> SyncConnection<T, B, C> {
             Ok(ProtocolMessage::ReceiveEvent(event)) => self.convert_event(event),
             Ok(ProtocolMessage::Error(err)) => Err(ClientError::FloError(err)),
             Ok(ProtocolMessage::AwaitingEvents) => Err(ClientError::EndOfStream),
-            Ok(other) => Err(ClientError::UnexpectedMessage(other)),
+            Ok(other) => {
+                error!("Client received unexpected message when trying to read next event: {:?}", other);
+                Err(ClientError::UnexpectedMessage(other))
+            },
             Err(transport_err) => Err(transport_err.into())
         }
     }
@@ -236,16 +239,17 @@ impl <T: Transport, B, C: EventCodec<B>> SyncConnection<T, B, C> {
     }
 
     fn start_consuming(&mut self, namespace: String, max: u64) -> Result<(), ClientError> {
+        let op_id = self.next_op_id();
         let msg = ProtocolMessage::StartConsuming(ConsumerStart {
+            op_id: op_id,
             namespace: namespace,
             max_events: max
         });
 
         self.send_message(msg)?; // early return if sending the start message fails
+        let response = self.read_response(op_id)?; // early return if reading response fails
 
-        let next_message = self.read_next_message()?;
-
-        match next_message {
+        match response {
             ProtocolMessage::CursorCreated(cursor_info) => {
                 // initialize batch state
                 self.batch_size = cursor_info.batch_size;
@@ -256,7 +260,20 @@ impl <T: Transport, B, C: EventCodec<B>> SyncConnection<T, B, C> {
                 Err(ClientError::FloError(err))
             }
             other @ _ => {
+                warn!("Client received unexpected message: {:?}, Expected CursorCreated", other);
                 Err(ClientError::UnexpectedMessage(other))
+            }
+        }
+    }
+
+    fn read_response(&mut self, op_id: u32) -> Result<ProtocolMessage, ClientError> {
+        loop {
+            let next_message = self.read_next_message()?;
+            if next_message.get_op_id() == op_id {
+                debug!("Read response for op_id: {}", op_id);
+                return Ok(next_message);
+            } else {
+                debug!("Discarding message: {:?} while awaiting response for op_id: {}", next_message, op_id);
             }
         }
     }
@@ -264,6 +281,11 @@ impl <T: Transport, B, C: EventCodec<B>> SyncConnection<T, B, C> {
     fn send_event_marker(&mut self, id: FloEventId) -> Result<(), ClientError> {
         let msg = ProtocolMessage::UpdateMarker(id);
         self.send_message(msg)
+    }
+
+    fn next_op_id(&mut self) -> u32 {
+        self.op_id += 1;
+        self.op_id
     }
 
 }

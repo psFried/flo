@@ -187,7 +187,9 @@ impl <S: EventWriter> ProducerManager<S> {
             let msg = ::protocol::ProtocolMessage::UpdateMarker(id);
             self.clients.send(connection_id, msg)?; // return early if sending any of these fails
         }
+        //TODO: think about whether it's worth it to set an op_id and verify it later
         let start_message = ::protocol::ProtocolMessage::StartConsuming(::protocol::ConsumerStart{
+            op_id: 0,
             max_events: ::std::u64::MAX,
             namespace: "/**/*".to_owned(),
         });

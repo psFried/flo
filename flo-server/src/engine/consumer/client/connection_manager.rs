@@ -16,6 +16,7 @@ use channels::Sender;
 pub struct ClientConnection<S: Sender<ServerMessage> + 'static> {
     pub connection_id: ConnectionId,
     pub address: SocketAddr,
+    last_op_id: u32,
     client_sender: S,
     state: ConnectionState,
 }
@@ -26,6 +27,7 @@ impl <S: Sender<ServerMessage> + 'static> ClientConnection<S> {
         ClientConnection {
             connection_id: connection_id,
             address: addr,
+            last_op_id: 0,
             client_sender: sender,
             state: ConnectionState::init(batch_size),
         }
@@ -37,6 +39,11 @@ impl <S: Sender<ServerMessage> + 'static> ClientConnection<S> {
     }
 
     pub fn message_received<C: ConnectionContext>(&mut self, message: ProtocolMessage, context: &mut C) -> Result<(), ()> {
+        let op_id = message.get_op_id();
+        if op_id > 0 {
+            self.last_op_id = op_id;
+        }
+
         let state_result = match &message {
             &ProtocolMessage::SetBatchSize(batch_size) => {
                 self.state.set_batch_size(batch_size as u64)
@@ -59,7 +66,7 @@ impl <S: Sender<ServerMessage> + 'static> ClientConnection<S> {
             }
             other @ _ => {
                 Err(ErrorMessage {
-                    op_id: 0,
+                    op_id: self.last_op_id,
                     kind: ErrorKind::InvalidConsumerState,
                     description: "Internal error in consumer connection handler".to_owned(),
                 })
@@ -95,7 +102,7 @@ impl <S: Sender<ServerMessage> + 'static> ClientConnection<S> {
 
     pub fn continue_cursor<C: ConnectionContext>(&mut self, last_state: ConsumerState, context: &mut C) -> Result<(), ()> {
         let batch_size = last_state.batch_size;
-        let cursor_result = ClientConnection::create_cursor(context, last_state, &self.client_sender);
+        let cursor_result = ClientConnection::create_cursor(self.last_op_id, context, last_state, &self.client_sender);
 
         if let Err(ref err) = cursor_result {
             error!("Error continuing cursor for connection_id: {}, err: {:?}", self.connection_id, err);
@@ -130,18 +137,19 @@ impl <S: Sender<ServerMessage> + 'static> ClientConnection<S> {
             let batch_size = consumer_state.batch_size;
 
             let start_message = ProtocolMessage::CursorCreated(CursorInfo{
+                op_id: self.last_op_id,
                 batch_size: batch_size as u32
             });
 
             self.client_sender.send(ServerMessage::Other(start_message)).map_err(|_| {
                 ErrorMessage{
-                    op_id: 0,
+                    op_id: self.last_op_id,
                     kind: ErrorKind::InvalidConsumerState,
                     description: "Error sending start message to client".to_owned(),
                 }
             })?; // early return if sending the start message fails
 
-            ClientConnection::create_cursor(context, consumer_state, &self.client_sender).map(|cursor| {
+            ClientConnection::create_cursor(self.last_op_id, context, consumer_state, &self.client_sender).map(|cursor| {
                 self.state = ConnectionState::new(cursor, batch_size);
             })
         })
@@ -149,6 +157,7 @@ impl <S: Sender<ServerMessage> + 'static> ClientConnection<S> {
 
     fn next_batch<C: ConnectionContext>(&mut self, context: &mut C) -> Result<(), ErrorMessage> {
         let mut new_state: Option<ConnectionState> = None;
+        let op_id = self.last_op_id;
 
         debug!("processing next batch for connection_id: {}", self.connection_id);
 
@@ -156,7 +165,7 @@ impl <S: Sender<ServerMessage> + 'static> ClientConnection<S> {
             ConnectionState::FileCursor(ref mut cursor, _) => {
                 cursor.continue_batch().map_err(|()| {
                     ErrorMessage {
-                        op_id: 0,
+                        op_id: op_id,
                         kind: ErrorKind::StorageEngineError,
                         description: "Cursor has died".to_owned()
                     }
@@ -165,12 +174,12 @@ impl <S: Sender<ServerMessage> + 'static> ClientConnection<S> {
             ConnectionState::InMemoryConsumer(ref mut state) => {
                 let batch_size = state.batch_size;
                 state.start_new_batch();
-                let new_cursor = ClientConnection::create_cursor(context, state.clone(), &self.client_sender)?;
+                let new_cursor = ClientConnection::create_cursor(0, context, state.clone(), &self.client_sender)?;
                 new_state = Some(ConnectionState::new(new_cursor, batch_size));
             }
             ConnectionState::NotConsuming(_) => {
                 return Err(ErrorMessage {
-                    op_id: 0,
+                    op_id: op_id,
                     kind: ErrorKind::InvalidConsumerState,
                     description: "Cannot advance batch because consumer is in NotConsuming state".to_owned()
                 });
@@ -183,10 +192,10 @@ impl <S: Sender<ServerMessage> + 'static> ClientConnection<S> {
         Ok(())
     }
 
-    fn create_cursor<C: ConnectionContext>(context: &mut C, consumer: ConsumerState, sender: &S) -> Result<CursorType, ErrorMessage> {
+    fn create_cursor<C: ConnectionContext>(op_id: u32, context: &mut C, consumer: ConsumerState, sender: &S) -> Result<CursorType, ErrorMessage> {
         context.start_consuming(consumer, sender).map_err(|err| {
             ErrorMessage {
-                op_id: 0,
+                op_id: op_id,
                 kind: ErrorKind::StorageEngineError,
                 description: err
             }
@@ -223,9 +232,11 @@ mod test {
     fn maybe_send_event_sends_only_events_matching_filter() {
         let namespace = "/foo".to_owned();
         let mut subject = subject_with_state(ConnectionState::init(999));
+        let start_op_id = 7;
 
         let mut ctx = InMemoryMockContext::new();
         let start_message = ConsumerStart{
+            op_id: start_op_id,
             max_events: 3,
             namespace: namespace.clone(),
         };
@@ -237,7 +248,7 @@ mod test {
                                                 999);
 
         ctx.assert_argument_received(expected_state);
-        subject.client_sender.assert_message_sent(ServerMessage::Other(ProtocolMessage::CursorCreated(CursorInfo{batch_size: 999})));
+        subject.client_sender.assert_message_sent(ServerMessage::Other(ProtocolMessage::CursorCreated(CursorInfo{op_id: start_op_id, batch_size: 999})));
 
         let data = "data for event".to_owned().into_bytes();
         let timestamp = from_millis_since_epoch(678910);
@@ -258,8 +269,10 @@ mod test {
 
         let mut ctx = InMemoryMockContext::new();
         subject.message_received(ProtocolMessage::SetBatchSize(5), &mut ctx).unwrap();
+        let start_op_id = 89;
 
         let start_message = ConsumerStart{
+            op_id: start_op_id,
             max_events: 3, //TODO: remove max_events field
             namespace: namespace.clone(),
         };
@@ -270,7 +283,7 @@ mod test {
                                                 5);
 
         ctx.assert_argument_received(expected_state);
-        subject.client_sender.assert_message_sent(ServerMessage::Other(ProtocolMessage::CursorCreated(CursorInfo{batch_size: 5})));
+        subject.client_sender.assert_message_sent(ServerMessage::Other(ProtocolMessage::CursorCreated(CursorInfo{op_id: start_op_id, batch_size: 5})));
 
         let data = "data for event".to_owned().into_bytes();
         let timestamp = from_millis_since_epoch(678910);
@@ -308,6 +321,7 @@ mod test {
 
         let mut ctx = MockContext::returning_file_cursor();
         let start_message = ConsumerStart{
+            op_id: 1,
             max_events: 3,
             namespace: "/foo".to_owned(),
         };
@@ -360,6 +374,7 @@ mod test {
         ClientConnection {
             connection_id: CONNECTION_ID,
             address: address(),
+            last_op_id: 0,
             client_sender: MockSender::new(),
             state: state,
         }
