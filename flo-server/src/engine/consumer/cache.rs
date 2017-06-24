@@ -21,6 +21,7 @@ impl Cache {
     /// When we initialize the cache, we need to know if there are pre-existing events that
     /// aren't cached. This is the purpose of the `greatest_uncached_event` parameter.
     pub fn new(max_events: usize, max_memory: MemoryLimit, greatest_uncached_event: FloEventId) -> Cache {
+        info!("Initializing event cache with max_events: {}, max_memory: {:?}, greatest_uncached_event: {}", max_events, max_memory, greatest_uncached_event);
         Cache {
             entries: BTreeMap::new(),
             least_event_id: FloEventId::zero(),
@@ -98,6 +99,26 @@ mod test {
     use super::*;
     use event::{FloEventId, ActorId, EventCounter, OwnedFloEvent};
     use server::{MemoryLimit, MemoryUnit};
+
+    #[test]
+    fn cache_evicts_events_after_the_max_number_of_events_is_reached() {
+        let max = 5;
+        let mut subject = Cache::new(max, MemoryLimit::new(5, MemoryUnit::Megabyte), FloEventId::zero());
+
+        subject.insert(event(1, 1));
+        subject.insert(event(1, 2));
+        subject.insert(event(1, 3));
+        subject.insert(event(1, 4));
+        subject.insert(event(1, 5));
+
+        assert_eq!(FloEventId::zero(), subject.last_evicted_id());
+
+        subject.insert(event(1, 6));
+        assert_eq!(FloEventId::new(1, 1), subject.last_evicted_id());
+
+        subject.insert(event(1, 9));
+        assert_eq!(FloEventId::new(1, 2), subject.last_evicted_id());
+    }
 
     #[test]
     fn events_are_inserted_and_retrieved_by_range() {

@@ -124,6 +124,7 @@ pub enum ConsumerManagerMessage {
     Connect(ClientConnect),
     Disconnect(ConnectionId, SocketAddr),
     EventPersisted(ConnectionId, OwnedFloEvent),
+    FileCursorExhausted(ConsumerState),
     Receive(ReceivedMessage),
 }
 

@@ -57,6 +57,7 @@ impl Consumer<String> for TestConsumer {
 #[test]
 fn consumer_transitions_from_reading_events_from_disk_to_reading_from_memory() {
     use tempdir::TempDir;
+    use std::thread;
 
     init_logger();
     let mut server_process = None;
@@ -67,16 +68,28 @@ fn consumer_transitions_from_reading_events_from_disk_to_reading_from_memory() {
         server_process = Some(FloServerProcess::with_args(port, tempdir, args));
     }
 
-    let mut client = SyncConnection::connect(localhost(port), StringCodec).expect("failed to connect");
+    let mut producer_connection = SyncConnection::connect(localhost(port), StringCodec).expect("failed to connect");
+    let mut consumer_connection = SyncConnection::connect(localhost(port), StringCodec).expect("failed to connect");
     for i in 0..10 {
-        client.produce("/the/namespace", format!("event data: {}", i)).expect("Failed to produce event");
+        producer_connection.produce("/the/namespace", format!("event data: {}", i)).expect("Failed to produce event");
     }
 
-    let mut consumer = TestConsumer::new("consumer_transitions_from_reading_events_from_disk_to_reading_from_memory");
-    let options = ConsumerOptions::from_beginning("/the/namespace", 10);
-    client.run_consumer(options, &mut consumer).expect("running consumer failed");
+    let join_handle = thread::spawn(move || {
+        // Produce one last event asynchronously in another thread.
+        thread::sleep(Duration::from_millis(250));
+        // After this sleep, the cursor should already be at the end of the first ten events.
+        // It _should_ still receive this new event, but it would fail to receive it in the case that the file cursor
+        // never notifies the consumer manager that it is exhausted
+        producer_connection.produce("/the/namespace", "final event".to_owned()).expect("Failed to produce event");
+    });
 
-    assert_eq!(10, consumer.events.len());
+    let mut consumer = TestConsumer::new("consumer_transitions_from_reading_events_from_disk_to_reading_from_memory");
+    let options = ConsumerOptions::from_beginning("/the/namespace", 11);
+    consumer_connection.run_consumer(options, &mut consumer).expect("running consumer failed");
+
+    assert_eq!(11, consumer.events.len());
+
+    join_handle.join().expect("async producer thread resulted in error");
 
     server_process.map(|mut process| {
         // explicitly kill the server here to ensure that it stays in scope since it's automatically killed on Drop
