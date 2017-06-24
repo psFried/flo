@@ -21,9 +21,3 @@ pub struct ConnectionContextImpl<'a, R: EventReader + 'a> {
     file_reader: &'a mut R,
     cache: &'a Cache,
 }
-
-impl <'a, R: EventReader + 'a> ConnectionContext for ConnectionContextImpl<'a, R> {
-    fn start_consuming<S: Sender<ServerMessage> + 'static>(&mut self, consumer_state: ConsumerState, client_sender: &S) -> Result<CursorType, String> {
-        unimplemented!()
-    }
-}

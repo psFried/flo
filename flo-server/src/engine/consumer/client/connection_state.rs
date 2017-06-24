@@ -22,6 +22,7 @@ impl IdleState {
     }
 
     fn create_consumer_state(&self, connection_id: ConnectionId, start_message: &ConsumerStart) -> Result<ConsumerState, ErrorMessage> {
+        let op_id = start_message.op_id;
         NamespaceGlob::new(&start_message.namespace).map(|glob| {
             ConsumerState{
                 version_vector: self.version_vector.clone(),
@@ -32,7 +33,7 @@ impl IdleState {
             }
         }).map_err(|err| {
             ErrorMessage {
-                op_id: 0,
+                op_id: op_id,
                 kind: ErrorKind::InvalidNamespaceGlob,
                 description: err,
             }
@@ -170,7 +171,7 @@ impl ConnectionState {
             }
             _ => {
                 Err(ErrorMessage {
-                    op_id: 0,
+                    op_id: start.op_id,
                     kind: ErrorKind::InvalidConsumerState,
                     description: "Cannot start consuming while already in a consuming state".to_owned()
                 })

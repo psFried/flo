@@ -98,6 +98,7 @@ fn consumer_transitions_from_reading_events_from_disk_to_reading_from_memory() {
 }
 
 integration_test!{consumer_responds_to_event, port, _tcp_stream, {
+    let _ = ::env_logger::init();
     let mut client = SyncConnection::connect(localhost(port), StringCodec).expect("failed to create producer");
 
     struct RespondingConsumer;
@@ -134,6 +135,7 @@ integration_test!{consumer_responds_to_event, port, _tcp_stream, {
 }}
 
 integration_test!{consumer_receives_error_after_starting_to_consume_with_invalid_namespace, port, _tcp_stream, {
+    let _ = ::env_logger::init();
     let mut client = SyncConnection::connect(localhost(port), StringCodec).expect("failed to create producer");
 
     let mut consumer = TestConsumer::new("consumer_receives_error_after_starting_to_consume_with_invalid_namespace");
