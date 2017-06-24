@@ -7,7 +7,7 @@ use std::io;
 use std::marker::PhantomData;
 
 use codec::EventCodec;
-use event::{FloEventId, OwnedFloEvent};
+use event::{FloEventId, OwnedFloEvent, VersionVector};
 use protocol::{ProtocolMessage, ProduceEvent, ConsumerStart};
 use sync::{
     ClientError,
@@ -123,6 +123,30 @@ impl <T: Transport, B, C: EventCodec<B>> SyncConnection<T, B, C> {
         }
     }
 
+    pub fn tail_stream<'a, N: Into<String>>(&'a mut self, namespace: N, starting_point: VersionVector) -> Result<EventIter<'a, T, B, C>, ClientError> {
+        let options = ConsumerOptions::new(namespace, starting_point, ::std::u64::MAX);
+        self.iter(options, true)
+    }
+
+    pub fn query<'a, N: Into<String>>(&'a mut self, namespace: N, starting_point: VersionVector, max_events: u64) -> Result<EventIter<'a, T, B, C>, ClientError> {
+        let options = ConsumerOptions::new(namespace, starting_point, max_events);
+        self.iter(options, false)
+    }
+
+    pub fn iter<'a>(&'a mut self, options: ConsumerOptions, await_new_events: bool) -> Result<EventIter<'a, T, B, C>, ClientError> {
+        let ConsumerOptions{namespace, version_vector, max_events} = options;
+
+        for id in version_vector.snapshot() {
+            self.send_event_marker(id)?;
+        }
+        self.start_consuming(namespace, max_events)?;
+        Ok(EventIter {
+            connection: self,
+            events_consumed: 0,
+            await_new_events: await_new_events,
+        })
+    }
+
     pub fn run_consumer<Con>(&mut self, options: ConsumerOptions, consumer: &mut Con) -> Result<(), ClientError>
         where Con: Consumer<B> {
         let ConsumerOptions{namespace, version_vector, max_events} = options;
@@ -144,7 +168,6 @@ impl <T: Transport, B, C: EventCodec<B>> SyncConnection<T, B, C> {
 
                 if let &Ok(ref event) = &read_result {
                     events_consumed += 1;
-                    self.batch_remaining -= 1;
                     event_id = event.id;
                 }
 
@@ -196,6 +219,7 @@ impl <T: Transport, B, C: EventCodec<B>> SyncConnection<T, B, C> {
     }
 
     fn stop_consuming(&mut self) -> Result<(), ClientError> {
+        debug!("stop_consuming");
         // Reset batch state just so a debug output of the connection doesn't confuse anyone
         self.batch_size = 0;
         self.batch_remaining = 0;
@@ -212,7 +236,10 @@ impl <T: Transport, B, C: EventCodec<B>> SyncConnection<T, B, C> {
                     self.read_event()
                 })
             }
-            Ok(ProtocolMessage::ReceiveEvent(event)) => self.convert_event(event),
+            Ok(ProtocolMessage::ReceiveEvent(event)) => {
+                self.batch_remaining -= 1;
+                self.convert_event(event)
+            },
             Ok(ProtocolMessage::Error(err)) => Err(ClientError::FloError(err)),
             Ok(ProtocolMessage::AwaitingEvents) => Err(ClientError::EndOfStream),
             Ok(other) => {
@@ -308,5 +335,40 @@ impl <'a, T: Transport, B: 'static, C: EventCodec<B>> Context<B> for ConsumerCon
 
     fn batch_remaining(&self) -> u32 {
         self.batch_remaining
+    }
+}
+
+
+pub struct EventIter<'a, T: Transport + 'static, B: 'static, C: EventCodec<B> + 'static> {
+    connection: &'a mut SyncConnection<T, B, C>,
+    events_consumed: u64,
+    await_new_events: bool,
+}
+
+impl <'a, T: Transport + 'static, B: 'static, C: EventCodec<B> + 'static> Iterator for EventIter<'a, T, B, C> {
+    type Item = Result<Event<B>, ClientError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let read_result = self.connection.read_event();
+
+        match read_result {
+            Err(ClientError::EndOfStream) if self.await_new_events => {
+                self.next()
+            }
+            Err(ClientError::EndOfStream) => {
+                None
+            }
+            other @ _ => Some(other)
+        }
+
+    }
+}
+
+impl <'a, T: Transport + 'static, B: 'static, C: EventCodec<B> + 'static> ::std::ops::Drop for EventIter<'a, T, B, C> {
+    fn drop(&mut self) {
+        let result = self.connection.stop_consuming();
+        if let Err(err) = result {
+            error!("StopConsuming resulted in error: {:?}", err);
+        }
     }
 }
