@@ -113,7 +113,8 @@ fn basic_replication_test() {
     let event_three_id = client_three.produce("/foo/bar", "some event data").expect("failed to produce event for actor 3");
 
     thread::sleep(Duration::from_millis(250));
-    let expected_ids = vec![event_one_id, event_two_id, event_three_id];
+    let mut expected_ids = vec![event_one_id, event_two_id, event_three_id];
+    expected_ids.sort();
 
     assert_server_events_equal(&mut client_one, &expected_ids);
     assert_server_events_equal(&mut client_two, &expected_ids);
