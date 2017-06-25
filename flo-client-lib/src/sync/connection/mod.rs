@@ -22,33 +22,32 @@ pub use self::options::ConsumerOptions;
 pub use self::transport::SyncStream;
 
 /// Convenience type to export for basic consumers to simplify generic type signatures
-pub type Connection<B, C> = SyncConnection<SyncStream, B, C>;
+pub type Connection<C> = SyncConnection<SyncStream, C>;
 
-pub struct SyncConnection<T: Transport + 'static, B: 'static, C: EventCodec<B> + 'static> {
+pub struct SyncConnection<T: Transport + 'static, C: EventCodec + 'static> {
     transport: T,
     codec: C,
     message_buffer: VecDeque<ProtocolMessage>,
     batch_size: u32,
     batch_remaining: u32,
     op_id: u32,
-    _phantom_data: PhantomData<B>,
 }
 
-impl <B: 'static, C: EventCodec<B>> SyncConnection<SyncStream, B, C> {
-    pub fn connect<T: ToSocketAddrs>(addr: T, codec: C) -> io::Result<SyncConnection<SyncStream, B, C>> {
+impl <C: EventCodec> SyncConnection<SyncStream, C> {
+    pub fn connect<T: ToSocketAddrs>(addr: T, codec: C) -> io::Result<SyncConnection<SyncStream, C>> {
         SyncStream::connect(addr).map(|stream| {
             SyncConnection::new(stream, codec)
         })
     }
 
-    pub fn from_tcp_stream(stream: TcpStream, codec: C) -> SyncConnection<SyncStream, B, C>  {
+    pub fn from_tcp_stream(stream: TcpStream, codec: C) -> SyncConnection<SyncStream, C>  {
         SyncConnection::new(SyncStream::from_stream(stream), codec)
     }
 }
 
-impl <T: Transport, B, C: EventCodec<B>> SyncConnection<T, B, C> {
+impl <T: Transport, C: EventCodec> SyncConnection<T, C> {
 
-    pub fn new(transport: T, codec: C) -> SyncConnection<T, B, C> {
+    pub fn new(transport: T, codec: C) -> SyncConnection<T, C> {
         SyncConnection {
             transport: transport,
             codec: codec,
@@ -56,7 +55,6 @@ impl <T: Transport, B, C: EventCodec<B>> SyncConnection<T, B, C> {
             batch_remaining: 0,
             op_id: 1,
             message_buffer: VecDeque::new(),
-            _phantom_data: PhantomData,
         }
     }
 
@@ -66,11 +64,11 @@ impl <T: Transport, B, C: EventCodec<B>> SyncConnection<T, B, C> {
         self.transport.send(ProtocolMessage::SetBatchSize(batch_size)).map_err(|e| e.into())
     }
 
-    pub fn produce<N: ToString, D: Into<B>>(&mut self, namespace: N, data: D) -> Result<FloEventId, ClientError> {
+    pub fn produce<N: ToString, D: Into<C::EventData>>(&mut self, namespace: N, data: D) -> Result<FloEventId, ClientError> {
         self.produce_with_parent(None, namespace, data)
     }
 
-    pub fn produce_with_parent<N: ToString, D: Into<B>>(&mut self, parent_id: Option<FloEventId>, namespace: N, data: D) -> Result<FloEventId, ClientError> {
+    pub fn produce_with_parent<N: ToString, D: Into<C::EventData>>(&mut self, parent_id: Option<FloEventId>, namespace: N, data: D) -> Result<FloEventId, ClientError> {
         self.op_id += 1;
 
         let namespace_string = namespace.to_string();
@@ -123,17 +121,17 @@ impl <T: Transport, B, C: EventCodec<B>> SyncConnection<T, B, C> {
         }
     }
 
-    pub fn tail_stream<'a, N: Into<String>>(&'a mut self, namespace: N, starting_point: VersionVector) -> Result<EventIter<'a, T, B, C>, ClientError> {
+    pub fn tail_stream<'a, N: Into<String>>(&'a mut self, namespace: N, starting_point: VersionVector) -> Result<EventIter<'a, T, C>, ClientError> {
         let options = ConsumerOptions::tail(namespace, starting_point);
         self.iter(options)
     }
 
-    pub fn query<'a, N: Into<String>>(&'a mut self, namespace: N, starting_point: VersionVector, max_events: u64) -> Result<EventIter<'a, T, B, C>, ClientError> {
+    pub fn query<'a, N: Into<String>>(&'a mut self, namespace: N, starting_point: VersionVector, max_events: u64) -> Result<EventIter<'a, T, C>, ClientError> {
         let options = ConsumerOptions::new(namespace, starting_point, max_events, false);
         self.iter(options)
     }
 
-    pub fn iter<'a>(&'a mut self, options: ConsumerOptions) -> Result<EventIter<'a, T, B, C>, ClientError> {
+    pub fn iter<'a>(&'a mut self, options: ConsumerOptions) -> Result<EventIter<'a, T, C>, ClientError> {
         let ConsumerOptions{namespace, version_vector, max_events, await_new_events} = options;
 
         for id in version_vector.snapshot() {
@@ -148,7 +146,7 @@ impl <T: Transport, B, C: EventCodec<B>> SyncConnection<T, B, C> {
     }
 
     pub fn run_consumer<Con>(&mut self, options: ConsumerOptions, consumer: &mut Con) -> Result<(), ClientError>
-        where Con: Consumer<B> {
+        where Con: Consumer<C::EventData> {
 
         debug!("starting consumer: '{}' with options: {:?}", consumer.name(), options);
         let ConsumerOptions{namespace, version_vector, max_events, await_new_events} = options;
@@ -234,7 +232,7 @@ impl <T: Transport, B, C: EventCodec<B>> SyncConnection<T, B, C> {
         self.transport.send(ProtocolMessage::StopConsuming).map_err(|e| e.into())
     }
 
-    fn read_event(&mut self, await_new: bool) -> Result<Option<Event<B>>, ClientError> {
+    fn read_event(&mut self, await_new: bool) -> Result<Option<Event<C::EventData>>, ClientError> {
         match self.read_next_message() {
             Ok(ProtocolMessage::EndOfBatch) => {
                 debug!("Reached end of current batch, requesting new batch");
@@ -265,7 +263,7 @@ impl <T: Transport, B, C: EventCodec<B>> SyncConnection<T, B, C> {
         }
     }
 
-    fn convert_event(&self, event: OwnedFloEvent) -> Result<Event<B>, ClientError> {
+    fn convert_event(&self, event: OwnedFloEvent) -> Result<Event<C::EventData>, ClientError> {
         let OwnedFloEvent{id, parent_id, namespace, timestamp, data} = event;
         self.codec.convert_received(&namespace, data).map(|converted| {
             Event{
@@ -332,19 +330,19 @@ impl <T: Transport, B, C: EventCodec<B>> SyncConnection<T, B, C> {
 
 }
 
-struct ConsumerContextImpl<'a, T: Transport + 'static, B: 'static, C: EventCodec<B> + 'static> {
+struct ConsumerContextImpl<'a, T: Transport + 'static, C: EventCodec + 'static> {
     pub events_consumed: u64,
     batch_remaining: u32,
     current_event_id: FloEventId,
-    connection: &'a mut SyncConnection<T, B, C>
+    connection: &'a mut SyncConnection<T, C>
 }
 
-impl <'a, T: Transport, B: 'static, C: EventCodec<B>> Context<B> for ConsumerContextImpl<'a, T, B, C> {
+impl <'a, T: Transport, C: EventCodec> Context<C::EventData> for ConsumerContextImpl<'a, T, C> {
     fn current_event_id(&self) -> FloEventId {
         self.current_event_id
     }
 
-    fn respond<N: ToString, D: Into<B>>(&mut self, namespace: N, data: D) -> Result<FloEventId, ClientError> {
+    fn respond<N: ToString, D: Into<C::EventData>>(&mut self, namespace: N, data: D) -> Result<FloEventId, ClientError> {
         self.connection.produce_with_parent(Some(self.current_event_id), namespace, data)
     }
 
@@ -354,14 +352,14 @@ impl <'a, T: Transport, B: 'static, C: EventCodec<B>> Context<B> for ConsumerCon
 }
 
 
-pub struct EventIter<'a, T: Transport + 'static, B: 'static, C: EventCodec<B> + 'static> {
-    connection: &'a mut SyncConnection<T, B, C>,
+pub struct EventIter<'a, T: Transport + 'static, C: EventCodec + 'static> {
+    connection: &'a mut SyncConnection<T, C>,
     events_consumed: u64,
     await_new_events: bool,
 }
 
-impl <'a, T: Transport + 'static, B: 'static, C: EventCodec<B> + 'static> Iterator for EventIter<'a, T, B, C> {
-    type Item = Result<Event<B>, ClientError>;
+impl <'a, T: Transport + 'static, C: EventCodec + 'static> Iterator for EventIter<'a, T, C> {
+    type Item = Result<Event<C::EventData>, ClientError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let await = self.await_new_events;
@@ -377,7 +375,7 @@ impl <'a, T: Transport + 'static, B: 'static, C: EventCodec<B> + 'static> Iterat
     }
 }
 
-impl <'a, T: Transport + 'static, B: 'static, C: EventCodec<B> + 'static> ::std::ops::Drop for EventIter<'a, T, B, C> {
+impl <'a, T: Transport + 'static, C: EventCodec + 'static> ::std::ops::Drop for EventIter<'a, T, C> {
     fn drop(&mut self) {
         let result = self.connection.stop_consuming();
         if let Err(err) = result {
