@@ -74,7 +74,8 @@ fn get_cluster_member_port(actor: u16) -> (ServerProcessType, u16) {
 }
 
 fn start_cluster(member_count: u16) -> Vec<ClusterMember> {
-    let mut members: Vec<ClusterMember> = (0..member_count).map(|actor_id| {
+    let mut members: Vec<ClusterMember> = (0..member_count).map(|i| {
+        let actor_id = i + 1;
         ClusterMember::new(actor_id)
     }).collect();
 
@@ -91,9 +92,9 @@ fn start_cluster(member_count: u16) -> Vec<ClusterMember> {
 fn start_3_member_cluster() -> (ClusterMember, ClusterMember, ClusterMember) {
     let mut members = start_cluster(3);
     assert_eq!(3, members.len());
-    let one = members.pop().unwrap();
-    let two = members.pop().unwrap();
     let three = members.pop().unwrap();
+    let two = members.pop().unwrap();
+    let one = members.pop().unwrap();
     (one, two, three)
 }
 
@@ -106,6 +107,7 @@ fn basic_replication_test() {
     let mut client_two = server_two.new_connection();
     let mut client_three = server_three.new_connection();
 
+    // shouldn't matter if these events all have the same counter since we're producing them in order of actor precedence
     let event_one_id = client_one.produce("/foo/bar", "some event data").expect("failed to produce event for actor 1");
     let event_two_id = client_two.produce("/foo/bar", "some event data").expect("failed to produce event for actor 2");
     let event_three_id = client_three.produce("/foo/bar", "some event data").expect("failed to produce event for actor 3");
