@@ -124,17 +124,17 @@ impl <T: Transport, B, C: EventCodec<B>> SyncConnection<T, B, C> {
     }
 
     pub fn tail_stream<'a, N: Into<String>>(&'a mut self, namespace: N, starting_point: VersionVector) -> Result<EventIter<'a, T, B, C>, ClientError> {
-        let options = ConsumerOptions::new(namespace, starting_point, ::std::u64::MAX);
-        self.iter(options, true)
+        let options = ConsumerOptions::tail(namespace, starting_point);
+        self.iter(options)
     }
 
     pub fn query<'a, N: Into<String>>(&'a mut self, namespace: N, starting_point: VersionVector, max_events: u64) -> Result<EventIter<'a, T, B, C>, ClientError> {
-        let options = ConsumerOptions::new(namespace, starting_point, max_events);
-        self.iter(options, false)
+        let options = ConsumerOptions::new(namespace, starting_point, max_events, false);
+        self.iter(options)
     }
 
-    pub fn iter<'a>(&'a mut self, options: ConsumerOptions, await_new_events: bool) -> Result<EventIter<'a, T, B, C>, ClientError> {
-        let ConsumerOptions{namespace, version_vector, max_events} = options;
+    pub fn iter<'a>(&'a mut self, options: ConsumerOptions) -> Result<EventIter<'a, T, B, C>, ClientError> {
+        let ConsumerOptions{namespace, version_vector, max_events, await_new_events} = options;
 
         for id in version_vector.snapshot() {
             self.send_event_marker(id)?;
@@ -151,7 +151,7 @@ impl <T: Transport, B, C: EventCodec<B>> SyncConnection<T, B, C> {
         where Con: Consumer<B> {
 
         debug!("starting consumer: '{}' with options: {:?}", consumer.name(), options);
-        let ConsumerOptions{namespace, version_vector, max_events} = options;
+        let ConsumerOptions{namespace, version_vector, max_events, await_new_events} = options;
 
         for id in version_vector.snapshot() {
             self.send_event_marker(id)?;
@@ -166,15 +166,15 @@ impl <T: Transport, B, C: EventCodec<B>> SyncConnection<T, B, C> {
         while events_consumed < max_events {
 
             let consumer_action = {
-                let read_result = self.read_event();
+                let read_result = self.read_event(await_new_events);
 
-                if let &Ok(ref event) = &read_result {
+                if let &Ok(Some(ref event)) = &read_result {
                     events_consumed += 1;
                     event_id = event.id;
                 }
 
                 match read_result {
-                    Ok(event) => {
+                    Ok(Some(event)) => {
                         let mut context = ConsumerContextImpl {
                             current_event_id: event_id,
                             batch_remaining: self.batch_remaining,
@@ -184,6 +184,10 @@ impl <T: Transport, B, C: EventCodec<B>> SyncConnection<T, B, C> {
                         trace!("Client '{}' received event: {:?}", consumer.name(), event_id);
                         context.current_event_id = event_id;
                         consumer.on_event(event, &mut context)
+                    }
+                    Ok(None) => {
+                        debug!("Reached end of stream for consumer '{}'", consumer.name());
+                        ConsumerAction::Stop
                     }
                     Err(err) => {
                         debug!("Consumer: '{}' - Error reading event: {:?}", consumer.name(), err);
@@ -201,7 +205,9 @@ impl <T: Transport, B, C: EventCodec<B>> SyncConnection<T, B, C> {
                     });
                 }
                 ConsumerAction::Stop => {
-                    warn!("Stopping consumer '{}' after error: {:?}", consumer.name(), error);
+                    if error.is_some() {
+                        warn!("Stopping consumer '{}' after error: {:?}", consumer.name(), error);
+                    }
                     break;
                 }
             }
@@ -228,22 +234,29 @@ impl <T: Transport, B, C: EventCodec<B>> SyncConnection<T, B, C> {
         self.transport.send(ProtocolMessage::StopConsuming).map_err(|e| e.into())
     }
 
-    fn read_event(&mut self) -> Result<Event<B>, ClientError> {
+    fn read_event(&mut self, await_new: bool) -> Result<Option<Event<B>>, ClientError> {
         match self.read_next_message() {
             Ok(ProtocolMessage::EndOfBatch) => {
+                debug!("Reached end of current batch, requesting new batch");
                 // if we've hit the end of the batch, then we need to tell the server to send more
                 self.transport.send(ProtocolMessage::NextBatch).map_err(|e| e.into()).and_then(|()| {
                     // restart batch
                     self.batch_remaining = self.batch_size;
-                    self.read_event()
+                    self.read_event(await_new)
                 })
             }
             Ok(ProtocolMessage::ReceiveEvent(event)) => {
                 self.batch_remaining -= 1;
-                self.convert_event(event)
+                self.convert_event(event).map(|e| Some(e))
             },
             Ok(ProtocolMessage::Error(err)) => Err(ClientError::FloError(err)),
-            Ok(ProtocolMessage::AwaitingEvents) => Err(ClientError::EndOfStream),
+            Ok(ProtocolMessage::AwaitingEvents) => {
+                if await_new {
+                    self.read_event(await_new)
+                } else {
+                    Ok(None)
+                }
+            },
             Ok(other) => {
                 error!("Client received unexpected message when trying to read next event: {:?}", other);
                 Err(ClientError::UnexpectedMessage(other))
@@ -351,18 +364,16 @@ impl <'a, T: Transport + 'static, B: 'static, C: EventCodec<B> + 'static> Iterat
     type Item = Result<Event<B>, ClientError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let read_result = self.connection.read_event();
+        let await = self.await_new_events;
+        let read_result = self.connection.read_event(await);
 
+        // TODO: is there a more elegant way to change a Result<Option<T>, _> into an Option<Result<T, _>>?
         match read_result {
-            Err(ClientError::EndOfStream) if self.await_new_events => {
-                self.next()
+            Ok(maybe_event) => {
+                maybe_event.map(|e| Ok(e))
             }
-            Err(ClientError::EndOfStream) => {
-                None
-            }
-            other @ _ => Some(other)
+            Err(error) => Some(Err(error))
         }
-
     }
 }
 
