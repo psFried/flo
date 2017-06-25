@@ -117,11 +117,11 @@ integration_test!{consumer_responds_to_event, port, _tcp_stream, {
     let event_1_id = client.produce("/events", "data").unwrap();
     let event_2_id = client.produce("/events", "data 2").unwrap();
     let mut consumer = RespondingConsumer;
-    let options = ConsumerOptions::from_beginning("/events", 2);
+    let options = ConsumerOptions::new("/events", VersionVector::new(), 2, true);
     client.run_consumer(options, &mut consumer).expect("failed to run consumer");
 
     let mut consumer = TestConsumer::new("verify that response events exist");
-    let options = ConsumerOptions::from_beginning("/responses", 2);
+    let options = ConsumerOptions::new("/responses", VersionVector::new(), 2, true);
     client.run_consumer(options, &mut consumer).expect("failed to run second consumer");
 
     assert_eq!(2, consumer.events.len());
@@ -165,7 +165,7 @@ integration_test!{consumer_reads_events_matching_glob_pattern, port, tcp_stream,
     client.produce("/animal/bird/magpie", "data").expect("failed to produce event");
 
     let mut consumer = TestConsumer::new("consumer_reads_events_matching_glob_pattern");
-    let options = ConsumerOptions::from_beginning("/animal/mammal/*", 2);
+    let options = ConsumerOptions::new("/animal/mammal/*", VersionVector::new(), 2, true);
     client.run_consumer(options, &mut consumer).expect("failed to run consumer");
 
     assert_eq!(2, consumer.events.len());
@@ -187,7 +187,7 @@ integration_test!{consumer_only_receives_events_with_exactly_matching_namespace,
     client.produce(namespace, "right data").expect("failed to produce event");
 
     let mut consumer = TestConsumer::new("consumer_only_receives_events_with_exactly_matching_namespace");
-    let options = ConsumerOptions::from_beginning(namespace, 2);
+    let options = ConsumerOptions::new(namespace, VersionVector::new(), 2, true);
     client.run_consumer(options, &mut consumer).expect("failed to run consumer");
 
     assert_eq!(2, consumer.events.len());
