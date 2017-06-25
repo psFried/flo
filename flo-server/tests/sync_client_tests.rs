@@ -9,7 +9,7 @@ mod test_utils;
 use test_utils::*;
 use flo_client_lib::sync::connection::{SyncConnection, ConsumerOptions};
 use flo_client_lib::sync::{Consumer, Context, ConsumerAction, ClientError};
-use flo_client_lib::{FloEventId, Event, ErrorKind};
+use flo_client_lib::{FloEventId, Event, ErrorKind, VersionVector};
 use flo_client_lib::codec::StringCodec;
 use std::thread;
 use std::time::Duration;
@@ -84,7 +84,7 @@ fn consumer_transitions_from_reading_events_from_disk_to_reading_from_memory() {
     });
 
     let mut consumer = TestConsumer::new("consumer_transitions_from_reading_events_from_disk_to_reading_from_memory");
-    let options = ConsumerOptions::from_beginning("/the/namespace", 11);
+    let options = ConsumerOptions::new("/the/namespace", VersionVector::new(), 11, true);
     consumer_connection.run_consumer(options, &mut consumer).expect("running consumer failed");
 
     assert_eq!(11, consumer.events.len());
@@ -304,7 +304,7 @@ integration_test!{events_are_consumed_as_they_are_written, port, tcp_stream, {
     let mut consumer = TestConsumer::new("events are consumed as they are written");
     let mut client = SyncConnection::from_tcp_stream(tcp_stream, StringCodec);
 
-    let options = ConsumerOptions::from_beginning("/the/test/namespace", num_events as u64);
+    let options = ConsumerOptions::new("/the/test/namespace", VersionVector::new(), num_events as u64, true);
     let result = client.run_consumer(options, &mut consumer);
 
     let produced_ids = join_handle.join().expect("Producer thread panicked!");

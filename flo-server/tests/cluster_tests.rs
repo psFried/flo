@@ -142,7 +142,7 @@ fn assert_server_events_equal(connection: &mut Connection<String, StringCodec>, 
 }
 
 fn get_all_event_ids(connection: &mut Connection<String, StringCodec>) -> Vec<FloEventId> {
-    connection.iter(ConsumerOptions::default(), false)
+    connection.iter(ConsumerOptions::default())
             .expect("failed to create iterator")
             .map(|event_result| {
                 event_result.expect("failed to read next event").id
