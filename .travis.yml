@@ -1,7 +1,8 @@
 language: rust
 env:
-  - RUST_BACKTRACE=1
-  - RUST_LOG=flo=debug
+  global:
+    - RUST_BACKTRACE=1
+    - RUST_LOG=flo=debug
 rust:
   - nightly-2017-04-07
 os:
