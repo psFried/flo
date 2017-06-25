@@ -149,6 +149,8 @@ impl <T: Transport, B, C: EventCodec<B>> SyncConnection<T, B, C> {
 
     pub fn run_consumer<Con>(&mut self, options: ConsumerOptions, consumer: &mut Con) -> Result<(), ClientError>
         where Con: Consumer<B> {
+
+        debug!("starting consumer: '{}' with options: {:?}", consumer.name(), options);
         let ConsumerOptions{namespace, version_vector, max_events} = options;
 
         for id in version_vector.snapshot() {
@@ -184,7 +186,7 @@ impl <T: Transport, B, C: EventCodec<B>> SyncConnection<T, B, C> {
                         consumer.on_event(event, &mut context)
                     }
                     Err(err) => {
-                        error!("Consumer: '{}' - Error reading event: {:?}", consumer.name(), err);
+                        debug!("Consumer: '{}' - Error reading event: {:?}", consumer.name(), err);
                         let action = consumer.on_error(&err);
                         error = Some(err);
                         action
