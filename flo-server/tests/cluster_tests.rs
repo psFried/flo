@@ -55,7 +55,7 @@ impl ClusterMember {
         self.process = Some(process);
     }
 
-    fn new_connection(&self) -> Connection<String, StringCodec> {
+    fn new_connection(&self) -> Connection<StringCodec> {
         let addy = self.address();
         Connection::connect(addy, StringCodec).expect("Failed to create connection")
     }
@@ -121,7 +121,7 @@ fn basic_replication_test() {
     assert_server_events_equal(&mut client_three, &expected_ids);
 }
 
-fn assert_server_events_equal(connection: &mut Connection<String, StringCodec>, expected_event_ids: &Vec<FloEventId>) {
+fn assert_server_events_equal(connection: &mut Connection<StringCodec>, expected_event_ids: &Vec<FloEventId>) {
     use std::time::Instant;
 
     let timeout = Duration::from_millis(1000);
@@ -141,7 +141,7 @@ fn assert_server_events_equal(connection: &mut Connection<String, StringCodec>, 
     panic!("Expected event ids: {:?}, actual: {:?}", expected_event_ids, actual_events);
 }
 
-fn get_all_event_ids(connection: &mut Connection<String, StringCodec>) -> Vec<FloEventId> {
+fn get_all_event_ids(connection: &mut Connection<StringCodec>) -> Vec<FloEventId> {
     connection.iter(ConsumerOptions::default())
             .expect("failed to create iterator")
             .map(|event_result| {

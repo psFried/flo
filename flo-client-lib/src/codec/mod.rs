@@ -10,15 +10,17 @@ pub use self::serde::{SerdeJsonCodec, SerdePrettyJsonCodec};
 /// Trait that allows events to be converted to application-specific types. An `EventCodec` is associated with a
 /// connection, and is used to convert all incoming and outgoing events. Note that the types that are produced and consumed
 /// may be different.
-pub trait EventCodec<B> {
+pub trait EventCodec {
+    type EventData;
     type Error: Error + 'static;
-    fn convert_received(&self, namespace: &str, data: Vec<u8>) -> Result<B, Self::Error>;
-    fn convert_produced(&self, namespace: &str, data: B) -> Result<Vec<u8>, Self::Error>;
+    fn convert_received(&self, namespace: &str, data: Vec<u8>) -> Result<Self::EventData, Self::Error>;
+    fn convert_produced(&self, namespace: &str, data: Self::EventData) -> Result<Vec<u8>, Self::Error>;
 }
 
 /// The simplest possible codec. It just passes every event through as it is and only produces binary data.
 pub struct RawCodec;
-impl EventCodec<Vec<u8>> for RawCodec {
+impl EventCodec for RawCodec {
+    type EventData = Vec<u8>;
     type Error = ImpossibleError;
 
     fn convert_received(&self, _namespace: &str, data: Vec<u8>) -> Result<Vec<u8>, ImpossibleError> {
@@ -34,8 +36,9 @@ impl EventCodec<Vec<u8>> for RawCodec {
 /// `BasicEvent<String>` instances in the consumer, and will produce simple `String`s. This codec will return an error
 /// if the event data is not valid UTF-8. If this isn't what you want, then consider using the `LossyStringCodec` instead.
 pub struct StringCodec;
-impl EventCodec<String> for StringCodec {
+impl EventCodec for StringCodec {
     type Error = FromUtf8Error;
+    type EventData = String;
 
     fn convert_received(&self, _namespace: &str, data: Vec<u8>) -> Result<String, FromUtf8Error> {
         String::from_utf8(data)
@@ -48,8 +51,9 @@ impl EventCodec<String> for StringCodec {
 
 /// A more permissive version of the `StringCodec` that will allow non-utf8 characters by converting them into � characters.
 pub struct LossyStringCodec;
-impl EventCodec<String> for LossyStringCodec {
+impl EventCodec for LossyStringCodec {
     type Error = ImpossibleError;
+    type EventData = String;
 
     fn convert_received(&self, _namespace: &str, data: Vec<u8>) -> Result<String, ImpossibleError> {
         Ok(String::from_utf8_lossy(&data).into_owned())
