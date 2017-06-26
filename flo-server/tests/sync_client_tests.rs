@@ -7,7 +7,7 @@ extern crate tempdir;
 mod test_utils;
 
 use test_utils::*;
-use flo_client_lib::sync::connection::{SyncConnection, ConsumerOptions};
+use flo_client_lib::sync::connection::{SyncConnection, Connection, ConsumerOptions};
 use flo_client_lib::sync::{Consumer, Context, ConsumerAction, ClientError};
 use flo_client_lib::{FloEventId, Event, ErrorKind, VersionVector};
 use flo_client_lib::codec::StringCodec;
@@ -48,6 +48,47 @@ impl Consumer<String> for TestConsumer {
         println!("on_error for consumer: {} on event # {} - error: {:?}", self.name, self.events.len() + 1, error);
         ConsumerAction::Stop
     }
+}
+
+fn test_with_server<F: FnOnce(u16)>(test_name: &'static str, flo_server_args: Vec<&str>, test_fun: F) {
+    use tempdir::TempDir;
+
+    let _ = ::env_logger::init();
+
+    let (proc_type, port) = get_server_port();
+    let temp_dir = TempDir::new(test_name).unwrap();
+    let mut server_process = None;
+
+    if proc_type == ServerProcessType::Child {
+        let args = flo_server_args.iter().map(|a| a.to_string()).collect();
+        server_process = Some(FloServerProcess::with_args(port, temp_dir, args));
+    }
+
+    test_fun(port);
+
+    if let Some(mut process) = server_process {
+        process.kill();
+    }
+}
+
+#[test]
+fn server_retains_only_the_maximum_number_of_events() {
+    test_with_server("server_retains_only_the_maximum_number_of_events", vec!["--max-events", "10"], |server_port| {
+
+        let mut connection = Connection::connect(localhost(server_port), StringCodec).expect("failed to create connection");
+
+        for i in 0..25 {
+            let data = format!("event data: {}", i + 1);
+            connection.produce("/events", data).expect("failed to produce event");
+        }
+
+        let event_count = connection.iter(ConsumerOptions::default()).expect("failed to create event iter")
+                .map(|result| {
+                    result.expect("failed to read event")
+                }).count();
+
+        assert_eq!(10, event_count);
+    });
 }
 
 #[test]
