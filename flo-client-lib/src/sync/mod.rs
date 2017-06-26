@@ -11,12 +11,15 @@ pub mod basic;
 
 pub use self::error::ClientError;
 
-
+/// Trait used by a `SyncConnection` to handle communications between the client and server. A `Transport` handles
+/// (de)serialization of `ProtocolMessage`s as well as delivery/receipt of the messages.
 pub trait Transport: Sized {
     fn send(&mut self, message: ProtocolMessage) -> io::Result<()>;
     fn receive(&mut self) -> io::Result<ProtocolMessage>;
 }
 
+/// A Context is passed to a `Consumer` when it's `on_event` function is called. It allows the `Consumer` to publish
+/// events in response to the current event that is being processed.
 pub trait Context<Pro>: Sized {
 
     /// Returns the id of the event currently being processed
@@ -33,6 +36,7 @@ pub trait Context<Pro>: Sized {
 
 }
 
+/// A consumer of events from the stream. `Consumer`s process events and may optionally respond to events using the `Context`.
 pub trait Consumer<D> {
     fn name(&self) -> &str;
 
@@ -45,11 +49,7 @@ pub trait Consumer<D> {
     /// from the log crate and then stops the consumer by calling `ConsumerAction::Stop`. Consumers can of course override
     /// this method to implement more sophisticated error handling such as reconnection strategies.
     fn on_error(&mut self, error: &ClientError) -> ConsumerAction {
-        if error.is_end_of_stream() {
-            info!("Stopping consumer: '{}' because it reached the end of the stream", self.name());
-        } else {
-            error!("Error running consumer: '{}' error: {:?}", self.name(), error);
-        }
+        error!("Error running consumer: '{}' error: {:?}", self.name(), error);
         ConsumerAction::Stop
     }
 }
@@ -79,3 +79,14 @@ impl <T, E> From<Result<T, E>> for ConsumerAction {
         }
     }
 }
+
+impl <F, D, R> Consumer<D> for F where F: Fn(Event<D>) -> R, R: Into<ConsumerAction> {
+    fn name(&self) -> &str {
+        "anonymous function consumer"
+    }
+
+    fn on_event<C>(&mut self, event: Event<D>, _: &mut C) -> ConsumerAction where C: Context<D> {
+        self(event).into()
+    }
+}
+

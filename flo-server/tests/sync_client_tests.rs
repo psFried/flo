@@ -46,11 +46,7 @@ impl Consumer<String> for TestConsumer {
 
     fn on_error(&mut self, error: &ClientError) -> ConsumerAction {
         println!("on_error for consumer: {} on event # {} - error: {:?}", self.name, self.events.len() + 1, error);
-        if error.is_end_of_stream() {
-            ConsumerAction::Continue
-        } else {
-            ConsumerAction::Stop
-        }
+        ConsumerAction::Stop
     }
 }
 
@@ -195,7 +191,6 @@ integration_test!{consumer_only_receives_events_with_exactly_matching_namespace,
     for event in consumer.events.iter() {
         assert_eq!(namespace, &event.namespace);
     }
-
 }}
 
 integration_test!{clients_can_connect_and_disconnect_multiple_times_without_making_the_server_barf, port, tcp_stream, {

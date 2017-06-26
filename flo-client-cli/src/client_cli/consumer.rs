@@ -7,7 +7,7 @@ use flo_client_lib::sync::{
 };
 use flo_client_lib::codec::LossyStringCodec;
 use flo_client_lib::sync::connection::{SyncConnection, ConsumerOptions};
-use flo_client_lib::{Event, FloEventId};
+use flo_client_lib::{Event, FloEventId, VersionVector};
 
 use std::fmt::{self, Display};
 use std::io;
@@ -31,7 +31,12 @@ impl FloCliCommand for CliConsumer {
     fn run(input: Self::Input, output: &CliContext) -> Result<(), Self::Error> {
         let CliConsumerOptions { host, port, namespace, limit, await, start_position} = input;
 
-        let consumer_opts = ConsumerOptions::simple(namespace, start_position.unwrap_or(FloEventId::zero()), limit.unwrap_or(::std::u64::MAX));
+        let mut version_vector = VersionVector::new();
+        if let Some(id) = start_position {
+            version_vector.set(id);
+        }
+
+        let consumer_opts = ConsumerOptions::new(namespace, version_vector, limit.unwrap_or(::std::u64::MAX), await);
 
         let address = format!("{}:{}", host, port);
 
@@ -46,11 +51,7 @@ impl FloCliCommand for CliConsumer {
                     match result {
                         Ok(()) => Ok(()),
                         Err(error) => {
-                            if error.is_timeout() {
-                                Ok(())
-                            } else {
-                                Err(error.into())
-                            }
+                            Err(error.into())
                         }
                     }
                 })
@@ -73,7 +74,7 @@ impl <'a> Consumer<String> for PrintingConsumer<'a> {
     }
 
     fn on_error(&mut self, error: &ClientError) -> ConsumerAction {
-        if self.await && (error.is_timeout() || error.is_end_of_stream()) {
+        if self.await && (error.is_timeout()) {
             self.context.write_stdout('.', Verbosity::Verbose);
             ConsumerAction::Continue
         } else if error.is_timeout() {
@@ -126,9 +127,6 @@ impl Display for ConsumerError {
             }
             ClientError::UnexpectedMessage(ref _message) => {
                 write!(f, "Received Unexpected message from flo server")
-            }
-            ClientError::EndOfStream => {
-                write!(f, "End of Stream")
             }
             ClientError::Codec(_) => {
                 // this is not reachable since we are using the LossyStringCodec, which cannot return an error

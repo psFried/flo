@@ -1,14 +1,24 @@
 use std::io;
-use protocol::{ErrorMessage, ProtocolMessage};
+use protocol::ProtocolMessage;
 use std::fmt::{self, Display, Formatter};
 use std::error::Error;
 
+pub use protocol::ErrorMessage;
+
+/// Describes all the possible errors that can happen between the client and the server
 #[derive(Debug)]
 pub enum ClientError {
+    /// An error message that was returned by the server. Often times, this simple represents the client making some sort of
+    /// invalid request, although some `ErrorMessage` variants indicate issues with the server.
     FloError(ErrorMessage),
+
+    /// An unexpected message was received by the client. This most likely indicates a bug in either the client or the server
     UnexpectedMessage(ProtocolMessage),
-    EndOfStream,
+
+    /// An error that occurred within the `EventCodec`. This is likely a deserialization error.
     Codec(Box<Error>),
+
+    /// Transport errors cover the range of io errors that can happen while sending messages between the client and server.
     Transport(io::Error)
 }
 
@@ -17,14 +27,6 @@ impl ClientError {
         match *self {
             ClientError::Transport(ref err) if err.kind() == io::ErrorKind::WouldBlock => true,
             _ => false
-        }
-    }
-
-    pub fn is_end_of_stream(&self) -> bool {
-        if let ClientError::EndOfStream = *self {
-            true
-        } else {
-            false
         }
     }
 }
@@ -55,7 +57,6 @@ impl Display for ClientError {
 impl Error for ClientError {
     fn description(&self) -> &str {
         match *self {
-            ClientError::EndOfStream => "End of Stream",
             ClientError::Codec(_) => "Codec Error",
             ClientError::FloError(_) => "Flo Error",
             ClientError::Transport(_) => "Transport Error",
