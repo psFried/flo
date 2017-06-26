@@ -1,5 +1,21 @@
 use event::{FloEventId, VersionVector};
 
+/// Represents the information needed to start consuming events from the event stream. `ConsumerOptions` implements `Default`,
+/// which allows you to easily specify only the options you wish to set explicitely
+///
+/// # Examples
+///
+/// ```
+/// use flo_client_lib::sync::connection::ConsumerOptions;
+/// use flo_client_lib::VersionVector;
+///
+/// let options = ConsumerOptions{max_events: 5, ..Default::default()};
+/// assert_eq!(5, options.max_events);
+/// assert_eq!("/**/*", &options.namespace);
+/// assert!(!options.await_new_events);
+/// assert_eq!(VersionVector::new(), options.version_vector);
+/// ```
+///
 #[derive(Debug, PartialEq, Clone)]
 pub struct ConsumerOptions {
     pub namespace: String,
