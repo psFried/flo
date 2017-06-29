@@ -3,12 +3,13 @@ mod reader;
 
 pub const DATA_FILE_EXTENSION: &'static str = ".events";
 pub const FLO_EVT: &'static str = "FLO_EVT\n";
+pub const PARTITION_COUNT: u64 = 5;
 
 pub use self::writer::FSEventWriter;
 pub use self::reader::{FSEventReader, FSEventIter};
 use super::{StorageEngine, StorageEngineOptions};
 use engine::event_store::index::{EventIndex};
-use event::{FloEvent, ActorId, VersionVector};
+use event::{FloEvent, FloEventId, ActorId, VersionVector};
 
 use std::sync::{Arc, RwLock};
 use std::path::{PathBuf, Path};
@@ -28,8 +29,13 @@ pub fn total_size_on_disk<E: FloEvent>(event: &E) -> u64 {
             event.data_len() as u64 //the actual event data
 }
 
-fn get_events_file(storage_dir: &Path, actor_id: ActorId) -> PathBuf {
-    storage_dir.join(format!("{}.events", actor_id))
+
+fn get_events_file(partition_directory: &Path, actor_id: ActorId) -> PathBuf {
+    partition_directory.join(format!("{}.events", actor_id))
+}
+
+fn get_partition_directory(storage_dir: &Path, partition_number: u64) -> PathBuf {
+    storage_dir.join(partition_number.to_string())
 }
 
 impl StorageEngine for FSStorageEngine {
@@ -53,6 +59,13 @@ impl StorageEngine for FSStorageEngine {
     }
 }
 
+pub fn get_partition(partition_count: u64, max: u64, event_counter: u64) -> u64 {
+    let per_part = max / partition_count;
+    let adder = if event_counter % per_part == 0 { 0 } else { 1 };
+
+    (event_counter / per_part) + adder
+}
+
 
 #[cfg(test)]
 mod test {
@@ -68,6 +81,27 @@ mod test {
     fn event_time() -> Timestamp {
         time::from_millis_since_epoch(12345)
     }
+
+    #[test]
+    fn test_get_partition() {
+        assert_eq!(1, get_partition(5, 10, 1));
+        assert_eq!(1, get_partition(5, 100000, 1));
+        assert_eq!(1, get_partition(4, 100, 25));
+
+
+        assert_eq!(2, get_partition(4, 100, 26));
+        assert_eq!(2, get_partition(5, 100, 21));
+
+        assert_eq!(4, get_partition(4, 100, 99));
+        assert_eq!(4, get_partition(4, 100, 76));
+
+        assert_eq!(5, get_partition(4, 100, 101));
+
+        assert_eq!(1, get_partition(10, 10, 1));
+        assert_eq!(2, get_partition(10, 10, 2));
+        assert_eq!(3, get_partition(10, 10, 3));
+    }
+
 
     #[test]
     fn storage_engine_initialized_from_preexisting_events() {

@@ -3,12 +3,12 @@ use std::sync::{Arc, RwLock};
 use std::path::{PathBuf, Path};
 use std::io::{self, Seek, Write, BufWriter};
 use std::fs::{File, OpenOptions, create_dir_all};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 use engine::event_store::{EventWriter, StorageEngineOptions};
 use engine::event_store::index::EventIndex;
 
-use event::{FloEvent, ActorId, time};
+use event::{FloEvent, FloEventId, ActorId, time};
 
 //Actor and file_path are here so we can re-open files later
 struct FileWriter {
@@ -47,33 +47,76 @@ impl FileWriter {
     }
 }
 
+struct PartitionWriter {
+    partition_dir: PathBuf,
+    writers_by_actor: HashMap<ActorId, FileWriter>,
+    remaining_event_count: u64,
+}
+
+impl PartitionWriter {
+    fn new(storage_dir: &Path, partition_number: u64, max_events_in_partition: u64) -> PartitionWriter {
+        let partition_dir = super::get_partition_directory(storage_dir, partition_number);
+
+        PartitionWriter {
+            partition_dir: partition_dir,
+            writers_by_actor: HashMap::new(),
+            remaining_event_count: max_events_in_partition,
+        }
+    }
+
+    fn write<E: FloEvent>(&mut self, event: &E) -> Result<u64, io::Error> {
+        let result = {
+            let writer = self.get_or_create_writer(event.id())?;
+            writer.write(event)
+        };
+        if result.is_ok() {
+            self.remaining_event_count -= 1;
+        }
+        result
+    }
+
+    fn get_or_create_writer(&mut self, id: &FloEventId) -> Result<&mut FileWriter, io::Error> {
+        if !self.writers_by_actor.contains_key(&id.actor) {
+            let writer = FileWriter::initialize(&self.partition_dir, id.actor)?; //early return if this fails
+            self.writers_by_actor.insert(id.actor, writer);
+        }
+        Ok(self.writers_by_actor.get_mut(&id.actor).unwrap()) //safe unwrap since we just inserted the goddamn thing
+    }
+}
+
 #[allow(dead_code)]
 pub struct FSEventWriter {
     index: Arc<RwLock<EventIndex>>,
     storage_dir: PathBuf,
-    writers_by_actor: HashMap<ActorId, FileWriter>,
+    partition_writers: HashMap<u64, PartitionWriter>,
+    max_events: u64,
+    partition_count: u64,
 }
 
 impl FSEventWriter {
     pub fn initialize(index: Arc<RwLock<EventIndex>>, storage_options: &StorageEngineOptions) -> Result<FSEventWriter, io::Error> {
         let mut storage_dir = storage_options.storage_dir.clone();
-        storage_dir.push(&storage_options.root_namespace);
         create_dir_all(&storage_dir)?; //early return if this fails
 
         Ok(FSEventWriter{
             index: index,
             storage_dir: storage_dir,
-            writers_by_actor: HashMap::new(),
+            partition_writers: HashMap::new(),
+            max_events: storage_options.max_events as u64,
+            partition_count: super::PARTITION_COUNT,
         })
     }
 
-    fn get_or_create_writer(&mut self, actor: ActorId) -> Result<&mut FileWriter, io::Error> {
-        if !self.writers_by_actor.contains_key(&actor) {
-            let writer = FileWriter::initialize(&self.storage_dir, actor)?; //early return if this fails
-            self.writers_by_actor.insert(actor, writer);
+    fn get_or_create_partition(&mut self, id: &FloEventId) -> &mut PartitionWriter {
+        let partition_num = super::get_partition(self.partition_count, self.max_events, id.event_counter);
+        if !self.partition_writers.contains_key(&partition_num) {
+            let part_max = self.max_events / self.partition_count;
+            let part_writer = PartitionWriter::new(&self.storage_dir, partition_num, part_max);
+            self.partition_writers.insert(partition_num, part_writer);
         }
-        Ok(self.writers_by_actor.get_mut(&actor).unwrap()) //safe unwrap since we just inserted the goddamn thing
+        self.partition_writers.get_mut(&partition_num).unwrap()
     }
+
 }
 
 
@@ -84,9 +127,10 @@ impl EventWriter for FSEventWriter {
         use engine::event_store::index::IndexEntry;
 
         let write_result = {
-            let writer = self.get_or_create_writer(event.id().actor)?; //early return if this fails
+            let writer = self.get_or_create_partition(event.id());
             writer.write(event)
         };
+
         write_result.and_then(|event_offset| {
             self.index.write().map_err(|err| {
                 io::Error::new(io::ErrorKind::Other, format!("Error acquiring write lock for index: {:?}", err))
