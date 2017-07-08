@@ -1,9 +1,24 @@
 use std::collections::HashMap;
+use std::collections::hash_map;
 
 use ::{FloEventId, ActorId, EventCounter};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct VersionVector(HashMap<ActorId, EventCounter>);
+
+pub struct VersionVectorIterator<'a> {
+    iter: hash_map::Iter<'a, ActorId, EventCounter>
+}
+
+impl <'a> Iterator for VersionVectorIterator<'a> {
+    type Item = FloEventId;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.iter.next().map(|(actor, counter)| {
+            FloEventId::new(*actor, *counter)
+        })
+    }
+}
 
 impl VersionVector {
 
@@ -19,6 +34,12 @@ impl VersionVector {
             }
         }
         Ok(VersionVector(map))
+    }
+
+    pub fn iter(&self) -> VersionVectorIterator {
+        VersionVectorIterator {
+            iter: self.0.iter()
+        }
     }
 
     /// Updates the version vector with the given id, returning an error if the given id has an event counter that's

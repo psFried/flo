@@ -27,6 +27,7 @@ mod server;
 mod engine;
 mod channels;
 
+use chrono::Duration;
 use event::ActorId;
 use logging::{init_logging, LogLevelOption, LogFileOption};
 use clap::{App, Arg, ArgMatches};
@@ -69,10 +70,15 @@ fn app_args() -> App<'static, 'static> {
                     .value_name("ns")
                     .help("Name of the default namespace")
                     .default_value("default"))
-            .arg(Arg::with_name("max-events")
-                    .long("max-events")
-                    .value_name("max")
-                    .help("Maximum number of events to keep, if left unspecified, defaults to max u32 or u64 depending on architecture"))
+            .arg(Arg::with_name("event-retention-days")
+                    .long("event-retention-days")
+                    .value_name("days")
+                    .help("The minimum number of days to retain events, given as an integer. Fractional days are not supported."))
+            .arg(Arg::with_name("eviction-period")
+                    .long("eviction-period")
+                    .value_name("hours")
+                    .help("The number of hours to go between checks for purging old events")
+                    .default_value("6"))
             .arg(Arg::with_name("max-cached-events")
                     .long("max-cached-events")
                     .value_name("max")
@@ -110,7 +116,6 @@ fn main() {
 
     let port = parse_arg_or_exit(&args, "port", 3000u16);
     let data_dir = PathBuf::from(args.value_of("data-dir").unwrap_or("."));
-    let max_events = parse_arg_or_exit(&args, "max-events", ::std::usize::MAX);
     let default_ns = args.value_of("default-namespace").map(|value| value.to_owned()).expect("Must have a value for 'default-namespace' argument");
     let max_cached_events = parse_arg_or_exit(&args, "max-cached-events", ::std::usize::MAX);
     let max_cache_memory = get_max_cache_mem_amount(&args);
@@ -128,9 +133,16 @@ fn main() {
         }).or_bail()
     });
 
+    // TODO: validate that these arguments are within realistic bounds
+    let retention_days = parse_arg_or_exit(&args, "event-retention-days", 30);
+    let retention_duration = Duration::days(retention_days);
+
+    let eviction_period_hours = parse_arg_or_exit(&args, "eviction-period", 6);
+
     let server_options = ServerOptions {
         default_namespace: default_ns,
-        max_events: max_events,
+        event_retention_duration: retention_duration,
+        event_eviction_period: Duration::hours(eviction_period_hours),
         port: port,
         data_dir: data_dir,
         max_cached_events: max_cached_events,

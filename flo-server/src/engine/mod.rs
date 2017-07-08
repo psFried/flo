@@ -29,12 +29,21 @@ pub fn run(options: ServerOptions, cluster_sender: UnboundedSender<SocketAddr>) 
     let (producer_tx, producer_rx) = mpsc::channel::<ProducerManagerMessage>();
     let (consumer_tx, consumer_rx) = mpsc::channel::<ConsumerManagerMessage>();
 
-    let ServerOptions{port, data_dir, default_namespace, max_events, max_cached_events, max_cache_memory, cluster_addresses, actor_id, ..} = options;
+    let ServerOptions{port,
+        data_dir,
+        default_namespace,
+        event_retention_duration,
+        event_eviction_period,
+        max_cached_events,
+        max_cache_memory,
+        cluster_addresses,
+        actor_id, ..} = options;
 
     let storage_options = StorageEngineOptions {
         storage_dir: data_dir,
         root_namespace: default_namespace,
-        max_events: max_events,
+        event_eviction_period: event_eviction_period,
+        event_retention_duration: event_retention_duration
     };
 
     let (event_writer, event_reader, version_vec) = FSStorageEngine::initialize(storage_options).expect("Failed to initialize storage engine");

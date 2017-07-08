@@ -61,8 +61,9 @@ pub fn start<S: Sender<ServerMessage> + 'static, R: EventReader + 'static, C: Se
                                                                            consumer_manager_sender: C) -> io::Result<CursorImpl> {
 
     let connection_id = state.connection_id;
-    let start = state.version_vector.min();
-    let mut event_iter = reader.load_range(start, ::std::usize::MAX);
+
+    // Return early before spawning the thread if creating the event iterator fails
+    let mut event_iter = reader.load_range(&state.version_vector, ::std::usize::MAX)?;
 
     let (engine_sender, my_receiver) = std_mpsc::channel::<CursorMessage>();
     let thread_name = format!("cursor for connection_id: {}", connection_id);

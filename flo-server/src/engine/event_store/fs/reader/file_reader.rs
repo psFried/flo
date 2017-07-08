@@ -1,3 +1,5 @@
+
+
 use std::sync::{Arc, RwLock};
 use std::io::{self, Seek, SeekFrom, Read, BufRead, BufReader};
 use std::path::{PathBuf, Path};
@@ -8,6 +10,7 @@ use byteorder::{ByteOrder, BigEndian};
 
 use engine::event_store::index::{EventIndex, IndexEntry};
 use engine::event_store::{EventReader, StorageEngineOptions};
+use engine::event_store::fs::FLO_EVT;
 use event::{FloEventId, ActorId, OwnedFloEvent, Timestamp};
 
 enum EventIterInner {
@@ -19,65 +22,8 @@ enum EventIterInner {
     Error(Option<io::Error>)
 }
 
-struct WrappedIterator {
-    iter: FSEventIter,
-    next: Option<Result<OwnedFloEvent, io::Error>>,
-    next_id: Option<FloEventId>,
-}
 
-impl WrappedIterator {
-    fn new(iter: FSEventIter) -> WrappedIterator {
-        let mut wrapped_iter = WrappedIterator {
-            iter: iter,
-            next: None,
-            next_id: None,
-        };
-        let _ = wrapped_iter.advance();
-        wrapped_iter
-    }
 
-    fn advance(&mut self) -> Option<Result<OwnedFloEvent, io::Error>> {
-        let next = self.iter.next();
-        let next_id = match &next {
-            &Some(Ok(ref event)) => Some(event.id),
-            _ => None,
-        };
-        trace!("Advancing file reader for actor: {}, prev id: {:?}, next_id: {:?}", self.actor_id(), self.next_id, next_id);
-        self.next_id = next_id;
-        ::std::mem::replace(&mut self.next, next)
-    }
-
-    fn actor_id(&self) -> ActorId {
-        self.iter.1
-    }
-}
-
-pub struct MultiActorEventIter {
-    iters: Vec<WrappedIterator>,
-    remaining: usize,
-}
-
-impl Iterator for MultiActorEventIter {
-    type Item = Result<OwnedFloEvent, io::Error>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.remaining == 0 {
-            return None;
-        }
-        self.remaining -= 1;
-
-        let next_iter: Option<&mut WrappedIterator> = self.iters.iter_mut().min_by_key(|wrapped| {
-            wrapped.next_id.unwrap_or(FloEventId::max())
-        });
-        next_iter.and_then(|wrapped| {
-            if wrapped.next_id.is_none() {
-                None
-            } else {
-                wrapped.advance()
-            }
-        })
-    }
-}
 
 pub struct FSEventIter(EventIterInner, ActorId);
 
@@ -163,7 +109,7 @@ impl Iterator for FSEventIter {
 
 fn has_next_event<R: BufRead>(reader: &mut R) -> Result<bool, io::Error> {
     reader.fill_buf().map(|buffer| {
-        buffer.len() >= 8 && &buffer[..8] == super::FLO_EVT.as_bytes()
+        buffer.len() >= 8 && &buffer[..8] == FLO_EVT.as_bytes()
     })
 }
 
@@ -213,7 +159,7 @@ pub fn read_header<R: Read>(reader: &mut R) -> Result<EventHeader, io::Error> {
     let mut buffer = [0; 44];
     reader.read_exact(&mut buffer[..])?;
 
-    if &buffer[..8] == super::FLO_EVT.as_bytes() {
+    if &buffer[..8] == ::engine::event_store::fs::FLO_EVT.as_bytes() {
         Ok(EventHeader{
             total_size: BigEndian::read_u32(&buffer[8..12]),
             event_counter: BigEndian::read_u64(&buffer[12..20]),
@@ -224,7 +170,7 @@ pub fn read_header<R: Read>(reader: &mut R) -> Result<EventHeader, io::Error> {
             namespace_length: BigEndian::read_u32(&buffer[40..44]),
         })
     } else {
-        Err(invalid_bytes_err(format!("expected {:?}, got: {:?}", super::FLO_EVT.as_bytes(), &buffer[..8])))
+        Err(invalid_bytes_err(format!("expected {:?}, got: {:?}", ::engine::event_store::fs::FLO_EVT.as_bytes(), &buffer[..8])))
     }
 }
 
@@ -253,108 +199,3 @@ fn invalid_bytes_err(error_desc: String) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, error_desc)
 }
 
-pub struct FSEventReader {
-    index: Arc<RwLock<EventIndex>>,
-    storage_dir: PathBuf,
-    existing_actors: HashSet<ActorId>,
-}
-
-fn determine_existing_actors(storage_dir: &Path) -> Result<HashSet<ActorId>, io::Error> {
-    let mut actors = HashSet::new();
-    for entry in fs::read_dir(storage_dir)? {
-        let filename_os_str = entry?.file_name();
-        let filename = filename_os_str.to_string_lossy();
-        if let Some(actor_num_str) = filename.split_terminator(super::DATA_FILE_EXTENSION).next() {
-            debug!("Found events file for actor: '{}'", actor_num_str);
-            let id = actor_num_str.parse::<ActorId>().map_err(|_parse_err| {
-                io::Error::new(io::ErrorKind::InvalidData, format!("The filename '{}' is invalid", filename))
-            })?; // early return if the parse goes awry
-            actors.insert(id);
-        }
-    }
-    Ok(actors)
-}
-
-impl FSEventReader {
-    pub fn initialize(index: Arc<RwLock<EventIndex>>, options: &StorageEngineOptions) -> Result<FSEventReader, io::Error> {
-        let storage_dir = options.storage_dir.as_path().join(&options.root_namespace);
-
-        let existing_actors = determine_existing_actors(&storage_dir)?;
-
-        let mut reader = FSEventReader{
-            index: index,
-            storage_dir: storage_dir,
-            existing_actors: existing_actors,
-        };
-
-        reader.init_index()?;
-
-        Ok(reader)
-    }
-
-    fn init_index(&mut self) -> Result<(), io::Error> {
-        let FSEventReader{ref mut index, ref mut storage_dir, ref mut existing_actors} = *self;
-
-        let mut locked_index = index.write().map_err(|lock_err| {
-            io::Error::new(io::ErrorKind::Other, format!("failed to acquire write lock for index: {:?}", lock_err))
-        })?;
-        for &actor_id in existing_actors.iter() {
-            debug!("Adding events to index from actor: {}", actor_id);
-            let events_file = get_events_file(&storage_dir, actor_id);
-            let iter = FSEventIter::initialize(0, FloEventId::max(), &events_file, actor_id)?;
-
-            let mut num_events_for_actor = 0;
-            let mut offset = 0;
-            for read_result in iter {
-                let event = read_result?;
-                let entry = IndexEntry::new(event.id, offset);
-                locked_index.add(entry); //don't care about evictions here
-                offset += super::total_size_on_disk(&event);
-                num_events_for_actor += 1;
-            }
-            debug!("Finished adding {} events to index for actor: {}", num_events_for_actor, actor_id);
-        }
-        info!("finished building index with {} total entries", locked_index.entry_count());
-        Ok(())
-    }
-
-}
-
-fn get_events_file(storage_dir: &Path, actor_id: ActorId) -> PathBuf {
-    storage_dir.join(format!("{}{}", actor_id, super::DATA_FILE_EXTENSION))
-}
-
-impl EventReader for FSEventReader {
-    type Iter = MultiActorEventIter;
-    type Error = io::Error;
-
-    fn load_range(&mut self, range_start: FloEventId, limit: usize) -> Self::Iter {
-        let FSEventReader{ref mut index, ref mut storage_dir, ..} = *self;
-
-        let index = index.read().expect("Unable to acquire read lock on event index");
-        let versions = index.get_version_vector().snapshot();
-
-        let iters = versions.iter().map(|id| {
-            let actor_id = id.actor;
-            index.get_next_entry_for_actor(range_start, actor_id).map(|entry| {
-                let event_file = get_events_file(&storage_dir, entry.id.actor);
-
-                trace!("range_start: {:?}, next_entry: {:?}, file: {:?}, max_id: {}", range_start, entry, event_file, id);
-                FSEventIter::initialize(entry.offset, *id, &event_file, actor_id).unwrap_or_else(|err| {
-                    error!("Unable to create event iterator: {:?}", err);
-                    FSEventIter::error(err, actor_id)
-                })
-            }).unwrap_or_else(|| {
-                trace!("Creating an empty iterator in response to range_start: {:?}", range_start);
-                FSEventIter::empty(actor_id)
-            })
-        }).map(|fs_iter| {
-            WrappedIterator::new(fs_iter)
-        }).collect::<Vec<WrappedIterator>>();
-
-        MultiActorEventIter{
-            iters: iters,
-            remaining: limit
-        }
-    }
-}

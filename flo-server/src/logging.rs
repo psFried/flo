@@ -9,6 +9,7 @@ use log::{LogLevelFilter, LogLevel};
 use std::boxed::Box;
 use std::str::FromStr;
 use std::path::PathBuf;
+use std::error::Error;
 
 const LOG_APPENDER: &'static str = "log_appender";
 const DEFAULT_LOG_MODULE: &'static str = "flo";
