@@ -5,6 +5,7 @@ mod event_loops;
 use futures::stream::Stream;
 use tokio_core::net::{TcpStream, TcpListener};
 use tokio_core::reactor::Interval;
+use chrono::Duration;
 
 use self::channel_sender::ChannelSender;
 use self::engine::api::next_connection_id;
@@ -55,7 +56,8 @@ pub struct ServerOptions {
     pub port: u16,
     pub data_dir: PathBuf,
     pub default_namespace: String,
-    pub max_events: usize,
+    pub event_retention_duration: Duration,
+    pub event_eviction_period: Duration,
     pub max_cached_events: usize,
     pub max_cache_memory: MemoryLimit,
     pub cluster_addresses: Option<Vec<SocketAddr>>,

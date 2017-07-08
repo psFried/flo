@@ -15,7 +15,7 @@ pub struct TestEventIter {
 }
 
 impl Iterator for TestEventIter {
-    type Item = Result<OwnedFloEvent, String>;
+    type Item = io::Result<OwnedFloEvent>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let TestEventIter{ref mut storage, ref mut current_idx, ref mut remaining} = *self;
@@ -33,15 +33,14 @@ impl Iterator for TestEventIter {
 }
 
 impl EventReader for TestEventReader {
-    type Error = String;
     type Iter = TestEventIter;
 
-    fn load_range(&mut self, _start_range: FloEventId, limit: usize) -> Self::Iter {
-        TestEventIter {
+    fn load_range(&mut self, _start_range: &VersionVector, limit: usize) -> io::Result<Self::Iter> {
+        Ok(TestEventIter {
             storage: self.storage.clone(),
             current_idx: 0, //TODO: consider supporting an actual start range for test iterator
             remaining: limit,
-        }
+        })
     }
 }
 
@@ -64,9 +63,8 @@ impl TestEventWriter {
 }
 
 impl EventWriter for TestEventWriter {
-    type Error = String;
 
-    fn store<E: FloEvent>(&mut self, event: &E) -> Result<(), Self::Error> {
+    fn store<E: FloEvent>(&mut self, event: &E) -> io::Result<()> {
         let mut storage = self.storage.lock().unwrap();
         storage.push(event.to_owned());
         Ok(())

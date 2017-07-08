@@ -8,27 +8,25 @@ pub mod test_util;
 use std::path::PathBuf;
 use std::io;
 
+use chrono::Duration;
 use event::{FloEvent, OwnedFloEvent, FloEventId, VersionVector};
 
+#[derive(Clone, PartialEq)]
 pub struct StorageEngineOptions {
     pub storage_dir: PathBuf,
     pub root_namespace: String,
-    pub max_events: usize,
+    pub event_retention_duration: Duration,
+    pub event_eviction_period: Duration,
 }
 
 pub trait EventReader: Sized {
-    //TODO: bring sanity to error handling, maybe use std::error::Error, or else error_chain crate
-    type Error: ::std::fmt::Debug;
-    type Iter: Iterator<Item=Result<OwnedFloEvent, Self::Error>> + Send;
+    type Iter: Iterator<Item=Result<OwnedFloEvent, io::Error>> + Send;
 
-    fn load_range(&mut self, range_start: FloEventId, limit: usize) -> Self::Iter;
+    fn load_range(&mut self, range_start: &VersionVector, limit: usize) -> Result<Self::Iter, io::Error>;
 }
 
 pub trait EventWriter: Sized {
-    //TODO: bring sanity to error handling, maybe use std::error::Error, or else error_chain crate
-    type Error: ::std::fmt::Debug;
-
-    fn store<E: FloEvent>(&mut self, event: &E) -> Result<(), Self::Error>;
+    fn store<E: FloEvent>(&mut self, event: &E) -> Result<(), io::Error>;
 }
 
 pub trait StorageEngine {

@@ -72,26 +72,6 @@ fn test_with_server<F: FnOnce(u16)>(test_name: &'static str, flo_server_args: Ve
 }
 
 #[test]
-fn server_retains_only_the_maximum_number_of_events() {
-    test_with_server("server_retains_only_the_maximum_number_of_events", vec!["--max-events", "10"], |server_port| {
-
-        let mut connection = Connection::connect(localhost(server_port), StringCodec).expect("failed to create connection");
-
-        for i in 0..25 {
-            let data = format!("event data: {}", i + 1);
-            connection.produce("/events", data).expect("failed to produce event");
-        }
-
-        let event_count = connection.iter(ConsumerOptions::default()).expect("failed to create event iter")
-                .map(|result| {
-                    result.expect("failed to read event")
-                }).count();
-
-        assert_eq!(10, event_count);
-    });
-}
-
-#[test]
 fn consumer_transitions_from_reading_events_from_disk_to_reading_from_memory() {
     use tempdir::TempDir;
     use std::thread;

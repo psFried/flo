@@ -1,3 +1,4 @@
+mod segment_writer;
 
 use std::sync::{Arc, RwLock};
 use std::path::{PathBuf, Path};
@@ -7,185 +8,180 @@ use std::collections::{HashMap, VecDeque};
 
 use engine::event_store::{EventWriter, StorageEngineOptions};
 use engine::event_store::index::EventIndex;
+use engine::event_store::fs::{determine_existing_partitions, determine_existing_actors};
 
-use event::{FloEvent, FloEventId, ActorId, time};
+use chrono::Duration;
+use event::{FloEvent, FloEventId, EventCounter, ActorId, Timestamp, time};
 
-//Actor and file_path are here so we can re-open files later
-struct FileWriter {
-    _actor_id: ActorId,
-    _file_path: PathBuf,
-    writer: BufWriter<File>,
-    current_offset: u64,
-}
+use self::segment_writer::Segment;
 
-impl FileWriter {
-    fn initialize(storage_dir: &Path, actor: ActorId) -> Result<FileWriter, io::Error> {
-        let events_file = super::get_events_file(storage_dir, actor);
-        let open_result = OpenOptions::new().write(true).truncate(false).create(true).append(true).open(&events_file);
-
-        open_result.and_then(|mut file| {
-            file.seek(io::SeekFrom::End(0)).map(|file_offset| {
-                trace!("initializing writer for actor: {} starting at offset: {} in file: {:?}", actor, file_offset, &events_file);
-                let writer = BufWriter::new(file);
-
-                FileWriter{
-                    _actor_id: actor,
-                    _file_path: events_file,
-                    writer: writer,
-                    current_offset: file_offset,
-                }
-            })
-        })
-    }
-
-    fn write<E: FloEvent>(&mut self, event: &E) -> Result<u64, io::Error> {
-        let size_on_disk = write_event(&mut self.writer, event)?;
-        let event_offset = self.current_offset;
-        debug!("wrote event to disk for actor: {}, start_offset: {}, event_size_in_bytes: {}", event.id().actor, event_offset, size_on_disk);
-        self.current_offset += size_on_disk;
-        Ok(event_offset)
-    }
-}
-
-struct PartitionWriter {
-    partition_dir: PathBuf,
-    writers_by_actor: HashMap<ActorId, FileWriter>,
-    remaining_event_count: u64,
-}
-
-impl PartitionWriter {
-    fn new(storage_dir: &Path, partition_number: u64, max_events_in_partition: u64) -> PartitionWriter {
-        let partition_dir = super::get_partition_directory(storage_dir, partition_number);
-
-        PartitionWriter {
-            partition_dir: partition_dir,
-            writers_by_actor: HashMap::new(),
-            remaining_event_count: max_events_in_partition,
-        }
-    }
-
-    fn write<E: FloEvent>(&mut self, event: &E) -> Result<u64, io::Error> {
-        let result = {
-            let writer = self.get_or_create_writer(event.id())?;
-            writer.write(event)
-        };
-        if result.is_ok() {
-            self.remaining_event_count -= 1;
-        }
-        result
-    }
-
-    fn get_or_create_writer(&mut self, id: &FloEventId) -> Result<&mut FileWriter, io::Error> {
-        if !self.writers_by_actor.contains_key(&id.actor) {
-            let writer = FileWriter::initialize(&self.partition_dir, id.actor)?; //early return if this fails
-            self.writers_by_actor.insert(id.actor, writer);
-        }
-        Ok(self.writers_by_actor.get_mut(&id.actor).unwrap()) //safe unwrap since we just inserted the goddamn thing
-    }
-}
 
 #[allow(dead_code)]
 pub struct FSEventWriter {
     index: Arc<RwLock<EventIndex>>,
     storage_dir: PathBuf,
-    partition_writers: HashMap<u64, PartitionWriter>,
-    max_events: u64,
-    partition_count: u64,
+    segment_writers: VecDeque<Segment>,
+    segment_duration: Duration,
+    event_expiration_duration: Duration,
 }
+
+
+/*
+
+Each SegmentWriter keeps its starting time bound, as well as the version vector for JUST THAT SEGMENT
+SegmentWriters are stored in a DeQueue sorted with earliest segment at the beginning, and the most recent segment at the end
+
+to write an event:
+    - Iterate the DeQueue from newest to oldest
+        - If the SegmentWriter start_time is less than the event's timestamp, AND the event's id is greater than what's in the SegmentWriter's version vector for that actor
+            - If this is the most recent SegmentWriter, then check the event timestamp against the SegmentWriter.start_time + SegmentWriter.duration
+                - If it fits, then write into that segment
+                - Otherwise, it's outside the time range for that segment, so we need to create a new SegmentWriter
+                    - Create a new SegmentWriter with the next segment number,
+                    - the start_time should be = previous_segment.start_time + segment_duration
+                    - Write the event into the new SegmentWriter
+        - Otherwise:
+            - Keep iterating in reverse
+        - reaching the beginning of the DeQueue is an Error!
+
+to expire old events, given a retention_timestamp that marks the threshold of events we want to keep:
+    - Iterate the DeQueue from oldest to newest:
+        - Find the index, 'retained_segments_index' of the LAST SegmentWriter where the start time bound is less than the retention_timestamp
+        - Then drop that NUMBER of segments from the DeQueue (we want the shift by 1 here, because it will cause the element at retained_segments_index to be retained)
+            - Iterate these from earliest to latest:
+                - Remove the SegmentWriter from the DeQueue
+                - Delete the whole directory for the segment
+
+
+to initialize a SegmentWriter from disk:
+    - read the starting timestamp from disk
+    - read the version vector from disk
+    - The Duration of events that go into the most recent segmentWriter may be different upon startup than it was previously
+
+*/
 
 impl FSEventWriter {
     pub fn initialize(index: Arc<RwLock<EventIndex>>, storage_options: &StorageEngineOptions) -> Result<FSEventWriter, io::Error> {
-        let mut storage_dir = storage_options.storage_dir.clone();
-        create_dir_all(&storage_dir)?; //early return if this fails
+        let storage_dir = storage_options.storage_dir.clone();
+        //TODO: these values from StorageEngineOptions
+        let event_retention_duration = Duration::days(30);
+        let segment_duration = Duration::days(2);
 
-        Ok(FSEventWriter{
+        create_dir_all(&storage_dir)?; //early return if this fails
+        let segment_numbers = determine_existing_partitions(&storage_dir)?;
+        debug!("Initializing from existing segments: {:?}", segment_numbers);
+
+        let segments_numbers_str = segment_numbers.iter().map(|n| n.to_string()).collect::<String>();
+
+        let mut segment_writers = VecDeque::with_capacity(segment_numbers.len());
+
+        for segment in segment_numbers {
+            let timestamp = ::event::time::now();
+            let writer = Segment::initialize(&storage_dir, segment, timestamp, event_retention_duration)?;
+            segment_writers.push_front(writer);
+        }
+
+        let writers_str = segment_writers.iter().map(|w| w.partition_number.to_string()).collect::<String>();
+        println!("initialized from segment numbers: [{}], segments: [{}]", segments_numbers_str, writers_str);
+
+        Ok(FSEventWriter {
             index: index,
             storage_dir: storage_dir,
-            partition_writers: HashMap::new(),
-            max_events: storage_options.max_events as u64,
-            partition_count: super::PARTITION_COUNT,
+            segment_writers: segment_writers,
+            segment_duration: segment_duration,
+            event_expiration_duration: event_retention_duration,
+
         })
     }
 
-    fn get_or_create_partition(&mut self, id: &FloEventId) -> &mut PartitionWriter {
-        let partition_num = super::get_partition(self.partition_count, self.max_events, id.event_counter);
-        if !self.partition_writers.contains_key(&partition_num) {
-            let part_max = self.max_events / self.partition_count;
-            let part_writer = PartitionWriter::new(&self.storage_dir, partition_num, part_max);
-            self.partition_writers.insert(partition_num, part_writer);
+    fn get_or_create_segment<E: FloEvent>(&mut self, event: &E) -> io::Result<&mut Segment> {
+        let event_time = event.timestamp();
+        let event_id = *event.id();
+
+        let create = self.check_most_recent_segment(event);
+
+        if let CreateSegment::CreateNew {segment_number, start_time} = create {
+            let duration = self.segment_duration;
+            let new_segment = Segment::initialize(&self.storage_dir, segment_number, start_time, duration)?;
+            self.segment_writers.push_front(new_segment);
+            Ok(self.segment_writers.front_mut().unwrap())
+        } else {
+            // there must be an existing segment to handle this
+            self.segment_writers.iter_mut().filter(|segment| {
+                true
+            }).next()
+                .ok_or_else(|| {
+                    let message = format!("No valid segment exists for event: {}, with timestamp: {}", event.id(), event.timestamp());
+                    io::Error::new(io::ErrorKind::Other, message)
+                })
         }
-        self.partition_writers.get_mut(&partition_num).unwrap()
     }
 
+
+    fn check_most_recent_segment<E: FloEvent>(&self, event: &E) -> CreateSegment {
+        match self.segment_writers.front() {
+            Some(last_segment) => {
+                check_last_segment(event, last_segment)
+            }
+            None => {
+                // if segment_writers is empty, then create the first segment
+                CreateSegment::CreateNew {
+                    segment_number: 1,
+                    start_time: event.timestamp(),
+                }
+            }
+        }
+    }
+
+}
+
+fn check_last_segment<E: FloEvent>(event: &E, last_segment: &Segment) -> CreateSegment {
+    let id = *event.id();
+    let is_after = id.event_counter > last_segment.get_current_counter(id.actor);
+
+    if is_after && event.timestamp() > last_segment.segment_end_time {
+        // the event should be written into a new segment, since it falls after the last segment
+        CreateSegment::CreateNew {
+            segment_number: last_segment.partition_number + 1,
+            start_time: last_segment.segment_end_time,
+        }
+    } else {
+        // Either the event fits into the last segment, or it belongs in an earlier segment
+        CreateSegment::UseExisting
+    }
+}
+
+#[derive(PartialEq, Debug, Clone)]
+enum CreateSegment {
+    CreateNew{
+        segment_number: u64,
+        start_time: Timestamp,
+    },
+    UseExisting
 }
 
 
 impl EventWriter for FSEventWriter {
-    type Error = io::Error;
 
-    fn store<E: FloEvent>(&mut self, event: &E) -> Result<(), Self::Error> {
+    fn store<E: FloEvent>(&mut self, event: &E) -> io::Result<()> {
         use engine::event_store::index::IndexEntry;
 
-        let write_result = {
-            let writer = self.get_or_create_partition(event.id());
-            writer.write(event)
+        let (write_result, partition_number) = {
+            let writer = self.get_or_create_segment(event)?;
+            let segment_number = writer.partition_number;
+            let result = writer.write(event);
+            (result, segment_number)
         };
 
         write_result.and_then(|event_offset| {
             self.index.write().map_err(|err| {
                 io::Error::new(io::ErrorKind::Other, format!("Error acquiring write lock for index: {:?}", err))
             }).map(|mut idx| {
-                let index_entry = IndexEntry::new(*event.id(), event_offset);
-                let evicted = idx.add(index_entry);
-                if let Some(removed_event) = evicted {
-                    debug!("Evicted old event: {:?}", removed_event.id);
-                }
+                let index_entry = IndexEntry::new(*event.id(), event_offset, partition_number);
+                idx.add(index_entry);
             })
         })
     }
 }
 
-pub fn write_event<W: Write, E: FloEvent>(writer: &mut W, event: &E) -> Result<u64, io::Error> {
-    use byteorder::{ByteOrder, BigEndian};
 
-    //initialize buffer with FLO_EVT\n as first 8 characters and leave enough room to write event id, data length
-    let mut buffer = [70, 76, 79, 95, 69, 86, 84, 10, //FLO_EVT\n
-            0,0,0,0,                                  //total length (4 bytes for u32)
-            0,0,0,0,0,0,0,0,0,0,                      //event id     (10 bytes for u64 and u16)
-            0,0,0,0,0,0,0,0,0,0,                      //parent event id     (10 bytes for u64 and u16)
-            0,0,0,0,0,0,0,0,                          //timestamp       (8 bytes for u64 millis since unix epoch)
-            0,0,0,0,                                  //namespace length (4 bytes for u32)
-    ];
-
-    let size_on_disk = (buffer.len() + //includes the FLO_EVT\n header
-            event.namespace().len() +  // length of namespace
-            4 +                        // 4 bytes for event data length (u32)
-            event.data_len() as usize  // length of event data
-    ) as u64;
-
-    let (parent_counter, parent_actor) = event.parent_id().map(|id| {
-        (id.event_counter, id.actor)
-    }).unwrap_or((0, 0));
-
-    BigEndian::write_u32(&mut buffer[8..12], size_on_disk as u32 - 8); //subtract 8 because the total size includes the FLO_EVT\n tag
-    BigEndian::write_u64(&mut buffer[12..20], event.id().event_counter);
-    BigEndian::write_u16(&mut buffer[20..22], event.id().actor);
-    BigEndian::write_u64(&mut buffer[22..30], parent_counter);
-    BigEndian::write_u16(&mut buffer[30..32], parent_actor);
-    BigEndian::write_u64(&mut buffer[32..40], time::millis_since_epoch(event.timestamp()));
-    BigEndian::write_u32(&mut buffer[40..44], event.namespace().len() as u32);
-
-    writer.write(&buffer).and_then(|_| {
-        writer.write(event.namespace().as_bytes()).and_then(|_| {
-            let mut data_len_buffer = [0; 4];
-            BigEndian::write_u32(&mut data_len_buffer[..], event.data_len());
-            writer.write(&data_len_buffer).and_then(|_| {
-                writer.write(event.data())
-            })
-        })
-    }).and_then(|_| {
-        writer.flush()
-    }).map(|_| {
-        size_on_disk
-    })
-}

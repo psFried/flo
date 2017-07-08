@@ -3,17 +3,22 @@ mod reader;
 
 pub const DATA_FILE_EXTENSION: &'static str = ".events";
 pub const FLO_EVT: &'static str = "FLO_EVT\n";
-pub const PARTITION_COUNT: u64 = 5;
 
+// TODO: don't re-export these types
 pub use self::writer::FSEventWriter;
-pub use self::reader::{FSEventReader, FSEventIter};
+pub use self::reader::file_reader::FSEventIter;
+pub use self::reader::FSEventReader;
+
 use super::{StorageEngine, StorageEngineOptions};
 use engine::event_store::index::{EventIndex};
-use event::{FloEvent, FloEventId, ActorId, VersionVector};
+use event::{FloEvent, FloEventId, ActorId, VersionVector, Timestamp};
+use byteorder::{ByteOrder, BigEndian};
 
 use std::sync::{Arc, RwLock};
 use std::path::{PathBuf, Path};
-use std::io;
+use std::io::{self, Write, Read};
+use std::fs;
+use std::ffi::OsStr;
 
 pub struct FSStorageEngine;
 
@@ -29,12 +34,19 @@ pub fn total_size_on_disk<E: FloEvent>(event: &E) -> u64 {
             event.data_len() as u64 //the actual event data
 }
 
-
-fn get_events_file(partition_directory: &Path, actor_id: ActorId) -> PathBuf {
-    partition_directory.join(format!("{}.events", actor_id))
+fn get_events_filename(actor_id: ActorId) -> String {
+    format!("{}{}", actor_id, DATA_FILE_EXTENSION)
 }
 
-fn get_partition_directory(storage_dir: &Path, partition_number: u64) -> PathBuf {
+fn get_events_file(partition_directory: &Path, actor_id: ActorId) -> PathBuf {
+    partition_directory.join(get_events_filename(actor_id))
+}
+
+fn get_event_counter_file(partition_directory: &Path, actor_id: ActorId) -> PathBuf {
+    partition_directory.join(format!("{}.counter", actor_id))
+}
+
+fn get_segment_directory(storage_dir: &Path, partition_number: u64) -> PathBuf {
     storage_dir.join(partition_number.to_string())
 }
 
@@ -44,7 +56,7 @@ impl StorageEngine for FSStorageEngine {
 
     fn initialize(options: StorageEngineOptions) -> Result<(Self::Writer, Self::Reader, VersionVector), io::Error> {
         info!("initializing storage engine in directory: {:?}", &options.storage_dir);
-        let index = Arc::new(RwLock::new(EventIndex::new(options.max_events)));
+        let index = Arc::new(RwLock::new(EventIndex::new()));
 
         FSEventWriter::initialize(index.clone(), &options).and_then(|writer| {
             FSEventReader::initialize(index.clone(), &options).and_then(|reader| {
@@ -59,13 +71,98 @@ impl StorageEngine for FSStorageEngine {
     }
 }
 
-pub fn get_partition(partition_count: u64, max: u64, event_counter: u64) -> u64 {
-    let per_part = max / partition_count;
-    let adder = if event_counter % per_part == 0 { 0 } else { 1 };
-
-    (event_counter / per_part) + adder
+fn open_segment_start_time(segment_dir: &Path, write: bool) -> Result<fs::File, io::Error> {
+    let path = segment_dir.join("segment_start");
+    fs::OpenOptions::new().read(true).write(write).open(&path)
 }
 
+
+fn read_segment_start_time(segment_dir: &Path) -> Result<Option<Timestamp>, io::Error> {
+    let mut info_file = match open_segment_start_time(segment_dir, false) {
+        Err(err) => {
+            if err.kind() == io::ErrorKind::NotFound {
+                return Ok(None);
+            } else {
+                return Err(err);
+            }
+        }
+        Ok(file) => file
+    };
+    let time_u64 = read_u64(&mut info_file)?;
+    let timestamp = ::event::time::from_millis_since_epoch(time_u64);
+    Ok(Some(timestamp))
+}
+
+fn write_u64<W: Write>(number: u64, writer: &mut W) -> Result<(), io::Error> {
+    let mut buffer = [0u8; 8];
+    BigEndian::write_u64(&mut buffer, number);
+    writer.write_all(&buffer)
+}
+
+fn read_u64<R: Read>(reader: &mut R) -> Result<u64, io::Error> {
+    let mut buffer = [0u8; 8];
+    reader.read_exact(&mut buffer)?; // early return on failure
+    Ok(BigEndian::read_u64(&buffer))
+}
+
+fn write_segment_start_time(segment_dir: &Path, start_timestamp: Timestamp) -> Result<(), io::Error> {
+    let mut info_file = open_segment_start_time(segment_dir, true)?;
+    let mut buffer = [0u8; 8];
+    BigEndian::write_u64(&mut buffer, ::event::time::millis_since_epoch(start_timestamp));
+    info_file.write_all(&buffer)
+}
+
+
+fn get_integer_value(filename: &OsStr) -> Option<u64> {
+    filename.to_str().and_then(|utf8| utf8.parse::<u64>().ok())
+}
+
+
+fn determine_existing_actors(storage_dir: &Path) -> Result<Vec<ActorId>, io::Error> {
+    let mut actors = Vec::new();
+    for entry in fs::read_dir(storage_dir)? {
+        let filename_os_str = entry?.file_name();
+
+        if is_data_file(&filename_os_str) {
+            debug!("Found events file: '{:?}'", filename_os_str);
+            let actor_id = filename_os_str.to_str().and_then(|filename| {
+                filename.split_terminator(DATA_FILE_EXTENSION).next()
+            }).ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, format!("The filename '{:?}' is invalid", filename_os_str))
+            }).and_then(|id_str| {
+                id_str.parse::<ActorId>().map_err(|_| {
+                    io::Error::new(io::ErrorKind::InvalidData, format!("The filename '{:?}' should start with an integer", filename_os_str))
+                })
+            })?;
+            actors.push(actor_id);
+        }
+    }
+    actors.sort();
+
+    Ok(actors)
+}
+
+fn is_data_file(input: &OsStr) -> bool {
+    input.to_string_lossy().ends_with(DATA_FILE_EXTENSION)
+}
+
+fn determine_existing_partitions(storage_dir: &Path) -> Result<Vec<u64>, io::Error> {
+    let mut partitions = Vec::new();
+    for entry in fs::read_dir(storage_dir)? {
+        let entry = entry?; // early return again if we can't obtain the next entry
+        let filename_os_str = entry.file_name();
+
+        if let Some(partition_number) = get_integer_value(&filename_os_str) {
+            partitions.push(partition_number);
+        } else {
+            warn!("Ignoring extra file in storage directory: {:?}", filename_os_str);
+        }
+    }
+    partitions.sort();
+
+    debug!("Initializing from existing partitions: {:?}", partitions);
+    Ok(partitions)
+}
 
 #[cfg(test)]
 mod test {
@@ -75,6 +172,7 @@ mod test {
     use engine::event_store::index::EventIndex;
     use event::{time, FloEventId, OwnedFloEvent, Timestamp};
     use std::io::Cursor;
+    use chrono::Duration;
 
     use tempdir::TempDir;
 
@@ -83,42 +181,24 @@ mod test {
     }
 
     #[test]
-    fn test_get_partition() {
-        assert_eq!(1, get_partition(5, 10, 1));
-        assert_eq!(1, get_partition(5, 100000, 1));
-        assert_eq!(1, get_partition(4, 100, 25));
-
-
-        assert_eq!(2, get_partition(4, 100, 26));
-        assert_eq!(2, get_partition(5, 100, 21));
-
-        assert_eq!(4, get_partition(4, 100, 99));
-        assert_eq!(4, get_partition(4, 100, 76));
-
-        assert_eq!(5, get_partition(4, 100, 101));
-
-        assert_eq!(1, get_partition(10, 10, 1));
-        assert_eq!(2, get_partition(10, 10, 2));
-        assert_eq!(3, get_partition(10, 10, 3));
-    }
-
-
-    #[test]
     fn storage_engine_initialized_from_preexisting_events() {
+        let _ = ::env_logger::init();
+
         let storage_dir = TempDir::new("events_are_written_and_read_from_preexisting_directory").unwrap();
         let storage_opts = StorageEngineOptions {
             storage_dir: storage_dir.path().to_owned(),
             root_namespace: "default".to_owned(),
-            max_events: 20,
+            event_retention_duration: Duration::days(30),
+            event_eviction_period: Duration::hours(6)
         };
 
         let event1 = OwnedFloEvent::new(FloEventId::new(1, 1), None, event_time(), "/foo/bar".to_owned(), "first event data".as_bytes().to_owned());
         let event2 = OwnedFloEvent::new(FloEventId::new(2, 2), None, event_time(), "/nacho/cheese".to_owned(), "second event data".as_bytes().to_owned());
         let event3 = OwnedFloEvent::new(FloEventId::new(2, 3), None, event_time(), "/smalls/yourekillinme".to_owned(), "third event data".as_bytes().to_owned());
 
+
         {
-            let index = Arc::new(RwLock::new(EventIndex::new(20)));
-            let mut writer = FSEventWriter::initialize(index.clone(), &storage_opts).expect("Failed to create event writer");
+            let (mut writer, _, _) = FSStorageEngine::initialize(storage_opts.clone()).unwrap();
 
             writer.store(&event1).expect("Failed to store event 1");
             writer.store(&event2).expect("Failed to store event 2");
@@ -127,8 +207,9 @@ mod test {
 
         let (mut writer, mut reader, version_vec) = FSStorageEngine::initialize(storage_opts).expect("failed to initialize storage engine");
 
-
-        let mut event_iter = reader.load_range(FloEventId::new(2, 1), 55);
+        let mut consumer_vector = VersionVector::new();
+        consumer_vector.set(FloEventId::new(1, 1));
+        let mut event_iter = reader.load_range(&consumer_vector, 55).unwrap();
 
         let event4 = OwnedFloEvent::new(FloEventId::new(1, 4), None, event_time(), "/yolo".to_owned(), "fourth event data".as_bytes().to_owned());
         writer.store(&event4).unwrap();
@@ -146,34 +227,6 @@ mod test {
         assert_eq!(3, version_vec.get(2));
     }
 
-    #[test]
-    fn event_size_on_disk_is_computed_correctly() {
-        let event = OwnedFloEvent::new(FloEventId::new(9, 44), None, event_time(), "/foo/bar".to_owned(), "something happened".as_bytes().to_owned());
-        let mut buffer = Vec::new();
-        let size = super::writer::write_event(&mut buffer, &event).expect("Failed to write event");
-        assert_eq!(buffer.len() as u64, size);
-
-        let size = total_size_on_disk(&event);
-        assert_eq!(buffer.len() as u64, size);
-    }
-
-    #[test]
-    fn event_header_is_read() {
-        let event_id = FloEventId::new(9, 44);
-        let parent_id = Some(FloEventId::new(1, 2));
-        let timestamp = event_time();
-        let namespace = "/foo/bar";
-
-        let event = OwnedFloEvent::new(event_id, parent_id, event_time(), namespace.to_owned(), "something happened".as_bytes().to_owned());
-        let mut buffer = Vec::new();
-        super::writer::write_event(&mut buffer, &event).expect("Failed to write event");
-
-        let header = super::reader::read_header(&mut Cursor::new(buffer)).expect("Failed to read header");
-        assert_eq!(event_id, header.event_id());
-        assert_eq!(parent_id, header.parent_id());
-        assert_eq!(timestamp, header.timestamp());
-        assert_eq!(namespace.len() as u32, header.namespace_length)
-    }
 
     #[test]
     fn events_are_stored_and_read_starting_in_the_middle_with_fresh_directory() {
@@ -182,21 +235,21 @@ mod test {
         let event3 = OwnedFloEvent::new(FloEventId::new(1, 3), None, event_time(), "/smalls/yourekillinme".to_owned(), "third event data".as_bytes().to_owned());
 
         let storage_dir = TempDir::new("events_are_stored_and_read_starting_in_the_middle_with_fresh_directory").unwrap();
-        let index = Arc::new(RwLock::new(EventIndex::new(20)));
         let storage_opts = StorageEngineOptions {
             storage_dir: storage_dir.path().to_owned(),
             root_namespace: "default".to_owned(),
-            max_events: 20,
+            event_retention_duration: Duration::days(30),
+            event_eviction_period: Duration::hours(6)
         };
-        let mut writer = FSEventWriter::initialize(index.clone(), &storage_opts).expect("Failed to create event writer");
+        let (mut writer, mut reader, _) = FSStorageEngine::initialize(storage_opts).unwrap();
 
         writer.store(&event1).expect("Failed to store event 1");
         writer.store(&event2).expect("Failed to store event 2");
         writer.store(&event3).expect("Failed to store event 3");
 
-        let mut reader = FSEventReader::initialize(index, &storage_opts).expect("Failed to create event reader");
-
-        let mut iter = reader.load_range(FloEventId::new(1, 1), 1);
+        let mut version_vector = VersionVector::new();
+        version_vector.set(FloEventId::new(1, 1));
+        let mut iter = reader.load_range(&version_vector, 1).unwrap();
         let result = iter.next().unwrap().expect("Expected event2, got error");
         assert_eq!(event2, result);
 
@@ -210,21 +263,20 @@ mod test {
         let event3 = OwnedFloEvent::new(FloEventId::new(1, 3), None, event_time(), "/smalls/yourekillinme".to_owned(), "third event data".as_bytes().to_owned());
 
         let storage_dir = TempDir::new("events_are_stored_and_read_with_fresh_directory").unwrap();
-        let index = Arc::new(RwLock::new(EventIndex::new(20)));
+        let index = Arc::new(RwLock::new(EventIndex::new()));
         let storage_opts = StorageEngineOptions {
             storage_dir: storage_dir.path().to_owned(),
             root_namespace: "default".to_owned(),
-            max_events: 20,
+            event_retention_duration: Duration::days(30),
+            event_eviction_period: Duration::hours(6)
         };
-        let mut writer = FSEventWriter::initialize(index.clone(), &storage_opts).expect("Failed to create event writer");
+        let (mut writer, mut reader, _) = FSStorageEngine::initialize(storage_opts.clone()).expect("Failed to initialize storage engine");
 
         writer.store(&event1).expect("Failed to store event 1");
         writer.store(&event2).expect("Failed to store event 2");
         writer.store(&event3).expect("Failed to store event 3");
 
-        let mut reader = FSEventReader::initialize(index, &storage_opts).expect("Failed to create event reader");
-
-        let mut iter = reader.load_range(FloEventId::zero(), 999999);
+        let mut iter = reader.load_range(&VersionVector::new(), 999999).expect("failed to initialize iterator");
         let result = iter.next().unwrap().expect("Expected event1, got error");
         assert_eq!(event1, result);
 
@@ -235,20 +287,6 @@ mod test {
         assert_eq!(event3, result);
 
         assert!(iter.next().is_none());
-    }
-
-    #[test]
-    fn event_is_serialized_and_deserialized() {
-        use std::io::Cursor;
-        let event = OwnedFloEvent::new(FloEventId::new(1, 1), Some(FloEventId::new(34, 56)), event_time(), "/foo/bar".to_owned(), "event data".as_bytes().to_owned());
-
-        let mut buffer = Vec::new();
-        let size = super::writer::write_event(&mut buffer, &event).expect("Failed to write event");
-        println!("len: {}, size: {}, buffer: {:?}", buffer.len(), size, buffer);
-        let mut reader = Cursor::new(&buffer[..(size as usize)]);
-
-        let result = super::reader::read_event(&mut reader).expect("failed to read event");
-        assert_eq!(event, result);
     }
 
 }

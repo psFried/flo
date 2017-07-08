@@ -12,6 +12,7 @@ use std::sync::mpsc::Sender;
 use std::time::{Instant, Duration};
 use std::net::SocketAddr;
 use std::cmp::max;
+use std::io;
 
 use futures::sync::mpsc::UnboundedSender;
 
@@ -499,9 +500,7 @@ mod test {
     }
 
     impl EventWriter for MockEventWriter {
-        type Error = ();
-
-        fn store<E: FloEvent>(&mut self, event: &E) -> Result<(), Self::Error> {
+        fn store<E: FloEvent>(&mut self, event: &E) -> io::Result<()> {
             self.stored.push(event.to_owned());
             Ok(())
         }
