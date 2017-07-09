@@ -24,7 +24,7 @@ pub struct BackendChannels {
     pub consumer_manager: mpsc::Sender<ConsumerManagerMessage>,
 }
 
-//TODO: use the cluster sender to setup peer connections
+//TODO: return a result from `run` instead of panicking
 pub fn run(options: ServerOptions, cluster_sender: UnboundedSender<SocketAddr>) -> BackendChannels {
     let (producer_tx, producer_rx) = mpsc::channel::<ProducerManagerMessage>();
     let (consumer_tx, consumer_rx) = mpsc::channel::<ConsumerManagerMessage>();
@@ -51,11 +51,20 @@ pub fn run(options: ServerOptions, cluster_sender: UnboundedSender<SocketAddr>) 
     info!("initialized storage engine with highest event id: {}, version vec: {:?}", highest_event_id, version_vec);
 
     // Initialize Producer Manager first
+    let expiration_check_period = event_eviction_period.to_std().expect("Invalid event eviction check period");
 
     let consumer_manager_sender = consumer_tx.clone();
     thread::Builder::new().name("Producer-Manager-thread".to_owned()).spawn(move || {
         let peer_addresses = cluster_addresses.unwrap_or(Vec::new());
-        let mut producer_manager = ProducerManager::new(event_writer, consumer_manager_sender, actor_id, port, version_vec, peer_addresses, cluster_sender);
+
+        let mut producer_manager = ProducerManager::new(event_writer,
+                                                        consumer_manager_sender,
+                                                        actor_id,
+                                                        port,
+                                                        version_vec,
+                                                        expiration_check_period,
+                                                        peer_addresses,
+                                                        cluster_sender);
         loop {
             match producer_rx.recv() {
                 Ok(msg) => {
