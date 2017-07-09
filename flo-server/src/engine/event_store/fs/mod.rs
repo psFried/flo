@@ -71,27 +71,7 @@ impl StorageEngine for FSStorageEngine {
     }
 }
 
-fn open_segment_start_time(segment_dir: &Path, create: bool) -> Result<fs::File, io::Error> {
-    let path = segment_dir.join("segment_start");
-    fs::OpenOptions::new().read(true).write(true).create(create).append(true).open(&path)
-}
 
-
-fn read_segment_start_time(segment_dir: &Path) -> Result<Option<Timestamp>, io::Error> {
-    let mut info_file = match open_segment_start_time(segment_dir, false) {
-        Err(err) => {
-            if err.kind() == io::ErrorKind::NotFound {
-                return Ok(None);
-            } else {
-                return Err(err);
-            }
-        }
-        Ok(file) => file
-    };
-    let time_u64 = read_u64(&mut info_file)?;
-    let timestamp = ::event::time::from_millis_since_epoch(time_u64);
-    Ok(Some(timestamp))
-}
 
 fn write_u64<W: Write>(number: u64, writer: &mut W) -> Result<(), io::Error> {
     let mut buffer = [0u8; 8];
@@ -113,12 +93,7 @@ fn read_u64<R: Read>(reader: &mut R) -> Result<u64, io::Error> {
     }
 }
 
-fn write_segment_start_time(segment_dir: &Path, start_timestamp: Timestamp) -> Result<(), io::Error> {
-    let mut info_file = open_segment_start_time(segment_dir, true)?;
-    let mut buffer = [0u8; 8];
-    BigEndian::write_u64(&mut buffer, ::event::time::millis_since_epoch(start_timestamp));
-    info_file.write_all(&buffer)
-}
+
 
 
 fn get_integer_value(filename: &OsStr) -> Option<u64> {
@@ -178,7 +153,7 @@ mod test {
     use super::*;
     use engine::event_store::{EventReader, EventWriter, StorageEngineOptions};
     use engine::event_store::index::EventIndex;
-    use event::{time, FloEventId, OwnedFloEvent, Timestamp};
+    use event::{time, FloEventId, ActorId, EventCounter, OwnedFloEvent, Timestamp};
     use std::io::Cursor;
     use chrono::Duration;
 
@@ -223,6 +198,63 @@ mod test {
         let actual = iter.map(|result| result.expect("failed to read event")).collect::<Vec<_>>();
         let expected = vec![e3, e4];
         assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn events_can_be_written_into_an_earlier_segment() {
+        let _ = ::env_logger::init();
+
+        let storage_dir = TempDir::new("events_can_be_written_into_an_earlier_segment").unwrap();
+
+        let storage_opts = StorageEngineOptions {
+            storage_dir: storage_dir.path().to_owned(),
+            root_namespace: "default".to_owned(),
+            event_retention_duration: Duration::milliseconds(100),
+            event_eviction_period: Duration::milliseconds(10)
+        };
+
+        fn event(time: u64, actor: ActorId, counter: EventCounter) -> OwnedFloEvent {
+            OwnedFloEvent::new(FloEventId::new(actor, counter), None, time::from_millis_since_epoch(time), "foo".to_owned(), Vec::new())
+        }
+
+        let e1_1 = event(1, 1, 1);
+        let e1_2 = event(10, 1, 2);
+        let e1_3 = event(20, 1, 3);
+        let e1_4 = event(30, 1, 4);
+
+        let e2_1 = event(1, 2, 1);
+        let e2_2 = event(10, 2, 2);
+        let e2_3 = event(20, 2, 3);
+        // HAHA! this server's time just jumped around and now the timestamp on the event is tricky!
+        // This should still be written into the last segment because of the event counter
+        let e2_4 = event(1, 2, 4);
+
+
+        let (mut writer, mut reader, _) = FSStorageEngine::initialize(storage_opts).expect("failed to initialize engine");
+
+        writer.store(&e1_1).expect("failed to save event 1");
+        writer.store(&e1_2).expect("failed to save event 2");
+        writer.store(&e1_3).expect("failed to save event 3");
+        writer.store(&e1_4).expect("failed to save event 4");
+
+        writer.store(&e2_1).expect("failed to save event 1");
+        writer.store(&e2_2).expect("failed to save event 2");
+        writer.store(&e2_3).expect("failed to save event 3");
+        writer.store(&e2_4).expect("failed to save event 4");
+
+        writer.expire_events_before(time::from_millis_since_epoch(20)).expect("failed to expire events");
+
+        let iter = reader.load_range(&VersionVector::new(), 5).expect("failed to create iter");
+        let actual = iter.map(|result| result.expect("failed to read event").id).collect::<Vec<_>>();
+
+        let expected = vec![
+            e1_3.id,
+            e2_3.id,
+            e1_4.id,
+            e2_4.id
+        ];
+
+        assert_eq!(expected, actual)
     }
 
     #[test]

@@ -26,8 +26,10 @@ use engine::event_store::index::{EventIndex, IndexEntry, ConsumerEntries};
 use engine::event_store::{EventReader, StorageEngineOptions};
 use event::{FloEventId, EventCounter, ActorId, VersionVector, OwnedFloEvent, Timestamp};
 
+// We use this custom peekable iterator instead of the standard `iter.peekable()` method because this
+// allows us to greedily advance the iterator and then peek at the next id without requiring a &mut
 pub struct PeekableIterator {
-    pub next_id: Option<FloEventId>,
+    next_id: FloEventId,
     iter: MultiSegmentReader,
     next: Option<Result<OwnedFloEvent, io::Error>>,
 }
@@ -37,7 +39,7 @@ impl PeekableIterator {
         let mut wrapped_iter = PeekableIterator {
             iter: iter,
             next: None,
-            next_id: None,
+            next_id: FloEventId::zero()
         };
         let _ = wrapped_iter.advance();
         wrapped_iter
@@ -45,9 +47,11 @@ impl PeekableIterator {
 
     pub fn advance(&mut self) -> Option<Result<OwnedFloEvent, io::Error>> {
         let next = self.iter.next();
-        let next_id = match &next {
-            &Some(Ok(ref event)) => Some(event.id),
-            _ => None,
+        let next_id = match next.as_ref() {
+            Some(&Ok(ref event)) => event.id,
+            Some(&Err(_)) => FloEventId::zero(),
+            // if the iterator is exhausted, then we're going to return max id, so that this iterator just get's ignored
+            None => FloEventId::max(),
         };
         trace!("Advancing file reader for actor: {}, prev id: {:?}, next_id: {:?}", self.actor_id(), self.next_id, next_id);
         self.next_id = next_id;
@@ -59,7 +63,7 @@ impl PeekableIterator {
     }
 
     fn get_next_id(&self) -> FloEventId {
-        self.next_id.unwrap_or(FloEventId::zero())
+        self.next_id
     }
 
 }

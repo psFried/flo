@@ -1,6 +1,6 @@
 use event::{FloEventId, ActorId, EventCounter, VersionVector};
 
-use std::collections::{BTreeMap, Bound, HashMap};
+use std::collections::{BTreeMap, Bound};
 
 #[derive(PartialEq, Debug, Clone)]
 pub struct IndexEntry {
@@ -51,9 +51,8 @@ impl EventIndex {
     }
 
     pub fn get_consumer_start_point(&self, consumer_vector: &VersionVector) -> ConsumerStartIter {
-        let EventIndex {ref version_vec, ref entries, ..} = *self;
 
-        let mut complete_vector: Vec<FloEventId> = version_vec.iter().map(|index_id| {
+        let mut complete_vector: Vec<FloEventId> = self.version_vec.iter().map(|index_id| {
             let actor = index_id.actor;
             let counter = consumer_vector.get(actor);
             FloEventId::new(actor, counter)
@@ -67,10 +66,8 @@ impl EventIndex {
     }
 
     pub fn remove_range_inclusive(&mut self, end_inclusive: &VersionVector) {
-        let EventIndex {ref mut version_vec, ref mut entries, ..} = *self;
-
         for id in end_inclusive.iter() {
-            if let Some(actor_entries) = entries.get_mut(&id.actor) {
+            if let Some(actor_entries) = self.entries.get_mut(&id.actor) {
                 let counter_end_range = id.event_counter + 1;
                 let mut new_entries = actor_entries.split_off(&counter_end_range);
                 ::std::mem::swap(&mut new_entries, actor_entries);
@@ -86,10 +83,6 @@ impl EventIndex {
 
     pub fn get_version_vector(&self) -> &VersionVector {
         &self.version_vec
-    }
-
-    pub fn entry_count(&self) -> usize {
-        self.entries.len()
     }
 
     fn get_next_entry_for_actor(&self, start_after: FloEventId) -> Option<ConsumerEntries> {
@@ -166,8 +159,6 @@ mod index_test {
     use super::*;
     use event::{FloEventId, ActorId, EventCounter};
 
-    const ACTOR_ID: ActorId = 1;
-
     fn id_entry(actor: ActorId, counter: EventCounter) -> IndexEntry {
         IndexEntry::new(FloEventId::new(actor, counter), 76, 1)
     }
@@ -195,14 +186,16 @@ mod index_test {
         let result: Vec<ConsumerEntries> = subject.get_consumer_start_point(&VersionVector::new()).collect();
         let expected = vec![
             ConsumerEntries {
-                start: id_entry(1, 3),
-                end: id_entry(1, 3),
-            },
-            ConsumerEntries {
                 start: id_entry(3, 1),
                 end: id_entry(3, 3),
+            },
+            ConsumerEntries {
+                start: id_entry(1, 3),
+                end: id_entry(1, 3),
             }
         ];
+
+        assert_eq!(expected, result);
     }
 
     #[test]
@@ -239,14 +232,6 @@ mod index_test {
         assert_eq!(expected, result);
     }
 
-
-    fn entry(counter: EventCounter, offset: u64) -> IndexEntry {
-        IndexEntry::new(id(counter), offset, 9)
-    }
-
-    fn id(counter: EventCounter) -> FloEventId {
-        FloEventId::new(ACTOR_ID, counter)
-    }
 }
 
 

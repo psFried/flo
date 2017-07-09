@@ -1,26 +1,22 @@
 mod event_writer;
 mod counter_writer;
 
+use byteorder::{ByteOrder, BigEndian};
 
-use std::sync::{Arc, RwLock};
 use std::path::{PathBuf, Path};
-use std::io::{self, Seek, Write, BufWriter};
-use std::fs::{self, File, OpenOptions, create_dir_all};
-use std::collections::{HashMap, VecDeque};
+use std::io::{self, Write, Read};
+use std::fs::{self, create_dir_all};
+use std::collections::{HashMap};
 use std::ops::Add;
 
-use engine::event_store::{EventWriter, StorageEngineOptions};
-use engine::event_store::index::EventIndex;
 use engine::event_store::fs::{
     get_segment_directory,
-    DATA_FILE_EXTENSION,
-    read_segment_start_time,
-    write_segment_start_time,
+    read_u64,
     determine_existing_actors
 };
 
 use chrono::Duration;
-use event::{FloEvent, FloEventId, EventCounter, ActorId, VersionVector, Timestamp, time};
+use event::{FloEvent, FloEventId, EventCounter, ActorId, VersionVector, Timestamp};
 
 use self::event_writer::FileWriter;
 use self::counter_writer::EventCounterWriter;
@@ -40,8 +36,14 @@ impl Writer {
     }
 }
 
+#[derive(Debug, PartialEq)]
+pub struct SegmentStart {
+    pub counter: EventCounter,
+    pub time: Timestamp,
+}
+
 pub struct Segment {
-    pub segment_start_time: Timestamp,
+    pub segment_start: SegmentStart,
     pub segment_duration: Duration,
     pub partition_number: u64,
     pub segment_end_time: Timestamp,
@@ -52,28 +54,31 @@ pub struct Segment {
 impl Segment {
     /// Creates a segmentWriter. If the directory exists, then it will be initialized from data in that directory and the
     /// `start_time` parameter will be ignored. Otherwise, will create the directory and write the given `start_time`.
-    pub fn initialize(storage_dir: &Path, segment_number: u64, default_start_time: Timestamp, segment_duration: Duration) -> io::Result<Segment> {
+    pub fn initialize(storage_dir: &Path,
+                      segment_number: u64,
+                      default_start: SegmentStart,
+                      segment_duration: Duration) -> io::Result<Segment> {
         let segment_dir = get_segment_directory(storage_dir, segment_number);
-        debug!("initializing writer Segment: {}, default_start_time: {}, duration: {}", segment_number, default_start_time, segment_duration);
+        debug!("initializing writer Segment: {}, default_start: {:?}, duration: {}", segment_number, default_start, segment_duration);
         create_dir_all(&segment_dir)?;
 
         // The presence of the segment_start file determines if there is an existing partition
         // It would be an error if there were existing events but no start_time file
         // TODO: we should validate that there are no existing actors and return an error if there are
-        let existing_start_time = read_segment_start_time(&segment_dir)?;
+        let existing_start_time = read_segment_start(&segment_dir)?;
 
-        let (existing_actors, start_time) = if let Some(start) = existing_start_time {
+        let (existing_actors, start) = if let Some(start) = existing_start_time {
             let actors = determine_existing_actors(&segment_dir)?;
-            trace!("initializing segment: {} from existing data for actors: {:?}", segment_number, actors);
+            trace!("initializing segment: {} with start: {:?}, from existing data for actors: {:?}", segment_number, start, actors);
             (actors, start)
         } else {
             trace!("initializing segment: {} without existing data", segment_number);
             // Write the segment start time and return early if it fails
-            write_segment_start_time(&segment_dir, default_start_time)?;
-            (Vec::new(), default_start_time)
+            write_segment_start(&segment_dir, &default_start)?;
+            (Vec::new(), default_start)
         };
 
-        let end_time = start_time.add(segment_duration);
+        let end_time = start.time.add(segment_duration);
 
         let mut writers_by_actor = HashMap::new();
         for actor_id in existing_actors {
@@ -90,7 +95,7 @@ impl Segment {
         }
 
         Ok(Segment {
-            segment_start_time: start_time,
+            segment_start: start,
             segment_duration: segment_duration,
             partition_number: segment_number,
             segment_dir: segment_dir,
@@ -100,7 +105,11 @@ impl Segment {
     }
 
     pub fn delete_segment(&mut self) -> io::Result<()> {
-        info!("deleting segment: {} files at path: {:?}", self.partition_number, self.segment_dir);
+        info!("deleting segment: {} files at path: {:?}, segment_start: {:?}, segment_end_time: {}",
+                self.partition_number,
+                self.segment_dir,
+                self.segment_start,
+                self.segment_end_time);
         fs::remove_dir_all(&self.segment_dir)
     }
 
@@ -113,19 +122,10 @@ impl Segment {
         vv
     }
 
-    pub fn event_is_after_start(&self, id: FloEventId) -> bool {
-        self.get_current_counter(id.actor) < id.event_counter
-    }
-
-    pub fn event_fits_within_time<E: FloEvent>(&self, event: &E) -> bool {
-        self.get_current_counter(event.id().actor) < event.id().event_counter &&
-                event.timestamp() < self.segment_end_time
-    }
-
-    pub fn get_current_counter(&self, actor: ActorId) -> EventCounter {
+    pub fn get_current_counter(&self, actor: ActorId) -> Option<EventCounter> {
         self.writers_by_actor.get(&actor).map(|writer| {
             writer.counter_writer.current_counter
-        }).unwrap_or(0)
+        })
     }
 
     pub fn write<E: FloEvent>(&mut self, event: &E) -> Result<u64, io::Error> {
@@ -148,3 +148,36 @@ impl Segment {
 }
 
 
+fn write_segment_start(segment_dir: &Path, start: &SegmentStart) -> Result<(), io::Error> {
+    let mut info_file = open_segment_start_time(segment_dir, true)?;
+    let mut buffer = [0u8; 16];
+    BigEndian::write_u64(&mut buffer[0..8], ::event::time::millis_since_epoch(start.time));
+    BigEndian::write_u64(&mut buffer[8..], start.counter);
+    info_file.write_all(&buffer)
+}
+
+fn open_segment_start_time(segment_dir: &Path, create: bool) -> Result<fs::File, io::Error> {
+    let path = segment_dir.join("segment_start");
+    fs::OpenOptions::new().read(true).write(true).create(create).append(true).open(&path)
+}
+
+
+fn read_segment_start(segment_dir: &Path) -> Result<Option<SegmentStart>, io::Error> {
+    let mut info_file = match open_segment_start_time(segment_dir, false) {
+        Err(err) => {
+            if err.kind() == io::ErrorKind::NotFound {
+                return Ok(None);
+            } else {
+                return Err(err);
+            }
+        }
+        Ok(file) => file
+    };
+    let time_u64 = read_u64(&mut info_file)?;
+    let counter = read_u64(&mut info_file)?;
+    let timestamp = ::event::time::from_millis_since_epoch(time_u64);
+    Ok(Some(SegmentStart{
+        time: timestamp,
+        counter: counter
+    }))
+}

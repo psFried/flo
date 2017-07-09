@@ -1,19 +1,19 @@
 mod segment_writer;
 
 use std::sync::{Arc, RwLock};
-use std::path::{PathBuf, Path};
-use std::io::{self, Seek, Write, BufWriter};
-use std::fs::{File, OpenOptions, create_dir_all};
-use std::collections::{HashMap, VecDeque};
+use std::path::PathBuf;
+use std::io;
+use std::fs::create_dir_all;
+use std::collections::VecDeque;
 
 use engine::event_store::{EventWriter, StorageEngineOptions};
 use engine::event_store::index::EventIndex;
-use engine::event_store::fs::{determine_existing_partitions, determine_existing_actors};
+use engine::event_store::fs::determine_existing_partitions;
 
 use chrono::Duration;
-use event::{FloEvent, FloEventId, EventCounter, ActorId, Timestamp, time};
+use event::{FloEvent, Timestamp};
 
-use self::segment_writer::Segment;
+use self::segment_writer::{Segment, SegmentStart};
 
 
 #[allow(dead_code)]
@@ -76,7 +76,10 @@ impl FSEventWriter {
 
         for segment in segment_numbers {
             // The timestamp argument will be ignored since we know there's an existing segment start time persisted
-            let ignored = ::event::time::now();
+            let ignored = SegmentStart{
+                time: ::event::time::now(),
+                counter: 1,
+            };
             let writer = Segment::initialize(&storage_dir, segment, ignored, segment_duration)?;
             segment_writers.push_front(writer);
         }
@@ -98,14 +101,26 @@ impl FSEventWriter {
 
         if let CreateSegment::CreateNew {segment_number, start_time} = create {
             let duration = self.segment_duration;
-            let new_segment = Segment::initialize(&self.storage_dir, segment_number, start_time, duration)?;
+            let segment_start = SegmentStart {
+                counter: event.id().event_counter,
+                time: start_time,
+            };
+            let new_segment = Segment::initialize(&self.storage_dir, segment_number, segment_start, duration)?;
             self.segment_writers.push_front(new_segment);
             Ok(self.segment_writers.front_mut().unwrap())
         } else {
             // there must be an existing segment to handle this
+            //
             self.segment_writers.iter_mut().filter(|segment| {
-                //TODO: implement this filter
-                true
+                let event_counter = event.id().event_counter;
+                let segment_start = &segment.segment_start;
+                trace!("Checking to write event in segment: {}, event: {}, segment_start: {:?}, event_time: {}, segment_start: {:?}",
+                        segment.partition_number,
+                        event.id(),
+                        segment_start,
+                        event.timestamp(),
+                        segment.segment_start);
+                event_counter >= segment_start.counter || event.timestamp() >= segment_start.time
             }).next()
                 .ok_or_else(|| {
                     let message = format!("No valid segment exists for event: {}, with timestamp: {}", event.id(), event.timestamp());
@@ -171,7 +186,9 @@ impl FSEventWriter {
 
 fn check_last_segment<E: FloEvent>(event: &E, last_segment: &Segment) -> CreateSegment {
     let id = *event.id();
-    let is_after = id.event_counter > last_segment.get_current_counter(id.actor);
+    let segment_counter = last_segment.get_current_counter(id.actor).unwrap_or(0);
+
+    let is_after = id.event_counter > segment_counter;
 
     if is_after && event.timestamp() > last_segment.segment_end_time {
         // the event should be written into a new segment, since it falls after the last segment
@@ -202,6 +219,7 @@ impl EventWriter for FSEventWriter {
 
         let (write_result, partition_number) = {
             let writer = self.get_or_create_segment(event)?;
+            trace!("Writing event: {}, timestamp: {} into segment: {}, segment_start: {:?}", event.id(), event.timestamp(), writer.partition_number, writer.segment_start);
             let segment_number = writer.partition_number;
             let result = writer.write(event);
             (result, segment_number)
@@ -219,9 +237,8 @@ impl EventWriter for FSEventWriter {
 
     fn expire_events_before(&mut self, threshold: Timestamp) -> Result<(), io::Error> {
         let retained_segment_index = self.segment_writers.iter().rev().position(|segment| {
-            let segment_millis = segment.segment_start_time.timestamp_subsec_millis();
-            trace!("checking segment: {}, segment_start_time: {:?}, start_millis: {}, threshold: {:?}", segment.partition_number, segment.segment_start_time, segment_millis, threshold);
-            segment.segment_start_time > threshold
+            trace!("checking segment: {}, segment_start: {:?}, threshold: {:?}", segment.partition_number, segment.segment_start, threshold);
+            segment.segment_start.time > threshold
         }).map(|idx| {
             // idx is the index of the first segment that has a start time > the threshold
             // The segment before this one can still contain events that are before the threshold, though, so we sub 1
