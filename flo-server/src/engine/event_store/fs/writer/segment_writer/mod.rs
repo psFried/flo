@@ -20,7 +20,7 @@ use engine::event_store::fs::{
 };
 
 use chrono::Duration;
-use event::{FloEvent, FloEventId, EventCounter, ActorId, Timestamp, time};
+use event::{FloEvent, FloEventId, EventCounter, ActorId, VersionVector, Timestamp, time};
 
 use self::event_writer::FileWriter;
 use self::counter_writer::EventCounterWriter;
@@ -68,6 +68,8 @@ impl Segment {
             (actors, start)
         } else {
             trace!("initializing segment: {} without existing data", segment_number);
+            // Write the segment start time and return early if it fails
+            write_segment_start_time(&segment_dir, default_start_time)?;
             (Vec::new(), default_start_time)
         };
 
@@ -95,6 +97,20 @@ impl Segment {
             writers_by_actor: writers_by_actor,
             segment_end_time: end_time,
         })
+    }
+
+    pub fn delete_segment(&mut self) -> io::Result<()> {
+        info!("deleting segment: {} files at path: {:?}", self.partition_number, self.segment_dir);
+        fs::remove_dir_all(&self.segment_dir)
+    }
+
+    pub fn create_version_vector(&self) -> VersionVector {
+        let mut vv = VersionVector::new();
+        for (actor, writer) in self.writers_by_actor.iter() {
+            let id = FloEventId::new(*actor, writer.counter_writer.current_counter);
+            vv.set(id);
+        }
+        vv
     }
 
     pub fn event_is_after_start(&self, id: FloEventId) -> bool {

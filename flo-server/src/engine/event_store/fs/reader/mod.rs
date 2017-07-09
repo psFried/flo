@@ -75,13 +75,22 @@ impl Iterator for MultiActorEventIter {
     fn next(&mut self) -> Option<Self::Item> {
         let MultiActorEventIter {ref mut readers, ref mut max_events} = *self;
         if *max_events == 0 {
+            debug!("returning None because iter has reached max number of events");
             return None;
         }
 
         let mut next_iter = readers.iter_mut().min_by_key(|iter| iter.get_next_id());
 
         let next_event = next_iter.and_then(|wrapped| {
-            wrapped.advance()
+            let next = wrapped.advance();
+
+            if let Some(ref r) = next.as_ref() {
+                let id = r.as_ref().map(|e| e.id);
+                debug!("returning event: {:?} from {}", id, wrapped.actor_id());
+            } else {
+                debug!("returning None from {}", wrapped.actor_id());
+            }
+            next
         });
 
         if next_event.is_some() {

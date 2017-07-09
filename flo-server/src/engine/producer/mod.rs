@@ -301,7 +301,7 @@ mod test {
     use super::*;
     use engine::api::*;
     use protocol::{self, ServerMessage};
-    use event::{FloEvent, OwnedFloEvent, ActorId, VersionVector};
+    use event::{FloEvent, OwnedFloEvent, ActorId, VersionVector, Timestamp};
     use engine::event_store::EventWriter;
 
     use std::sync::mpsc::{channel, Receiver};
@@ -503,6 +503,9 @@ mod test {
         fn store<E: FloEvent>(&mut self, event: &E) -> io::Result<()> {
             self.stored.push(event.to_owned());
             Ok(())
+        }
+        fn expire_events_before(&mut self, threshold: Timestamp) -> Result<(), io::Error> {
+            unimplemented!()
         }
     }
 

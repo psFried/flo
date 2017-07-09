@@ -63,9 +63,8 @@ to initialize a SegmentWriter from disk:
 impl FSEventWriter {
     pub fn initialize(index: Arc<RwLock<EventIndex>>, storage_options: &StorageEngineOptions) -> Result<FSEventWriter, io::Error> {
         let storage_dir = storage_options.storage_dir.clone();
-        //TODO: these values from StorageEngineOptions
-        let event_retention_duration = Duration::days(30);
-        let segment_duration = Duration::days(2);
+        let event_retention_duration = storage_options.event_retention_duration;
+        let segment_duration = storage_options.event_eviction_period;
 
         create_dir_all(&storage_dir)?; //early return if this fails
         let segment_numbers = determine_existing_partitions(&storage_dir)?;
@@ -76,8 +75,9 @@ impl FSEventWriter {
         let mut segment_writers = VecDeque::with_capacity(segment_numbers.len());
 
         for segment in segment_numbers {
-            let timestamp = ::event::time::now();
-            let writer = Segment::initialize(&storage_dir, segment, timestamp, event_retention_duration)?;
+            // The timestamp argument will be ignored since we know there's an existing segment start time persisted
+            let ignored = ::event::time::now();
+            let writer = Segment::initialize(&storage_dir, segment, ignored, segment_duration)?;
             segment_writers.push_front(writer);
         }
 
@@ -90,14 +90,10 @@ impl FSEventWriter {
             segment_writers: segment_writers,
             segment_duration: segment_duration,
             event_expiration_duration: event_retention_duration,
-
         })
     }
 
     fn get_or_create_segment<E: FloEvent>(&mut self, event: &E) -> io::Result<&mut Segment> {
-        let event_time = event.timestamp();
-        let event_id = *event.id();
-
         let create = self.check_most_recent_segment(event);
 
         if let CreateSegment::CreateNew {segment_number, start_time} = create {
@@ -108,6 +104,7 @@ impl FSEventWriter {
         } else {
             // there must be an existing segment to handle this
             self.segment_writers.iter_mut().filter(|segment| {
+                //TODO: implement this filter
                 true
             }).next()
                 .ok_or_else(|| {
@@ -133,6 +130,43 @@ impl FSEventWriter {
         }
     }
 
+    fn purge_event_segments(&mut self, num_segments: usize) -> io::Result<()> {
+        debug!("deleting the first {} segments", num_segments);
+        for i in 0..num_segments {
+            if let Some(segment) = self.segment_writers.back_mut() {
+                match segment.delete_segment() {
+                    Ok(()) => {
+                        debug!("Successfully deleted segment: {}", segment.partition_number);
+                    }
+                    Err(io_err) => {
+                        error!("Error deleting segment: {} - {:?}", segment.partition_number, io_err);
+                        return Err(io_err);
+                    }
+                }
+            } else {
+                //There's no more segments to purge
+                debug!("No more segments to purge");
+                return Ok(());
+            }
+
+            // now attempt to remove the segment after it's been successfully deleted
+            self.segment_writers.pop_back().map(|segment| {
+                self.delete_index_entries(segment);
+            });
+        }
+        Ok(())
+    }
+
+    fn delete_index_entries(&mut self, segment: Segment) -> io::Result<()> {
+        trace!("deleting index entries for segment: {}", segment.partition_number);
+        let mut locked_index = self.index.write().map_err(|lock_err| {
+            io::Error::new(io::ErrorKind::Other, format!("Error locking index: {:?}", lock_err))
+        })?; // return early if lock fails
+
+        let segment_version_vector = segment.create_version_vector();
+        locked_index.remove_range_inclusive(&segment_version_vector);
+        Ok(())
+    }
 }
 
 fn check_last_segment<E: FloEvent>(event: &E, last_segment: &Segment) -> CreateSegment {
@@ -181,6 +215,25 @@ impl EventWriter for FSEventWriter {
                 idx.add(index_entry);
             })
         })
+    }
+
+    fn expire_events_before(&mut self, threshold: Timestamp) -> Result<(), io::Error> {
+        let retained_segment_index = self.segment_writers.iter().rev().position(|segment| {
+            let segment_millis = segment.segment_start_time.timestamp_subsec_millis();
+            trace!("checking segment: {}, segment_start_time: {:?}, start_millis: {}, threshold: {:?}", segment.partition_number, segment.segment_start_time, segment_millis, threshold);
+            segment.segment_start_time > threshold
+        }).map(|idx| {
+            // idx is the index of the first segment that has a start time > the threshold
+            // The segment before this one can still contain events that are before the threshold, though, so we sub 1
+            idx.saturating_sub(1)
+        });
+
+        /*
+        If we couldn't find ANY segments that were started after the threshold, then we'll purge all of them except for
+        the most recent one. The most recent one _could_ contain events that should be retained.
+        */
+        let num_to_purge = retained_segment_index.unwrap_or(self.segment_writers.len() - 1);
+        self.purge_event_segments(num_to_purge)
     }
 }
 

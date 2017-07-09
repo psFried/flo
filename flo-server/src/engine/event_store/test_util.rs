@@ -1,5 +1,5 @@
 use engine::event_store::{StorageEngine, EventWriter, EventReader, StorageEngineOptions};
-use event::{FloEvent, FloEventId, OwnedFloEvent, VersionVector};
+use event::{FloEvent, FloEventId, OwnedFloEvent, VersionVector, Timestamp};
 
 use std::sync::{Arc, Mutex};
 use std::io;
@@ -67,6 +67,9 @@ impl EventWriter for TestEventWriter {
     fn store<E: FloEvent>(&mut self, event: &E) -> io::Result<()> {
         let mut storage = self.storage.lock().unwrap();
         storage.push(event.to_owned());
+        Ok(())
+    }
+    fn expire_events_before(&mut self, threshold: Timestamp) -> Result<(), io::Error> {
         Ok(())
     }
 }

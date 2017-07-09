@@ -71,9 +71,9 @@ impl StorageEngine for FSStorageEngine {
     }
 }
 
-fn open_segment_start_time(segment_dir: &Path, write: bool) -> Result<fs::File, io::Error> {
+fn open_segment_start_time(segment_dir: &Path, create: bool) -> Result<fs::File, io::Error> {
     let path = segment_dir.join("segment_start");
-    fs::OpenOptions::new().read(true).write(write).open(&path)
+    fs::OpenOptions::new().read(true).write(true).create(create).append(true).open(&path)
 }
 
 
@@ -101,8 +101,16 @@ fn write_u64<W: Write>(number: u64, writer: &mut W) -> Result<(), io::Error> {
 
 fn read_u64<R: Read>(reader: &mut R) -> Result<u64, io::Error> {
     let mut buffer = [0u8; 8];
-    reader.read_exact(&mut buffer)?; // early return on failure
-    Ok(BigEndian::read_u64(&buffer))
+    match reader.read_exact(&mut buffer) {
+        Ok(()) => {
+            Ok(BigEndian::read_u64(&buffer))
+        }
+        Err(ref e) if e.kind() == io::ErrorKind::UnexpectedEof => {
+            // that's fine. Just return 0 since the file just didn't contain any data
+            Ok(0)
+        }
+        Err(e) => Err(e)
+    }
 }
 
 fn write_segment_start_time(segment_dir: &Path, start_timestamp: Timestamp) -> Result<(), io::Error> {
@@ -181,8 +189,82 @@ mod test {
     }
 
     #[test]
-    fn storage_engine_initialized_from_preexisting_events() {
+    fn events_are_evicted() {
         let _ = ::env_logger::init();
+
+        let storage_dir = TempDir::new("events_are_expired").unwrap();
+
+        let storage_opts = StorageEngineOptions {
+            storage_dir: storage_dir.path().to_owned(),
+            root_namespace: "default".to_owned(),
+            event_retention_duration: Duration::milliseconds(100),
+            event_eviction_period: Duration::milliseconds(10)
+        };
+
+        fn event(time: u64, counter: u64) -> OwnedFloEvent {
+            OwnedFloEvent::new(FloEventId::new(1, counter), None, time::from_millis_since_epoch(time), "foo".to_owned(), Vec::new())
+        }
+
+        let e1 = event(1, 1);
+        let e2 = event(10, 2);
+        let e3 = event(20, 3);
+        let e4 = event(30, 4);
+
+        let (mut writer, mut reader, _) = FSStorageEngine::initialize(storage_opts).expect("failed to initialize engine");
+
+        writer.store(&e1).expect("failed to save event 1");
+        writer.store(&e2).expect("failed to save event 2");
+        writer.store(&e3).expect("failed to save event 3");
+        writer.store(&e4).expect("failed to save event 4");
+
+        writer.expire_events_before(time::from_millis_since_epoch(20)).expect("failed to expire events");
+
+        let iter = reader.load_range(&VersionVector::new(), 5).expect("failed to create iter");
+        let actual = iter.map(|result| result.expect("failed to read event")).collect::<Vec<_>>();
+        let expected = vec![e3, e4];
+        assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn events_are_written_to_multiple_segments() {
+        let storage_dir = TempDir::new("events_are_expired").unwrap();
+
+        let storage_opts = StorageEngineOptions {
+            storage_dir: storage_dir.path().to_owned(),
+            root_namespace: "default".to_owned(),
+            event_retention_duration: Duration::milliseconds(100),
+            event_eviction_period: Duration::milliseconds(10)
+        };
+
+        fn event(time: u64, counter: u64) -> OwnedFloEvent {
+            OwnedFloEvent::new(FloEventId::new(1, counter), None, time::from_millis_since_epoch(time), "foo".to_owned(), Vec::new())
+        }
+
+        let e1 = event(1, 1);
+        let e2 = event(10, 2);
+        let e3 = event(20, 3);
+        let e4 = event(30, 4);
+
+        {
+            let (mut writer, _, _) = FSStorageEngine::initialize(storage_opts.clone()).expect("failed to initialize engine");
+
+            writer.store(&e1).expect("failed to save event 1");
+            writer.store(&e2).expect("failed to save event 2");
+            writer.store(&e3).expect("failed to save event 3");
+            writer.store(&e4).expect("failed to save event 4");
+        }
+
+        let (_, mut reader, _) = FSStorageEngine::initialize(storage_opts).expect("failed to initialize engine");
+
+        let iter = reader.load_range(&VersionVector::new(), 5).expect("failed to create iter");
+        let actual = iter.map(|result| result.expect("failed to read event")).collect::<Vec<_>>();
+        let expected = vec![e1, e2, e3, e4];
+        assert_eq!(expected, actual);
+
+    }
+
+    #[test]
+    fn storage_engine_initialized_from_preexisting_events() {
 
         let storage_dir = TempDir::new("events_are_written_and_read_from_preexisting_directory").unwrap();
         let storage_opts = StorageEngineOptions {
