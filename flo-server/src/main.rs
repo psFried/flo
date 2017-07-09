@@ -149,6 +149,9 @@ fn main() {
         actor_id: actor_id,
         max_io_threads: max_io_threads,
     };
+
+    server_options.validate().or_bail();
+
     let run_finished = server::run(server_options);
     if let Some(err) = run_finished.err() {
         error!("IO Error: {}", err);
