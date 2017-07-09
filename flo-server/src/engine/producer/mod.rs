@@ -5,7 +5,7 @@ use self::cluster::ClusterState;
 use self::client_map::ClientMap;
 use engine::api::{ClientConnect, ConnectionId, ProducerManagerMessage, ConsumerManagerMessage, ReceivedMessage};
 use engine::event_store::EventWriter;
-use event::{ActorId, OwnedFloEvent, EventCounter, FloEventId, VersionVector};
+use event::{ActorId, OwnedFloEvent, EventCounter, FloEventId, VersionVector, time};
 use protocol::{ProtocolMessage, EventAck, ProduceEvent, ClusterMember};
 
 use std::sync::mpsc::Sender;
@@ -20,6 +20,30 @@ pub fn tick_duration() -> Duration {
     Duration::from_secs(2)
 }
 
+struct ExpirationCheck {
+    last_check: Instant,
+    check_duration: Duration,
+}
+
+impl ExpirationCheck {
+    fn new(check_duration: Duration) -> ExpirationCheck {
+        ExpirationCheck {
+            last_check: Instant::now(),
+            check_duration: check_duration,
+        }
+    }
+
+    fn check(&mut self) -> bool {
+        let now = Instant::now();
+        if now - self.last_check > self.check_duration {
+            self.last_check = now;
+            true
+        } else {
+            false
+        }
+    }
+}
+
 pub struct ProducerManager<S: EventWriter> {
     actor_id: ActorId,
     server_port: u16,
@@ -27,6 +51,7 @@ pub struct ProducerManager<S: EventWriter> {
     highest_event_id: EventCounter,
     version_vec: VersionVector,
     consumer_manager_channel: Sender<ConsumerManagerMessage>,
+    expiration_check: ExpirationCheck,
     clients: ClientMap,
     cluster_state: ClusterState,
     cluster_connect_sender: UnboundedSender<SocketAddr>,
@@ -38,6 +63,7 @@ impl <S: EventWriter> ProducerManager<S> {
                actor_id: ActorId,
                my_port: u16,
                my_version_vec: VersionVector,
+               expiration_check_duration: Duration,
                peer_addresses: Vec<SocketAddr>,
                cluster_connect_sender: UnboundedSender<SocketAddr>) -> ProducerManager<S> {
         let highest_event_id = my_version_vec.max().event_counter;
@@ -47,6 +73,7 @@ impl <S: EventWriter> ProducerManager<S> {
             event_store: storage,
             highest_event_id: highest_event_id,
             version_vec: my_version_vec,
+            expiration_check: ExpirationCheck::new(expiration_check_duration),
             consumer_manager_channel: consumer_manager_channel,
             clients: ClientMap::new(),
             cluster_state: ClusterState::new(peer_addresses),
@@ -198,6 +225,13 @@ impl <S: EventWriter> ProducerManager<S> {
     }
 
     fn on_tick(&mut self) -> Result<(), String> {
+        if self.expiration_check.check() {
+            self.event_store.expire_events_before(time::now()).map_err(|io_err| {
+                error!("Failed to expire old events: {:?}", io_err);
+                "Failed to expire old events".to_owned()
+            })?; // early return if we fail at this
+        }
+
         let disconnected_peers = self.cluster_state.attempt_connections(Instant::now());
         if !disconnected_peers.is_empty() {
             for peer_address in disconnected_peers {
@@ -311,6 +345,7 @@ mod test {
 
     const SUBJECT_ACTOR_ID: ActorId = 1;
     const SUBJECT_PORT: u16 = 2222;
+    const EXPIRY_PERIOD_MILLIS: u64 = 10;
 
     macro_rules! version_vec {
         ($([$actor:expr,$counter:expr]),*) => {
@@ -320,6 +355,17 @@ mod test {
                 vv
             }
         }
+    }
+
+    #[test]
+    fn writer_expires_event_once_expiry_period_has_passed() {
+        let (mut subject, mut _consumer_manager) = setup();
+        subject.process(ProducerManagerMessage::Tick).expect("failed to process tick");
+        assert!(subject.event_store.expire_arg.is_none());
+        ::std::thread::sleep(Duration::from_millis(EXPIRY_PERIOD_MILLIS + 1));
+
+        subject.process(ProducerManagerMessage::Tick).expect("failed to process second tick");
+        assert!(subject.event_store.expire_arg.is_some());
     }
 
     #[test]
@@ -497,6 +543,16 @@ mod test {
 
     struct MockEventWriter {
         stored: Vec<OwnedFloEvent>,
+        expire_arg: Option<Timestamp>,
+    }
+
+    impl MockEventWriter {
+        fn new(stored: Vec<OwnedFloEvent>) -> MockEventWriter {
+            MockEventWriter {
+                stored: stored,
+                expire_arg: None,
+            }
+        }
     }
 
     impl EventWriter for MockEventWriter {
@@ -505,7 +561,8 @@ mod test {
             Ok(())
         }
         fn expire_events_before(&mut self, threshold: Timestamp) -> Result<(), io::Error> {
-            unimplemented!()
+            self.expire_arg = Some(threshold);
+            Ok(())
         }
     }
 
@@ -527,12 +584,11 @@ mod test {
 
     fn setup_with_version_map(map: VersionVector) -> (ProducerManager<MockEventWriter>, Receiver<ConsumerManagerMessage>) {
 
-        let writer = MockEventWriter {
-            stored: Vec::new()
-        };
+        let expiry_period = Duration::from_millis(EXPIRY_PERIOD_MILLIS);
+        let writer = MockEventWriter::new(Vec::new());
         let (tx, rx) = channel();
         let (cluster_sender, _rx) = ::futures::sync::mpsc::unbounded();
-        let subject = ProducerManager::new(writer, tx, SUBJECT_ACTOR_ID, SUBJECT_PORT, map, Vec::new(), cluster_sender);
+        let subject = ProducerManager::new(writer, tx, SUBJECT_ACTOR_ID, SUBJECT_PORT, map, expiry_period, Vec::new(), cluster_sender);
 
         (subject, rx)
     }
