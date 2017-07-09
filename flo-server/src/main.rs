@@ -1,6 +1,4 @@
 #![feature(conservative_impl_trait)]
-#![feature(collections_bound)]
-#![feature(btree_range)]
 
 extern crate flo_event as event;
 extern crate flo_protocol as protocol;

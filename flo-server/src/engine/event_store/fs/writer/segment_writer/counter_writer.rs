@@ -1,16 +1,17 @@
 
-use std::io::{self, Write, Seek};
+use std::io::{self, Seek};
 use std::fs::{File, OpenOptions};
 use std::path::Path;
 
-use event::{FloEventId, EventCounter, ActorId};
+use event::{EventCounter, ActorId};
 use engine::event_store::fs::{read_u64, write_u64, get_event_counter_file};
 
+#[derive(Debug)]
 pub struct EventCounterWriter {
     pub current_counter: EventCounter,
     file: File,
-    actor_id: ActorId,
-    segment_number: u64, // here just for debugging purposes
+    _actor_id: ActorId,
+    _segment_number: u64, // here just for debugging purposes
 }
 
 impl EventCounterWriter {
@@ -26,8 +27,8 @@ impl EventCounterWriter {
 
         Ok(EventCounterWriter {
             file: counter_file,
-            actor_id: actor_id,
-            segment_number: segment_number,
+            _actor_id: actor_id,
+            _segment_number: segment_number,
             current_counter: current_counter,
         })
     }
@@ -89,7 +90,7 @@ mod test {
             subject.commit(12345).expect("failed to commit counter");
         }
 
-        let mut subject = EventCounterWriter::initialize(temp_dir.path(), segment, actor).expect("failed to initialize event counter writer");
+        let subject = EventCounterWriter::initialize(temp_dir.path(), segment, actor).expect("failed to initialize event counter writer");
         assert_eq!(12345, subject.current_counter);
     }
 

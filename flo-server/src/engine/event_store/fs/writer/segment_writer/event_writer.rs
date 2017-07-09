@@ -1,15 +1,10 @@
-use std::sync::{Arc, RwLock};
-use std::path::{PathBuf, Path};
+use std::path::Path;
 use std::io::{self, Seek, Write, BufWriter};
-use std::fs::{File, OpenOptions, create_dir_all};
-use std::collections::{HashMap, VecDeque};
-use std::time::Duration;
+use std::fs::{File, OpenOptions};
 
-use engine::event_store::{EventWriter, StorageEngineOptions};
-use engine::event_store::index::EventIndex;
 use engine::event_store::fs::get_events_file;
 
-use event::{FloEvent, FloEventId, EventCounter, ActorId, Timestamp, time};
+use event::{FloEvent, ActorId, time};
 
 
 pub struct FileWriter {

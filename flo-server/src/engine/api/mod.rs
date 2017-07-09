@@ -2,7 +2,7 @@ mod consumer;
 mod namespace;
 
 use protocol::{ProtocolMessage, ServerMessage};
-use event::{FloEventId, ActorId, OwnedFloEvent};
+use event::OwnedFloEvent;
 
 use futures::sync::mpsc::UnboundedSender;
 

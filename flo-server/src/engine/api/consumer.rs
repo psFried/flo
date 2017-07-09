@@ -2,6 +2,7 @@ use super::{NamespaceGlob, ConnectionId};
 use event::{FloEventId, ActorId, OwnedFloEvent, VersionVector};
 
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)] // ActorId and All aren't used at the moment, but they will be very soon
 pub enum ConsumerFilter {
     Namespace(NamespaceGlob),
     ActorId(Vec<ActorId>),
@@ -42,14 +43,6 @@ impl ConsumerState {
             batch_remaining: batch_size,
             batch_size: batch_size,
         }
-    }
-
-    pub fn from_namespace(connection_id: ConnectionId, version_vec: VersionVector, namespace: NamespaceGlob, batch_size: u64) -> ConsumerState {
-        ConsumerState::new(connection_id, version_vec, ConsumerFilter::Namespace(namespace), batch_size)
-    }
-
-    pub fn for_peer(connection_id: ConnectionId, version_vec: VersionVector, batch_size: u64) -> ConsumerState {
-        ConsumerState::new(connection_id, version_vec, ConsumerFilter::All, batch_size)
     }
 
     pub fn should_send_event(&self, event: &OwnedFloEvent) -> bool {
