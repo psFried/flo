@@ -66,6 +66,24 @@ impl EventIndex {
         }
     }
 
+    pub fn remove_range_inclusive(&mut self, end_inclusive: &VersionVector) {
+        let EventIndex {ref mut version_vec, ref mut entries, ..} = *self;
+
+        for id in end_inclusive.iter() {
+            if let Some(actor_entries) = entries.get_mut(&id.actor) {
+                let counter_end_range = id.event_counter + 1;
+                let mut new_entries = actor_entries.split_off(&counter_end_range);
+                ::std::mem::swap(&mut new_entries, actor_entries);
+                let old_entries = new_entries;
+                debug!("Removed {} entries for actor_id: {}, end_range: {}, new_start_range: {:?}",
+                old_entries.len(),
+                id.actor,
+                counter_end_range,
+                actor_entries.iter().next());
+            }
+        }
+    }
+
     pub fn get_version_vector(&self) -> &VersionVector {
         &self.version_vec
     }
@@ -152,6 +170,39 @@ mod index_test {
 
     fn id_entry(actor: ActorId, counter: EventCounter) -> IndexEntry {
         IndexEntry::new(FloEventId::new(actor, counter), 76, 1)
+    }
+
+    #[test]
+    fn entries_are_deleted() {
+        let mut subject = EventIndex::new();
+        subject.add(id_entry(1, 1));
+        subject.add(id_entry(1, 2));
+        subject.add(id_entry(1, 3));
+
+        subject.add(id_entry(2, 1));
+        subject.add(id_entry(2, 2));
+        subject.add(id_entry(2, 3));
+
+        subject.add(id_entry(3, 1));
+        subject.add(id_entry(3, 2));
+        subject.add(id_entry(3, 3));
+
+        let mut version_vec = VersionVector::new();
+        version_vec.set(FloEventId::new(1, 2));
+        version_vec.set(FloEventId::new(2, 3));
+        subject.remove_range_inclusive(&version_vec);
+
+        let result: Vec<ConsumerEntries> = subject.get_consumer_start_point(&VersionVector::new()).collect();
+        let expected = vec![
+            ConsumerEntries {
+                start: id_entry(1, 3),
+                end: id_entry(1, 3),
+            },
+            ConsumerEntries {
+                start: id_entry(3, 1),
+                end: id_entry(3, 3),
+            }
+        ];
     }
 
     #[test]

@@ -59,11 +59,13 @@ impl Iterator for MultiSegmentReader {
         let result = self.current_reader.next();
 
         if result.is_none() && self.current_segment < self.max.segment {
+            debug!("initializing next segment reader for actor_id: {}, next segment: {}", self.actor_id, self.current_segment + 1);
             let new_reader = initialize_next_iter(&self.storage_dir, self.actor_id, self.current_segment + 1, 0, self.max.id);
 
             match new_reader {
                 Ok(mut reader) => {
-                    let _ = ::std::mem::swap(&mut reader, &mut self.current_reader);
+                    let _ = ::std::mem::swap(&mut self.current_reader, &mut reader);
+                    self.current_segment += 1;
                     self.next()
                 }
                 Err(err) => {

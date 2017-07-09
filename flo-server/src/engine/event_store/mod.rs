@@ -8,8 +8,8 @@ pub mod test_util;
 use std::path::PathBuf;
 use std::io;
 
-use chrono::Duration;
-use event::{FloEvent, OwnedFloEvent, FloEventId, VersionVector};
+use chrono::{Duration};
+use event::{FloEvent, Timestamp, OwnedFloEvent, FloEventId, VersionVector};
 
 #[derive(Clone, PartialEq)]
 pub struct StorageEngineOptions {
@@ -27,6 +27,7 @@ pub trait EventReader: Sized {
 
 pub trait EventWriter: Sized {
     fn store<E: FloEvent>(&mut self, event: &E) -> Result<(), io::Error>;
+    fn expire_events_before(&mut self, threshold: Timestamp) -> Result<(), io::Error>;
 }
 
 pub trait StorageEngine {
