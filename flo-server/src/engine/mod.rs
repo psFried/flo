@@ -85,7 +85,7 @@ pub fn run(options: ServerOptions, cluster_sender: UnboundedSender<SocketAddr>) 
     // Initialize Consumer Manager
     let consumer_manager_sender = consumer_tx.clone();
     thread::Builder::new().name("Consumer-Manager-thread".to_owned()).spawn(move || {
-        let mut consumer_manager = ConsumerManager::new(event_reader, consumer_manager_sender, highest_event_id, event_eviction_period, max_cache_memory);
+        let mut consumer_manager = ConsumerManager::new(event_reader, consumer_manager_sender, highest_event_id, event_retention_duration, max_cache_memory);
 
         loop {
             match consumer_rx.recv() {

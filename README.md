@@ -5,6 +5,9 @@ Flo
 
 A naive and amateurish attempt at an event stream server. This is mostly just a fun/learning project at the moment, so don't get your panties in a bunch if it doesn't work properly (or at all).
 
+
+This is a slightly different take on pub/sub. For one, all events are persistent. They stick around  for a specified amount of time. During that time, they can be read by many _consumers_. Events each have a hierarchical _namespace_. Instead of publishing a message to a topic, _producers_ produce an event that has a _namespace_ as an attribute. _Consumers_ can read events from many namespaces by using a Glob pattern. This allows different consumers to read different and overlapping subsets of the events in the stream. This allows, for example, creating a consumer that listens to all the events in the system for the sake of monitoring, while other consumers might each only read a small portion of the events in the overall stream.
+
 Installation
 ------------
 
@@ -15,24 +18,20 @@ Installation
 
 ## Running the Server
 
-To run a basic server in standalone (non-clustering) mode, just running `flo` is enough. this will start the server with the default options and persist events in the current directory. Use `flo -d /path/to/data/dir` to specify a directory to use for persisting events. You can always run `flo --help` to get information on all the available options.
+To run a basic server in standalone (non-clustering) mode, just running `flo` is enough. this will start the server with the default options and persist events in the current directory. Use `flo -d /path/to/data/dir` to specify a directory to use for persisting events. You can always run `flo --help` to get information on all the available options. The default option is to retain all events forever. To only retain some events, supply the `--event-retention-days` argument and specify how long events should be kept. 
 
-To start the server in clustering mode, you must supply the `--actor-id` argument to supply a unique integer id for the server. The actor id must be unique to the cluster and it can have a maximum value of 65536. Then you must also supply an argument to provide the address and port of at least one other node in the cluster. Additional cluster nodes will be discovered and joined automatically. Here's an example of starting a three node cluster locally:
-
-- `$ flo -d /data1 -p 3000 --actor-id 1 --peer-addr 127.0.0.1:3001 --peer-addr 127.0.0.1:3002`
-- `$ flo -d /data1 -p 3001 --actor-id 2 --peer-addr 127.0.0.1:3000 --peer-addr 127.0.0.1:3002`
-- `$ flo -d /data1 -p 3002 --actor-id 3 --peer-addr 127.0.0.1:3000 --peer-addr 127.0.0.1:3001`
-
-Voila, you now have a fault-tolerant cluster that will replicate all events to all three nodes.
 
 ## Using the Client CLI
 
-Just having a server sitting there isn't very interesting, so let's start interacting with it. For now, we can just use the included `flo-client` cli tool to get the basics before we write our own client application. For starters, we don't currently have any events in the stream, so let's produce an event.
+Just having a server sitting there isn't very interesting, so let's start interacting with it. For now, we can just use the included `flo-client` cli tool to get the basics before we write our own client application. For starters, we don't currently have any events in the stream, so let's produce some events.
 
 ```bash
 $ flo-client -H localhost -p 3000 produce -n "/food/breakfast/eggs" -d "I made some eggs"
-0000000000000000000100001
+1.1
 Successfully produced 1 events to /food/breakfast/eggs
+$ flo-client -H localhost -p 3000 produce -n "/food/breakfast/bacon" -d "I made some bacon, too"
+2.1
+Successfully produced 1 events to /food/breakfast/bacon
 ```
 
 This command produced an event to the namespace "/food/breakfast/eggs" with "I made some eggs" as the event payload. The client kindly printed the id of the event: `0000000000000000000100001`. This is the canonical id of the event forevermore. For this example we used the `-H` and `-p` options to set the host and port of the server to connect to. It just so happens that `localhost:3000` is the default host and port for both the client and server applications, though, so we're just going to omit those from now on.
@@ -41,9 +40,15 @@ Now that we have an event in the stream, let's fire up a consumer to read the ev
 ```bash
 $ flo-client consume -t
 
-EventId: 0000000000000000000100001
+EventId: 1.1
 Namespace: /food/breakfast/eggs
-I made some eggs
+Timestamp: 2017-07-12 02:59:50.795 UTC
+Body: I made some eggs
+
+EventId: 2.1
+Namespace: /food/breakfast/bacon
+Timestamp: 2017-07-12 03:02:22.909 UTC
+Body: I made some bacon, too
 ```
 
 The `-t` option tells the consumer to continue waiting for new events after it reaches the end of the stream, kind of like a `tail -f` for the events in the server. If you go back to the other terminal and produce more events, you should see them immediately printed in the consumer terminal. You can just `ctrl-c` to stop the consumer.
@@ -97,10 +102,10 @@ Flo is an attempt (albeit an amateurish one) to be better. The server should be 
 - [X] Client responses to an event persist the parent id
 - [X] Logging controllable from command line
 - [X] Controllable max memory usage by limiting in-memory cache size
-- [ ] remove oldest events once max event threshold is reached
+- [X] remove oldest events once max event threshold is reached
 - [X] multithread client I/O on server
 - [ ] Persist event index / deal with index larger than will fit in memory
-- [X] clustering
+- [ ] clustering (basic POC is working, but there's still a lot of work to be done)
 - [ ] Consumer groups
 - [X] automatic serialization/deserialization in a higher-level consumer
 - [ ] Run either as a standalone server or embedded within the application
