@@ -120,9 +120,13 @@ fn main() {
     });
 
     let retention_days = parse_arg_or_exit(&args, "event-retention-days", ::std::i64::MAX);
-    let retention_duration = Duration::days(retention_days);
+    let retention_duration = if retention_days == ::std::i64::MAX {
+        Duration::max_value()
+    } else {
+        Duration::days(retention_days)
+    };
 
-    let default_eviction_period = retention_days.saturating_mul(24) / 6;
+    let default_eviction_period = retention_duration.num_hours() / 6;
     let eviction_period_hours = parse_arg_or_exit(&args, "eviction-period", default_eviction_period);
 
     let server_options = ServerOptions {
