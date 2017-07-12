@@ -171,7 +171,6 @@ mod test {
 
         let storage_opts = StorageEngineOptions {
             storage_dir: storage_dir.path().to_owned(),
-            root_namespace: "default".to_owned(),
             event_retention_duration: Duration::milliseconds(100),
             event_eviction_period: Duration::milliseconds(10)
         };
@@ -208,7 +207,6 @@ mod test {
 
         let storage_opts = StorageEngineOptions {
             storage_dir: storage_dir.path().to_owned(),
-            root_namespace: "default".to_owned(),
             event_retention_duration: Duration::milliseconds(100),
             event_eviction_period: Duration::milliseconds(10)
         };
@@ -263,7 +261,6 @@ mod test {
 
         let storage_opts = StorageEngineOptions {
             storage_dir: storage_dir.path().to_owned(),
-            root_namespace: "default".to_owned(),
             event_retention_duration: Duration::milliseconds(100),
             event_eviction_period: Duration::milliseconds(10)
         };
@@ -301,7 +298,6 @@ mod test {
         let storage_dir = TempDir::new("events_are_written_and_read_from_preexisting_directory").unwrap();
         let storage_opts = StorageEngineOptions {
             storage_dir: storage_dir.path().to_owned(),
-            root_namespace: "default".to_owned(),
             event_retention_duration: Duration::days(30),
             event_eviction_period: Duration::hours(6)
         };
@@ -351,7 +347,6 @@ mod test {
         let storage_dir = TempDir::new("events_are_stored_and_read_starting_in_the_middle_with_fresh_directory").unwrap();
         let storage_opts = StorageEngineOptions {
             storage_dir: storage_dir.path().to_owned(),
-            root_namespace: "default".to_owned(),
             event_retention_duration: Duration::days(30),
             event_eviction_period: Duration::hours(6)
         };
@@ -380,7 +375,6 @@ mod test {
         let index = Arc::new(RwLock::new(EventIndex::new()));
         let storage_opts = StorageEngineOptions {
             storage_dir: storage_dir.path().to_owned(),
-            root_namespace: "default".to_owned(),
             event_retention_duration: Duration::days(30),
             event_eviction_period: Duration::hours(6)
         };

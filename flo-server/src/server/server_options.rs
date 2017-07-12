@@ -42,10 +42,8 @@ impl MemoryLimit {
 pub struct ServerOptions {
     pub port: u16,
     pub data_dir: PathBuf,
-    pub default_namespace: String,
     pub event_retention_duration: Duration,
     pub event_eviction_period: Duration,
-    pub max_cached_events: usize,
     pub max_cache_memory: MemoryLimit,
     pub cluster_addresses: Option<Vec<SocketAddr>>,
     pub actor_id: ActorId,

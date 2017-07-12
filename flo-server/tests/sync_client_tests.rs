@@ -72,6 +72,22 @@ fn test_with_server<F: FnOnce(u16)>(test_name: &'static str, flo_server_args: Ve
 }
 
 #[test]
+fn consumer_produces_and_consumes_a_large_event() {
+    test_with_server("consumer_produces_and_consumes_a_large_event", Vec::new(), |port| {
+        let mut client = SyncConnection::connect(localhost(port), ::flo_client_lib::codec::RawCodec).expect("failed to connect");
+
+        let event_size = 1024 * 1024;
+        let event_data = ::std::iter::repeat(88u8).take(event_size).collect::<Vec<_>>();
+        client.produce("/foo", event_data).expect("failed to produce event");
+
+        let result = client.iter(ConsumerOptions::from_beginning("/*", 1)).expect("failed to create iterator").next()
+                .expect("Event was None!")
+                .expect("Error reading event");
+        assert_eq!(event_size, result.data.len());
+    })
+}
+
+#[test]
 fn consumer_transitions_from_reading_events_from_disk_to_reading_from_memory() {
     use tempdir::TempDir;
     use std::thread;
@@ -81,14 +97,17 @@ fn consumer_transitions_from_reading_events_from_disk_to_reading_from_memory() {
     let (proc_type, port) = get_server_port();
     if proc_type == ServerProcessType::Child {
         let tempdir = TempDir::new("flo-integraion-test-transitions").unwrap();
-        let args = vec!["--max-cached-events".to_owned(), "5".to_owned()];
+        // max cache memory is 1MB
+        let args = vec!["--max-cache-memory".to_owned(), "1".to_owned()];
         server_process = Some(FloServerProcess::with_args(port, tempdir, args));
     }
 
     let mut producer_connection = SyncConnection::connect(localhost(port), StringCodec).expect("failed to connect");
     let mut consumer_connection = SyncConnection::connect(localhost(port), StringCodec).expect("failed to connect");
     for i in 0..10 {
-        producer_connection.produce("/the/namespace", format!("event data: {}", i)).expect("Failed to produce event");
+        // events should each be big enough that only a portion of them can be cached, 256KB should do it
+        let event_data = ::std::iter::repeat('d').take(1024 * 256).collect::<String>();
+        producer_connection.produce("/the/namespace", event_data).expect("Failed to produce event");
     }
 
     let join_handle = thread::spawn(move || {

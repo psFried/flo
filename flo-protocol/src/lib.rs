@@ -66,7 +66,7 @@ impl Buffer {
             self.pos = 0;
         }
         let buf = &self.bytes[self.pos..self.len];
-        trace!("Returning buffer: {:?}", buf);
+        trace!("Returning buffer with {} bytes", buf.len());
         Ok(buf)
     }
 
@@ -74,7 +74,7 @@ impl Buffer {
         let current_buffer_len = self.bytes.len();
         if self.len >= current_buffer_len {
             debug!("Reallocating buffer to grow the vector by {} bytes", current_buffer_len);
-            self.bytes.resize(current_buffer_len, 0);
+            self.bytes.resize(current_buffer_len * 2, 0);
         }
 
         let nread = {
@@ -84,9 +84,12 @@ impl Buffer {
         if nread == 0 {
             warn!("Read 0 bytes, returning UnexpectedEOF");
             return Err(io::Error::from(io::ErrorKind::UnexpectedEof));
+        } else {
+            trace!("read: {} bytes, pos: {}, old_len: {}, new_len: {}", nread, self.pos, self.len, self.len + nread);
+            self.len += nread;
         }
         let buf = &self.bytes[self.pos..self.len];
-        trace!("Returning buffer: {:?}", buf);
+        trace!("Returning buffer of {} bytes", buf.len());
         Ok(buf)
     }
 

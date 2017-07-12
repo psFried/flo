@@ -31,17 +31,14 @@ pub fn run(options: ServerOptions, cluster_sender: UnboundedSender<SocketAddr>) 
 
     let ServerOptions{port,
         data_dir,
-        default_namespace,
         event_retention_duration,
         event_eviction_period,
-        max_cached_events,
         max_cache_memory,
         cluster_addresses,
         actor_id, ..} = options;
 
     let storage_options = StorageEngineOptions {
         storage_dir: data_dir,
-        root_namespace: default_namespace,
         event_eviction_period: event_eviction_period,
         event_retention_duration: event_retention_duration
     };
