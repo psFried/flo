@@ -35,6 +35,7 @@ pub struct ConsumerState {
 
 impl ConsumerState {
 
+    #[cfg(test)]
     pub fn new(connection_id: ConnectionId, version_vec: VersionVector, filter: ConsumerFilter, batch_size: u64) -> ConsumerState {
         ConsumerState {
             connection_id: connection_id,

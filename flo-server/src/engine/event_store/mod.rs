@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::io;
 
 use chrono::{Duration};
-use event::{FloEvent, Timestamp, OwnedFloEvent, FloEventId, VersionVector};
+use event::{FloEvent, Timestamp, OwnedFloEvent, VersionVector};
 
 #[derive(Clone, PartialEq)]
 pub struct StorageEngineOptions {

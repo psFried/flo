@@ -1,15 +1,12 @@
 
-use event::{FloEventId, ActorId, OwnedFloEvent, VersionVector};
+use event::OwnedFloEvent;
 use engine::consumer::client::context::{ConnectionContext, CursorType};
-use engine::consumer::filecursor::{Cursor, CursorMessage};
-use engine::api::{ConnectionId, NamespaceGlob, ConsumerFilter, ConsumerState, ClientConnect};
+use engine::api::{ConnectionId, ConsumerState};
 use protocol::{ProtocolMessage, ServerMessage, ErrorMessage, ErrorKind, CursorInfo, ConsumerStart};
 use super::connection_state::{ConnectionState};
 
 use std::sync::Arc;
-use std::fmt::{self, Debug};
 use std::net::SocketAddr;
-use futures::sync::mpsc::UnboundedSender;
 use channels::Sender;
 
 
@@ -31,11 +28,6 @@ impl <S: Sender<ServerMessage> + 'static> ClientConnection<S> {
             client_sender: sender,
             state: ConnectionState::init(batch_size),
         }
-    }
-
-    pub fn from_client_connect(conn: ClientConnect, batch_size: u64) -> ClientConnection<UnboundedSender<ServerMessage>> {
-        let ClientConnect {connection_id, client_addr, message_sender} = conn;
-        ClientConnection::new(connection_id, client_addr, message_sender, batch_size)
     }
 
     pub fn message_received<C: ConnectionContext>(&mut self, message: ProtocolMessage, context: &mut C) -> Result<(), ()> {
@@ -65,6 +57,7 @@ impl <S: Sender<ServerMessage> + 'static> ClientConnection<S> {
                 Ok(())
             }
             other @ _ => {
+                error!("Received unexpected message: {:?}", other);
                 Err(ErrorMessage {
                     op_id: self.last_op_id,
                     kind: ErrorKind::InvalidConsumerState,

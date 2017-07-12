@@ -4,9 +4,8 @@ use std::fmt::Debug;
 use std::thread::{self, JoinHandle};
 use std::sync::mpsc as std_mpsc;
 use std::sync::Arc;
-use futures::sync::mpsc as f_mpsc;
 
-use event::{OwnedFloEvent, FloEventId, VersionVector};
+use event::OwnedFloEvent;
 use engine::api::{ConnectionId, ConsumerState, ConsumerManagerMessage};
 use engine::event_store::EventReader;
 use protocol::{ErrorMessage, ErrorKind, ProtocolMessage, ServerMessage};

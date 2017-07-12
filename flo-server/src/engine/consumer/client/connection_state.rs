@@ -4,7 +4,6 @@ use engine::consumer::client::context::CursorType;
 use engine::consumer::filecursor::Cursor;
 use protocol::{ErrorMessage, ErrorKind, ConsumerStart};
 
-use std::sync::Arc;
 use std::fmt::{self, Debug};
 
 #[derive(Debug, PartialEq, Clone)]

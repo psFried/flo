@@ -1,19 +1,12 @@
 
 use super::file_reader::FSEventIter;
 
-use std::sync::{Arc, RwLock};
-use std::io::{self, Seek, SeekFrom, Read, BufRead, BufReader};
+use std::io;
 use std::path::{PathBuf, Path};
-use std::fs::{self, OpenOptions, File};
-use std::collections::HashSet;
-use std::iter::Peekable;
 
-use byteorder::{ByteOrder, BigEndian};
-
-use engine::event_store::index::{EventIndex, IndexEntry};
-use engine::event_store::{EventReader, StorageEngineOptions};
-use engine::event_store::fs::{DATA_FILE_EXTENSION, get_segment_directory, get_events_filename};
-use event::{FloEventId, ActorId, OwnedFloEvent, Timestamp};
+use engine::event_store::index::IndexEntry;
+use engine::event_store::fs::{get_segment_directory, get_events_filename};
+use event::{FloEventId, ActorId, OwnedFloEvent};
 
 
 pub struct MultiSegmentReader {
