@@ -66,12 +66,11 @@ fn app_args() -> App<'static, 'static> {
             .arg(Arg::with_name("event-retention-days")
                     .long("event-retention-days")
                     .value_name("days")
-                    .help("The minimum number of days to retain events, given as an integer. Fractional days are not supported."))
+                    .help("The minimum number of days to retain events, given as an integer. Fractional days are not supported. If unspecified, then events will never expire"))
             .arg(Arg::with_name("eviction-period")
                     .long("eviction-period")
                     .value_name("hours")
-                    .help("The number of hours to go between checks for purging old events")
-                    .default_value("6"))
+                    .help("The number of hours to go between checks for purging old events. If unspecified, then defaults to one sixth of the total retention time."))
             .arg(Arg::with_name("max-cache-memory")
                     .short("M")
                     .long("max-cache-memory")
@@ -120,10 +119,11 @@ fn main() {
         }).or_bail()
     });
 
-    let retention_days = parse_arg_or_exit(&args, "event-retention-days", 30);
+    let retention_days = parse_arg_or_exit(&args, "event-retention-days", ::std::i64::MAX);
     let retention_duration = Duration::days(retention_days);
 
-    let eviction_period_hours = parse_arg_or_exit(&args, "eviction-period", 6);
+    let default_eviction_period = retention_days.saturating_mul(24) / 6;
+    let eviction_period_hours = parse_arg_or_exit(&args, "eviction-period", default_eviction_period);
 
     let server_options = ServerOptions {
         event_retention_duration: retention_duration,
