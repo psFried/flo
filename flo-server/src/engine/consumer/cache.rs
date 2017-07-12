@@ -131,6 +131,7 @@ impl Cache {
                 self.current_memory = self.current_memory.saturating_sub(size_of(&*event));
                 trace!("Cache evicted event: {}, new memory_usage: {} bytes", id, self.current_memory);
                 self.first = new_first;
+                self.last_evicted_id = event.id;
             });
         }
     }
@@ -169,12 +170,12 @@ mod test {
             thread::sleep(::std::time::Duration::from_millis(1));
         }
 
-        let full_expiration = time::now() + cache_expiration_duration;
+        let full_expiration = time::now() + cache_expiration_duration + Duration::milliseconds(100);
 
         let mut event_count = 20;
         let mut min = FloEventId::zero();
 
-        while time::now() < full_expiration {
+        while time::now() < full_expiration && event_count > 0 {
             subject.remove_expired_events();
 
             let count = subject.iter(FloEventId::zero()).count();
@@ -193,7 +194,6 @@ mod test {
         }
 
         assert_eq!(0, event_count);
-        assert_eq!(FloEventId::new(1, 20), min);
     }
 
     #[test]

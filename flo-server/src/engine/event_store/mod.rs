@@ -14,7 +14,6 @@ use event::{FloEvent, Timestamp, OwnedFloEvent, FloEventId, VersionVector};
 #[derive(Clone, PartialEq)]
 pub struct StorageEngineOptions {
     pub storage_dir: PathBuf,
-    pub root_namespace: String,
     pub event_retention_duration: Duration,
     pub event_eviction_period: Duration,
 }

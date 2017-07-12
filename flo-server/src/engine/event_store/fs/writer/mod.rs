@@ -147,7 +147,7 @@ impl FSEventWriter {
 
     fn purge_event_segments(&mut self, num_segments: usize) -> io::Result<()> {
         debug!("deleting the first {} segments", num_segments);
-        for i in 0..num_segments {
+        for _ in 0..num_segments {
             if let Some(segment) = self.segment_writers.back_mut() {
                 match segment.delete_segment() {
                     Ok(()) => {
@@ -165,9 +165,9 @@ impl FSEventWriter {
             }
 
             // now attempt to remove the segment after it's been successfully deleted
-            self.segment_writers.pop_back().map(|segment| {
-                self.delete_index_entries(segment);
-            });
+            if let Some(segment) = self.segment_writers.pop_back() {
+                self.delete_index_entries(segment)?;
+            }
         }
         Ok(())
     }
