@@ -2,15 +2,21 @@ use std::sync::Arc;
 use std::collections::{BTreeMap, Bound};
 use std::collections::btree_map::Range;
 
-use event::{FloEventId, FloEvent, OwnedFloEvent};
+use chrono::Duration;
+use event::{FloEventId, FloEvent, OwnedFloEvent, Timestamp, time};
 use server::MemoryLimit;
+
+struct EntryInfo {
+    id: FloEventId,
+    timestamp: Timestamp,
+}
 
 pub struct Cache {
     entries: BTreeMap<FloEventId, Arc<OwnedFloEvent>>,
-    least_event_id: FloEventId,
-    greatest_event_id: FloEventId,
+    first: Option<EntryInfo>,
+    last: Option<EntryInfo>,
     last_evicted_id: FloEventId,
-    max_entries: usize,
+    expiration_time: Duration,
     max_memory: usize,
     current_memory: usize,
 }
@@ -20,25 +26,16 @@ impl Cache {
     /// Ok, this is a little weird since caching is handled at higher level than storage...
     /// When we initialize the cache, we need to know if there are pre-existing events that
     /// aren't cached. This is the purpose of the `greatest_uncached_event` parameter.
-    pub fn new(max_events: usize, max_memory: MemoryLimit, greatest_uncached_event: FloEventId) -> Cache {
-        info!("Initializing event cache with max_events: {}, max_memory: {:?}, greatest_uncached_event: {}", max_events, max_memory, greatest_uncached_event);
+    pub fn new(expiration_time: Duration, max_memory: MemoryLimit, greatest_uncached_event: FloEventId) -> Cache {
+        info!("Initializing event cache with expiration_time: {}, max_memory: {:?}, greatest_uncached_event: {}", expiration_time, max_memory, greatest_uncached_event);
         Cache {
             entries: BTreeMap::new(),
-            least_event_id: FloEventId::zero(),
+            first: None,
+            last: None,
             last_evicted_id: greatest_uncached_event,
-            greatest_event_id: FloEventId::zero(),
-            max_entries: max_events,
+            expiration_time: expiration_time,
             max_memory: max_memory.as_bytes(),
             current_memory: 0,
-        }
-    }
-
-    pub fn do_with_range<T>(&self, start_exclusive: FloEventId, mut fun: T) where T: FnMut(FloEventId, &Arc<OwnedFloEvent>) -> bool {
-        let iter = self.entries.range((Bound::Excluded(&start_exclusive), Bound::Unbounded));
-        for (k, v) in iter {
-            if !fun(*k, v) {
-                break;
-            }
         }
     }
 
@@ -48,17 +45,25 @@ impl Cache {
 
     pub fn insert(&mut self, event: OwnedFloEvent) -> Arc<OwnedFloEvent> {
         let event_id = event.id;
-        if self.least_event_id.is_zero() {
-            self.least_event_id = event_id;
+        if self.first.is_none() {
+            self.first = Some(EntryInfo{
+                id: event_id,
+                timestamp: event.timestamp,
+            });
         }
 
-        if event_id > self.greatest_event_id {
-            self.greatest_event_id = event_id;
+        if self.last.as_ref().map(|info| info.id < event_id).unwrap_or(true) {
+            self.last = Some(EntryInfo{
+                id: event_id,
+                timestamp: event.timestamp,
+            });
         }
 
         let event_size = size_of(&event);
 
-        while (self.entries.len() >= self.max_entries) || (self.current_memory + event_size > self.max_memory) {
+        self.remove_expired_events();
+
+        while self.current_memory + event_size > self.max_memory {
             self.remove_oldest_entry();
         }
 
@@ -73,14 +78,61 @@ impl Cache {
         self.last_evicted_id
     }
 
+    pub fn remove_expired_events(&mut self) {
+        if self.entries.is_empty() {
+            return;
+        }
+
+        let threshold = time::now() - self.expiration_time;
+        let split_point = self.entries.iter().filter(|&(_, event)| {
+            event.timestamp > threshold
+        }).map(|(id, _)| *id).next();
+
+        let first = self.first.as_ref().map(|f| f.id).unwrap_or(FloEventId::zero());
+
+        if let Some(split_id) = split_point {
+            // if the split_id is <= first, then we shouldn't remove any entries
+            if split_id > first {
+                // we're removing at least one entry
+                let mut new_entries = self.entries.split_off(&split_id);
+                debug!("evicting {} expired entries from cache from before threshold: {}", self.entries.len(), self.expiration_time);
+                let new_last_evicted = self.entries.keys().cloned().next().unwrap_or(FloEventId::new(split_id.actor, split_id.event_counter - 1));
+                self.last_evicted_id = new_last_evicted;
+                ::std::mem::swap(&mut new_entries, &mut self.entries);
+
+            }
+        } else {
+            // we couldn't find an event with a timestamp greater than the max, so we need to clear them all out
+            debug!("Clearing all {} events from cache due to expiration threshold: {}", self.entries.len(), threshold);
+            let new_last_evicted = self.entries.keys().cloned().next_back().unwrap();
+            self.last_evicted_id = new_last_evicted;
+            self.first = None;
+            self.last = None;
+            self.entries.clear();
+        }
+    }
+
+
     fn remove_oldest_entry(&mut self) {
-        self.entries.keys().take(1).cloned().next().map(|id| {
-            self.entries.remove(&id).map(|event| {
-                self.current_memory -= size_of(&*event);
-                self.last_evicted_id = event.id;
-                trace!("Cache evicted event: {}", id);
+        let (to_remove, new_first) = {
+            let mut entries = self.entries.values();
+            let remove = entries.next().map(|e| e.id);
+            let first = entries.next().map(|e| {
+                EntryInfo{
+                    id: e.id,
+                    timestamp: e.timestamp,
+                }
             });
-        });
+            (remove, first)
+        };
+
+        if let Some(id) = to_remove {
+            self.entries.remove(&id).map(|event| {
+                self.current_memory = self.current_memory.saturating_sub(size_of(&*event));
+                trace!("Cache evicted event: {}, new memory_usage: {} bytes", id, self.current_memory);
+                self.first = new_first;
+            });
+        }
     }
 }
 
@@ -96,34 +148,57 @@ fn size_of(event: &OwnedFloEvent) -> usize {
 
 #[cfg(test)]
 mod test {
+    use std::thread;
     use super::*;
-    use event::{FloEventId, ActorId, EventCounter, OwnedFloEvent};
+    use event::{FloEventId, ActorId, EventCounter, OwnedFloEvent, time};
     use server::{MemoryLimit, MemoryUnit};
+    use chrono::Duration;
+
 
     #[test]
-    fn cache_evicts_events_after_the_max_number_of_events_is_reached() {
-        let max = 5;
-        let mut subject = Cache::new(max, MemoryLimit::new(5, MemoryUnit::Megabyte), FloEventId::zero());
+    fn cache_evicts_events_after_an_expiration_time() {
+        let cache_expiration_duration = Duration::milliseconds(30);
+        let mut subject = Cache::new(cache_expiration_duration, MemoryLimit::new(5, MemoryUnit::Megabyte), FloEventId::zero());
 
-        subject.insert(event(1, 1));
-        subject.insert(event(1, 2));
-        subject.insert(event(1, 3));
-        subject.insert(event(1, 4));
-        subject.insert(event(1, 5));
+        fn event(counter: EventCounter) -> OwnedFloEvent {
+            OwnedFloEvent::new(FloEventId::new(1, counter), None, time::now(), "/foo".to_owned(), Vec::new())
+        }
 
-        assert_eq!(FloEventId::zero(), subject.last_evicted_id());
+        for i in 0..20 {
+            subject.insert(event(i + 1));
+            thread::sleep(::std::time::Duration::from_millis(1));
+        }
 
-        subject.insert(event(1, 6));
-        assert_eq!(FloEventId::new(1, 1), subject.last_evicted_id());
+        let full_expiration = time::now() + cache_expiration_duration;
 
-        subject.insert(event(1, 9));
-        assert_eq!(FloEventId::new(1, 2), subject.last_evicted_id());
+        let mut event_count = 20;
+        let mut min = FloEventId::zero();
+
+        while time::now() < full_expiration {
+            subject.remove_expired_events();
+
+            let count = subject.iter(FloEventId::zero()).count();
+            assert!(count <= event_count);
+            event_count = count;
+
+            let first_id = subject.iter(FloEventId::zero()).map(|(id, _)| *id).next();
+            if first_id.is_none() {
+                break;
+            }
+            let first_id = first_id.unwrap();
+            assert!(first_id >= min);
+            min = first_id;
+
+            thread::sleep(::std::time::Duration::from_millis(1));
+        }
+
+        assert_eq!(0, event_count);
+        assert_eq!(FloEventId::new(1, 20), min);
     }
 
     #[test]
     fn events_are_inserted_and_retrieved_by_range() {
-        let max = 5;
-        let mut subject = Cache::new(max, MemoryLimit::new(5, MemoryUnit::Megabyte), FloEventId::zero());
+        let mut subject = Cache::new(Duration::days(5), MemoryLimit::new(5, MemoryUnit::Megabyte), FloEventId::zero());
 
         let one = subject.insert(event(1, 1));
         let two = subject.insert(event(1, 2));
@@ -140,8 +215,7 @@ mod test {
 
     fn event(actor: ActorId, count: EventCounter) -> OwnedFloEvent {
         let id = FloEventId::new(actor, count);
-        let timestamp = ::event::time::from_millis_since_epoch(5678);
-        OwnedFloEvent::new(id, None, timestamp, "/foo/bar".to_owned(), vec![1, 2, 3])
+        OwnedFloEvent::new(id, None, time::now(), "/foo/bar".to_owned(), vec![1, 2, 3])
     }
 
 }
