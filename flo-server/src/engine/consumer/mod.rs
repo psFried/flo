@@ -2,18 +2,20 @@ mod client;
 mod cache;
 mod filecursor;
 
-use engine::api::{ConnectionId, ClientConnect, ConsumerManagerMessage, ReceivedMessage, NamespaceGlob, ConsumerState};
-use protocol::{ProtocolMessage, ErrorMessage, ErrorKind, ConsumerStart, ServerMessage};
-use event::{FloEvent, OwnedFloEvent, FloEventId, ActorId, VersionVector};
 use std::sync::{Arc, mpsc};
 use std::thread;
 use std::collections::HashMap;
 
+use chrono::Duration;
+use futures::sync::mpsc::UnboundedSender;
+
 use self::client::{ClientConnection, ConnectionContext, CursorType};
 use self::cache::Cache;
+use engine::api::{ConnectionId, ClientConnect, ConsumerManagerMessage, ReceivedMessage, NamespaceGlob, ConsumerState};
+use protocol::{ProtocolMessage, ErrorMessage, ErrorKind, ConsumerStart, ServerMessage};
+use event::{FloEvent, OwnedFloEvent, FloEventId, ActorId, VersionVector};
 use server::MemoryLimit;
 use engine::event_store::EventReader;
-use futures::sync::mpsc::UnboundedSender;
 use channels::Sender;
 
 pub const DEFAULT_BATCH_SIZE: u64 = 10_000;
@@ -99,14 +101,14 @@ pub struct ConsumerManager<R: EventReader + 'static> {
 }
 
 impl <R: EventReader + 'static> ConsumerManager<R> {
-    pub fn new(reader: R, sender: mpsc::Sender<ConsumerManagerMessage>, greatest_event_id: FloEventId, max_cached_events: usize, max_cache_memory: MemoryLimit) -> Self {
+    pub fn new(reader: R, sender: mpsc::Sender<ConsumerManagerMessage>, greatest_event_id: FloEventId, cache_expiration_time: Duration, max_cache_memory: MemoryLimit) -> Self {
         ConsumerManager {
             consumers: ConsumerMap::new(),
             state: ManagerState {
                 my_sender: sender,
                 event_reader: reader,
                 greatest_event_id: greatest_event_id,
-                cache: Cache::new(max_cached_events, max_cache_memory, greatest_event_id),
+                cache: Cache::new(cache_expiration_time, max_cache_memory, greatest_event_id),
             },
             default_batch_size: DEFAULT_BATCH_SIZE,
         }
