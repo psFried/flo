@@ -12,7 +12,6 @@ use std::sync::mpsc::Sender;
 use std::time::{Instant, Duration};
 use std::net::SocketAddr;
 use std::cmp::max;
-use std::io;
 
 use futures::sync::mpsc::UnboundedSender;
 
@@ -169,15 +168,16 @@ impl <S: EventWriter> ProducerManager<S> {
                 // PeerAnnounce is an outgoing message sent to a peer to announce our presence. The peer is expected to eventually respond with a PeerUpdate
                 let result = self.on_peer_announce(sender, &cluster_state);
                 self.cluster_state.log_state();
-                self.start_replication_from_peer(sender, &cluster_state);
-                result
+
+                result.and_then(|_| {
+                    self.start_replication_from_peer(sender, &cluster_state)
+                })
             }
             ProtocolMessage::PeerUpdate(cluster_state) => {
                 info!("Received PeerUpdate response from connection_id: {}: {:?}", sender, cluster_state);
                 self.process_peer_cluster_state(sender, &cluster_state);
                 self.cluster_state.log_state();
-                self.start_replication_from_peer(sender, &cluster_state);
-                Ok(())
+                self.start_replication_from_peer(sender, &cluster_state)
             }
             ProtocolMessage::ReceiveEvent(event) => {
                 if !self.version_vec.contains(event.id) {
@@ -250,7 +250,7 @@ impl <S: EventWriter> ProducerManager<S> {
         let my_state = self.get_my_cluster_state_message();
         let peer_actor_id = peer_cluster_state.actor_id;
 
-        self.clients.send(connection_id, ProtocolMessage::PeerUpdate(my_state)).map_err(|err| {
+        self.clients.send(connection_id, ProtocolMessage::PeerUpdate(my_state)).map_err(|_| {
             format!("Error sending response to PeerAnnounce to actor_id: {}, connection_id: {}", peer_actor_id, connection_id)
         })
     }
@@ -338,6 +338,7 @@ mod test {
     use event::{FloEvent, OwnedFloEvent, ActorId, VersionVector, Timestamp};
     use engine::event_store::EventWriter;
 
+    use std::io;
     use std::sync::mpsc::{channel, Receiver};
     use std::time::Duration;
     use futures::sync::mpsc::{UnboundedReceiver, unbounded};

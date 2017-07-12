@@ -3,7 +3,6 @@ mod cache;
 mod filecursor;
 
 use std::sync::{Arc, mpsc};
-use std::thread;
 use std::collections::HashMap;
 
 use chrono::Duration;
@@ -11,9 +10,9 @@ use futures::sync::mpsc::UnboundedSender;
 
 use self::client::{ClientConnection, ConnectionContext, CursorType};
 use self::cache::Cache;
-use engine::api::{ConnectionId, ClientConnect, ConsumerManagerMessage, ReceivedMessage, NamespaceGlob, ConsumerState};
-use protocol::{ProtocolMessage, ErrorMessage, ErrorKind, ConsumerStart, ServerMessage};
-use event::{FloEvent, OwnedFloEvent, FloEventId, ActorId, VersionVector};
+use engine::api::{ConnectionId, ClientConnect, ConsumerManagerMessage, ReceivedMessage, ConsumerState};
+use protocol::{ProtocolMessage, ServerMessage};
+use event::{FloEvent, OwnedFloEvent, FloEventId};
 use server::MemoryLimit;
 use engine::event_store::EventReader;
 use channels::Sender;
@@ -76,13 +75,13 @@ impl <R: EventReader + 'static> ConnectionContext for ManagerState<R> {
 
             if consumer_state.is_batch_exhausted() {
                 trace!("connection_id: {} exhausted batch", connection_id);
-                client_sender.send(ServerMessage::Other(ProtocolMessage::EndOfBatch)).map_err(|send_err| {
+                client_sender.send(ServerMessage::Other(ProtocolMessage::EndOfBatch)).map_err(|_| {
                     warn!("Failed to send EndOfBatch for connection_id: {}", connection_id);
                     format!("Failed to send EndOfBatch for connection_id: {}", connection_id)
                 })?; //return early if we can't send messages to the client
             } else {
                 trace!("connection_id: {} reached end of stream and is awaiting new events", connection_id);
-                client_sender.send(ServerMessage::Other(ProtocolMessage::AwaitingEvents)).map_err(|send_err| {
+                client_sender.send(ServerMessage::Other(ProtocolMessage::AwaitingEvents)).map_err(|_| {
                     warn!("Failed to send AwaitingEvents for connection_id: {}", connection_id);
                     format!("Failed to send AwaitingEvents for connection_id: {}", connection_id)
                 })?;

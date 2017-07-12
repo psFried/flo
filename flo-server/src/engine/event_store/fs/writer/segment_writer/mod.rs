@@ -4,7 +4,7 @@ mod counter_writer;
 use byteorder::{ByteOrder, BigEndian};
 
 use std::path::{PathBuf, Path};
-use std::io::{self, Write, Read};
+use std::io::{self, Write};
 use std::fs::{self, create_dir_all};
 use std::collections::{HashMap};
 use std::ops::Add;

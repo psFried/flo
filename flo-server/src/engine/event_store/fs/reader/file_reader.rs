@@ -1,15 +1,11 @@
 
 
-use std::sync::{Arc, RwLock};
 use std::io::{self, Seek, SeekFrom, Read, BufRead, BufReader};
-use std::path::{PathBuf, Path};
-use std::fs::{self, OpenOptions, File};
-use std::collections::HashSet;
+use std::path::Path;
+use std::fs::{OpenOptions, File};
 
 use byteorder::{ByteOrder, BigEndian};
 
-use engine::event_store::index::{EventIndex, IndexEntry};
-use engine::event_store::{EventReader, StorageEngineOptions};
 use engine::event_store::fs::FLO_EVT;
 use event::{FloEventId, ActorId, OwnedFloEvent, Timestamp};
 
@@ -19,7 +15,6 @@ enum EventIterInner {
         file_reader: BufReader<File>,
         max_id: FloEventId,
     },
-    Error(Option<io::Error>)
 }
 
 
@@ -49,13 +44,6 @@ impl FSEventIter {
         })
     }
 
-    pub fn empty(actor_id: ActorId) -> FSEventIter {
-        FSEventIter(EventIterInner::Empty, actor_id)
-    }
-
-    fn error(err: io::Error, actor_id: ActorId) -> FSEventIter {
-        FSEventIter(EventIterInner::Error(Some(err)), actor_id)
-    }
 }
 
 impl Iterator for FSEventIter {
@@ -65,11 +53,6 @@ impl Iterator for FSEventIter {
         let mut exhausted = false;
         let next_result = match self.0 {
             EventIterInner::Empty => None,
-            EventIterInner::Error(ref mut err) => {
-                err.take().map(|e| {
-                    Err(e)
-                })
-            }
             EventIterInner::NonEmpty {ref mut file_reader, ref mut max_id} => {
                 match has_next_event(file_reader) {
                     Ok(true) => {

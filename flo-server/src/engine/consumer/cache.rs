@@ -84,6 +84,11 @@ impl Cache {
         }
 
         let threshold = time::now() - self.expiration_time;
+
+        if self.first.as_ref().map(|info| info.timestamp > threshold).unwrap_or(true) {
+            return;
+        }
+
         let split_point = self.entries.iter().filter(|&(_, event)| {
             event.timestamp > threshold
         }).map(|(id, _)| *id).next();

@@ -4,18 +4,11 @@ mod multi_segment_reader;
 use self::multi_segment_reader::MultiSegmentReader;
 use self::file_reader::FSEventIter;
 
-use std::ffi::{OsString, OsStr};
 use std::sync::{Arc, RwLock};
-use std::io::{self, Seek, SeekFrom, Read, BufRead, BufReader};
-use std::path::{PathBuf, Path};
-use std::fs::{self, OpenOptions, File};
-use std::collections::HashSet;
-use std::iter::Peekable;
-
-use byteorder::{ByteOrder, BigEndian};
+use std::io;
+use std::path::PathBuf;
 
 use engine::event_store::fs::{
-    DATA_FILE_EXTENSION,
     determine_existing_partitions,
     determine_existing_actors,
     get_segment_directory,
@@ -24,7 +17,7 @@ use engine::event_store::fs::{
 };
 use engine::event_store::index::{EventIndex, IndexEntry, ConsumerEntries};
 use engine::event_store::{EventReader, StorageEngineOptions};
-use event::{FloEventId, EventCounter, ActorId, VersionVector, OwnedFloEvent, Timestamp};
+use event::{FloEventId, ActorId, VersionVector, OwnedFloEvent};
 
 // We use this custom peekable iterator instead of the standard `iter.peekable()` method because this
 // allows us to greedily advance the iterator and then peek at the next id without requiring a &mut
@@ -83,7 +76,7 @@ impl Iterator for MultiActorEventIter {
             return None;
         }
 
-        let mut next_iter = readers.iter_mut().min_by_key(|iter| iter.get_next_id());
+        let next_iter = readers.iter_mut().min_by_key(|iter| iter.get_next_id());
 
         let next_event = next_iter.and_then(|wrapped| {
             let next = wrapped.advance();
@@ -108,7 +101,6 @@ impl Iterator for MultiActorEventIter {
 pub struct FSEventReader {
     index: Arc<RwLock<EventIndex>>,
     storage_dir: PathBuf,
-    existing_actors: HashSet<ActorId>,
 }
 
 
@@ -120,7 +112,6 @@ impl FSEventReader {
         let mut reader = FSEventReader{
             index: index,
             storage_dir: storage_dir,
-            existing_actors: HashSet::new(),
         };
 
         reader.init_index()?;
@@ -141,7 +132,7 @@ impl FSEventReader {
             let actors = determine_existing_actors(&segment_dir)?;
             for actor in actors {
                 let path = get_events_file(&segment_dir, actor);
-                let mut reader = FSEventIter::initialize(0, FloEventId::max(), &path, actor)?;
+                let reader = FSEventIter::initialize(0, FloEventId::max(), &path, actor)?;
                 let mut offset = 0;
                 for event_result in reader {
                     let event = event_result?;
@@ -169,7 +160,7 @@ impl EventReader for FSEventReader {
 
         let index = index.read().expect("Unable to acquire read lock on event index");
 
-        let mut start_iter = index.get_consumer_start_point(range_start).peekable();
+        let start_iter = index.get_consumer_start_point(range_start).peekable();
 
         let mut readers: Vec<PeekableIterator> = Vec::with_capacity(8);
 

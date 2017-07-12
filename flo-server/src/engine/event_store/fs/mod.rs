@@ -11,7 +11,7 @@ pub use self::reader::FSEventReader;
 
 use super::{StorageEngine, StorageEngineOptions};
 use engine::event_store::index::{EventIndex};
-use event::{FloEvent, FloEventId, ActorId, VersionVector, Timestamp};
+use event::{FloEvent, ActorId, VersionVector};
 use byteorder::{ByteOrder, BigEndian};
 
 use std::sync::{Arc, RwLock};
