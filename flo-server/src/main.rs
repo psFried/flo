@@ -35,6 +35,7 @@ use server::{ServerOptions, MemoryLimit, MemoryUnit};
 use std::net::{SocketAddr, ToSocketAddrs};
 
 const FLO_VERSION: &'static str = env!("CARGO_PKG_VERSION");
+const MAX_SEGMENT_PERIOD_HOURS: i64 = 24;
 
 fn app_args() -> App<'static, 'static> {
     App::new("flo")
@@ -70,7 +71,7 @@ fn app_args() -> App<'static, 'static> {
             .arg(Arg::with_name("eviction-period")
                     .long("eviction-period")
                     .value_name("hours")
-                    .help("The number of hours to go between checks for purging old events. If unspecified, then defaults to one sixth of the total retention time."))
+                    .help("The number of hours to go between checks for purging old events. If unspecified, then defaults to the lesser of one sixth of the total retention time or 24 hours"))
             .arg(Arg::with_name("max-cache-memory")
                     .short("M")
                     .long("max-cache-memory")
@@ -126,7 +127,7 @@ fn main() {
         Duration::days(retention_days)
     };
 
-    let default_eviction_period = retention_duration.num_hours() / 6;
+    let default_eviction_period = ::std::cmp::min(retention_duration.num_hours() / 6, MAX_SEGMENT_PERIOD_HOURS);
     let eviction_period_hours = parse_arg_or_exit(&args, "eviction-period", default_eviction_period);
 
     let server_options = ServerOptions {

@@ -83,7 +83,11 @@ impl Cache {
             return;
         }
 
-        let threshold = time::now() - self.expiration_time;
+        let threshold = time::now().checked_sub(self.expiration_time);
+        if threshold.is_none() {
+            return;
+        }
+        let threshold = threshold.unwrap();
 
         if self.first.as_ref().map(|info| info.timestamp > threshold).unwrap_or(true) {
             return;
