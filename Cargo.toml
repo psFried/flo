@@ -4,6 +4,7 @@ members = [
     "flo-client-lib",
     "flo-event",
     "flo-protocol",
-    "flo-server"
+    "flo-server",
+    "flo-bench-cli"
 ]
 

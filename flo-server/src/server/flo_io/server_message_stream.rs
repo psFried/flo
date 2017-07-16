@@ -25,7 +25,7 @@ impl <P: ServerProtocol> ServerMessageStream<P> {
 
 impl <P: ServerProtocol> Drop for ServerMessageStream<P> {
     fn drop(&mut self) {
-        debug!("Dropping ServerMessageStream for : {}", self.connection_id);
+        debug!("Dropping ServerMessageStream for connection_id: {}", self.connection_id);
     }
 }
 
