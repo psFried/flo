@@ -35,6 +35,14 @@ fn read<R: Read>(buffer: &mut [u8], reader: &mut R) -> io::Result<usize> {
                 // Interrupted is different from WouldBlock. Even with non-blocking I/O, I think we still want to ignore these
                 trace!("Interrupted reading from socket, trying again");
             },
+            Err(ref e) if cfg!(target_os = "macos") && e.raw_os_error() == Some(41) => {
+                /*
+                This is a specific condition that can happen on OS X
+                refer to: http://erickt.github.io/blog/2014/11/19/adventures-in-debugging-a-potential-osx-kernel-bug/
+                for more details
+                */
+                debug!(target: "eprototype", "Retrying read due to error: {:?}", e);
+            },
             Err(io_err) => {
                 return Err(io_err);
             }
@@ -279,6 +287,9 @@ impl <'a> MessageWriter<'a> {
                 match dest.write(to_write) {
                     Ok(n) => *body_position += n,
                     Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {} // ignore and retry
+                    Err(ref e) if cfg!(target_os = "macos") && e.raw_os_error() == Some(41) => {
+                        debug!(target: "eprototype", "Retrying write due to error: {:?}", e);
+                    }
                     Err(other) => return Err(other)
                 }
             }

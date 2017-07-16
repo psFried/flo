@@ -20,6 +20,7 @@ pub struct CliConsumerOptions {
     pub start_position: Option<FloEventId>,
     pub limit: Option<u64>,
     pub await: bool,
+    pub batch_size: Option<u32>,
 }
 
 pub struct CliConsumer;
@@ -29,7 +30,7 @@ impl FloCliCommand for CliConsumer {
     type Error = ConsumerError;
 
     fn run(input: Self::Input, output: &CliContext) -> Result<(), Self::Error> {
-        let CliConsumerOptions { host, port, namespace, limit, await, start_position} = input;
+        let CliConsumerOptions { host, port, namespace, limit, await, start_position, batch_size} = input;
 
         let mut version_vector = VersionVector::new();
         if let Some(id) = start_position {
@@ -43,6 +44,16 @@ impl FloCliCommand for CliConsumer {
         output.verbose(format!("Connecting to: {}", &address));
         SyncConnection::connect(&address, LossyStringCodec).map_err(|io_err| io_err.into())
                 .and_then(|mut connection| {
+                    if let Some(batch) = batch_size {
+                        connection.set_batch_size(batch).map_err(|e| {
+                            e.into()
+                        }).map(|()| connection)
+                    } else {
+                        Ok(connection)
+                    }
+                })
+                .and_then(|mut connection| {
+
                     let mut consumer = PrintingConsumer{
                         context: &output,
                         await: await,

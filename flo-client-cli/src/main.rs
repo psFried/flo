@@ -33,6 +33,7 @@ mod args {
     pub const CONSUME_LIMIT: &'static str = "consume-limit";
     pub const CONSUME_AWAIT: &'static str = "consume-await";
     pub const CONSUME_START_POSITION: &'static str = "consume-start-position";
+    pub const CONSUME_BATCH: &'static str = "consume-batch";
 }
 
 fn create_app_args() -> App<'static, 'static> {
@@ -95,6 +96,11 @@ fn create_app_args() -> App<'static, 'static> {
                             .takes_value(true)
                             .value_name("LIMIT")
                             .help("The maximum number of events to read from the stream. Default behavior is unlimited read") )
+                    .arg(Arg::with_name(args::CONSUME_BATCH)
+                            .short("b")
+                            .long("batch")
+                            .takes_value(true)
+                            .help("The batch size to use when consuming. Uses the server default if unspecified"))
                     .arg(Arg::with_name(args::CONSUME_AWAIT)
                             .short("t")
                             .long("tail")
@@ -127,6 +133,7 @@ fn main() {
             let limit = parse_opt_or_exit::<u64>(args::CONSUME_LIMIT, &consume_args, &context);
             let await = consume_args.is_present(args::CONSUME_AWAIT);
             let namespace = consume_args.value_of(args::NAMESPACE).or_abort_with_message("Must supply a namespace", &context).to_owned();
+            let batch_size = parse_opt_or_exit::<u32>(args::CONSUME_BATCH, &consume_args, &context);
 
             let consume_opts = CliConsumerOptions {
                 host: host,
@@ -135,6 +142,7 @@ fn main() {
                 start_position: start_position,
                 limit: limit,
                 await: await,
+                batch_size: batch_size,
             };
 
             ::client_cli::run::<CliConsumer>(consume_opts, context);

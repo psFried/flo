@@ -1,0 +1,14 @@
+[package]
+name = "flo-bench-cli"
+version = "0.1.0"
+authors = ["pfried <philipsfried@gmail.com>"]
+
+[dependencies]
+flo-client-lib = { path = "../flo-client-lib" }
+clap = "2.5"
+tic = "0.2"
+
+
+[[bin]]
+name = "flo-bench"
+path = "src/main.rs"
