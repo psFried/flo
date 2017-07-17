@@ -298,8 +298,8 @@ integration_test!{many_events_are_produced_and_read_in_batches, port, tcp_stream
     };
     client.run_consumer(ConsumerOptions::from_beginning("/**/*", 1000), &mut consumer).expect("failed to run the BatchConsumer");
 
+    // Try again with a huge batch size, since that previously exposed a bug in the protocol layer :)
     client.set_batch_size(10000).expect("failed to set batch size");
-
     let last = client.iter(ConsumerOptions::default()).unwrap().flat_map(|e| {
         e.map(|it| it.id).ok()
     }).last();

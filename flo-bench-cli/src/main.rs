@@ -11,15 +11,17 @@ use std::fmt::{self, Display};
 use std::thread::{self, JoinHandle};
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::time::{Instant, Duration};
-use clap::{App, Arg, SubCommand, ArgMatches};
-use tic::{Receiver, Config, Interest};
+use clap::{App, Arg, SubCommand, ArgMatches, AppSettings};
+use tic::{Receiver, Config, Interest, Meters, Sender, Clocksource};
 
-use self::benches::{ProducerBenchmark};
+use self::benches::ProducerBenchmark;
 
 const HOST: &'static str = "server-host";
 const PORT: &'static str = "server-port";
 
-const PRODUCE_COMMAND: &'static str = "produce-data-size";
+
+const COMMANDS: &'static str = "commands";
+const PRODUCE_COMMAND: &'static str = "produce";
 const PRODUCE_DATA_SIZE: &'static str = "produce-data-size";
 
 // generic metrics-related arguments
@@ -38,7 +40,12 @@ impl FromStr for Metric {
     type Err = ();
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        unimplemented!()
+        use std::ascii::AsciiExt;
+
+        match s.to_ascii_lowercase().as_ref() {
+            "produce" => Ok(Metric::Produce),
+            _ => Err(())
+        }
     }
 }
 
@@ -60,9 +67,33 @@ impl Metric {
         let waterfall_file = format!("{}/{}.png", output_dir, self);
         receiver.add_interest(Interest::Waterfall(self.clone(), waterfall_file));
     }
+
+    fn run_benchmark(&self, args: ArgMatches<'static>, address: String, sender: Sender<Metric>, clock: Clocksource, end_time: Instant) {
+        match *self {
+            Metric::Produce => {
+                ProducerBenchmark::new(address.to_owned(), sender, clock, end_time).run().unwrap()
+            }
+        }
+    }
 }
 
-fn create_tic_receiver(args: &ArgMatches) -> (Receiver<Metric>, Instant) {
+fn print_metrics(metric: Metric, recv: &Receiver<Metric>, total_time_secs: u64) {
+    use tic::Percentile;
+    let meters: Meters<Metric> = recv.clone_meters();
+    if let Some(ref count) = meters.count(&metric) {
+        println!("{}:", metric);
+        let per_sec = **count as f64 / total_time_secs as f64;
+        println!("iterations per second: {}", per_sec);
+        println!("time per iteration (nanos)");
+
+        for (string, percentile) in vec![("p50", 50.0), ("p90", 90.0), ("p999", 99.9), ("max", 100.0)] {
+            let value = meters.percentile(&metric, Percentile(string.to_owned(), percentile)).map(|p| *p).unwrap_or(0);
+            println!("{} : {}", string, value);
+        }
+    }
+}
+
+fn create_tic_receiver(args: &ArgMatches) -> (Receiver<Metric>, Duration) {
     let windows = args.value_of(WINDOWS).unwrap().parse::<usize>().or_bail();
     let secs_per_window = args.value_of(SECS_PER_WINDOW).unwrap().parse::<usize>().or_bail();
 
@@ -82,8 +113,8 @@ fn create_tic_receiver(args: &ArgMatches) -> (Receiver<Metric>, Instant) {
     recv.add_interest(Interest::Percentile(Metric::Produce));
 
     println!("running for {} seconds", windows * secs_per_window);
-    let end_time = Instant::now() + Duration::from_secs(windows as u64 * secs_per_window as u64);
-    (recv, end_time)
+    let duration = Duration::from_secs(windows as u64 * secs_per_window as u64);
+    (recv, duration)
 }
 
 fn create_app() -> App<'static, 'static> {
@@ -91,6 +122,7 @@ fn create_app() -> App<'static, 'static> {
             .version(crate_version!())
             .about("Command line tool for running benchmarks against a flo server")
             .author("Phil Fried")
+            .setting(AppSettings::TrailingVarArg)
             .arg(Arg::with_name(HOST)
                     .short("H")
                     .long("host")
@@ -119,34 +151,56 @@ fn create_app() -> App<'static, 'static> {
                     .long("size")
                     .default_value("1024")
                     .help("size of each event body in bytes"))
+            .arg(Arg::with_name(COMMANDS)
+                    .last(true)
+                    .value_name("benchmarks")
+                    .validator(|input| {
+                        Metric::from_str(&input).map(|_| ()).map_err(|_| {
+                            format!("Invalid benchmark: '{}'", input)
+                        })
+                    })
+                    .min_values(1))
 }
 
 fn main() {
     let mut app = create_app();
     let args = app.get_matches();
 
-    let (mut receiver, end_time) = create_tic_receiver(&args);
+    let (mut receiver, duration) = create_tic_receiver(&args);
+    let end_time = Instant::now() + duration;
     let server_address = get_server_address(&args);
 
-    let data_size = args.value_of(PRODUCE_DATA_SIZE).or_bail().parse::<usize>().or_bail();
+    let metrics = args.values_of(COMMANDS).or_bail().map(|value| Metric::from_str(value).or_bail()).collect::<Vec<_>>();
 
-    let produce_bench = ProducerBenchmark::new(server_address, receiver.get_sender(), receiver.get_clocksource(), end_time);
-
-
-    let bench_thread = thread::spawn(move || {
-        println!("Starting Producer");
-        let result = produce_bench.run();
-        println!("Finished producer with result: {:?}", result);
-        result
-    });
+    let threads = metrics.iter().map(|metric| {
+        start_bench_thread(*metric, &args, &server_address, &receiver, end_time)
+    }).collect::<Vec<_>>();
 
     receiver.run();
     receiver.save_files();
 
     println!("Receiver finished");
-    bench_thread.join().or_bail();
+
+    for thread in threads {
+        thread.join().or_bail();
+    }
 
     println!("All benchmark runners Finished");
+
+    for metric in metrics.iter().collect::<::std::collections::HashSet<_>>() {
+        print_metrics(*metric, &receiver, duration.as_secs());
+    }
+}
+
+fn start_bench_thread(metric: Metric, args: &ArgMatches<'static>, addr: &str, recv: &Receiver<Metric>, end_time: Instant) -> JoinHandle<()> {
+
+    let args = args.clone();
+    let address = addr.to_owned();
+    let clock = recv.get_clocksource();
+    let sender = recv.get_sender();
+    thread::Builder::new().name(format!("{}-benchmark", metric)).spawn(move || {
+        metric.run_benchmark(args, address, sender, clock, end_time);
+    }).or_bail()
 }
 
 fn get_server_address(args: &ArgMatches) -> String {
