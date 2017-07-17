@@ -245,7 +245,7 @@ impl <T: Transport, C: EventCodec> SyncConnection<T, C> {
             }
             Ok(ProtocolMessage::ReceiveEvent(event)) => {
                 self.batch_remaining -= 1;
-                self.convert_event(event).map(|e| Some(e))
+                self.convert_event(event.into_owned()).map(|e| Some(e))
             },
             Ok(ProtocolMessage::Error(err)) => Err(ClientError::FloError(err)),
             Ok(ProtocolMessage::AwaitingEvents) => {

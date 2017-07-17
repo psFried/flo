@@ -1,5 +1,5 @@
 use engine::api::{ConnectionId, ClientConnect};
-use protocol::{ServerMessage, ProtocolMessage};
+use protocol::ProtocolMessage;
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -8,7 +8,7 @@ use futures::sync::mpsc::UnboundedSender;
 
 struct Client {
     remote_address: SocketAddr,
-    sender: UnboundedSender<ServerMessage>,
+    sender: UnboundedSender<ProtocolMessage>,
 }
 
 impl From<ClientConnect> for Client {
@@ -40,7 +40,7 @@ impl ClientMap {
             format!("Client: {} does not exist in producer map", connection_id)
         }).and_then(|client| {
             trace!("Sending to client: {}, message: {:?}", connection_id, message);
-            client.sender.send(ServerMessage::Other(message)).map_err(|err| {
+            client.sender.send(message).map_err(|err| {
                 format!("Failed to send to client: {}, addr: {:?}, err: {:?}", connection_id, client.remote_address, err)
             })
         })

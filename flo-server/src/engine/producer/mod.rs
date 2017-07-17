@@ -5,7 +5,7 @@ use self::cluster::ClusterState;
 use self::client_map::ClientMap;
 use engine::api::{ClientConnect, ConnectionId, ProducerManagerMessage, ConsumerManagerMessage, ReceivedMessage};
 use engine::event_store::EventWriter;
-use event::{ActorId, OwnedFloEvent, EventCounter, FloEventId, VersionVector, time};
+use event::{ActorId, OwnedFloEvent, FloEvent, EventCounter, FloEventId, VersionVector, time};
 use protocol::{ProtocolMessage, EventAck, ProduceEvent, ClusterMember};
 
 use std::sync::mpsc::Sender;
@@ -180,10 +180,10 @@ impl <S: EventWriter> ProducerManager<S> {
                 self.start_replication_from_peer(sender, &cluster_state)
             }
             ProtocolMessage::ReceiveEvent(event) => {
-                if !self.version_vec.contains(event.id) {
-                    self.persist_event(sender, 0, event)
+                if !self.version_vec.contains(*event.id()) {
+                    self.persist_event(sender, 0, event.into_owned())
                 } else {
-                    trace!("Skipping event: {} received from connection_id: {} because it's already persisted", event.id, sender);
+                    trace!("Skipping event: {} received from connection_id: {} because it's already persisted", event.id(), sender);
                     Ok(())
                 }
             }
@@ -334,7 +334,7 @@ impl <S: EventWriter> ProducerManager<S> {
 mod test {
     use super::*;
     use engine::api::*;
-    use protocol::{self, ServerMessage};
+    use protocol::{self, RecvEvent, ProtocolMessage};
     use event::{FloEvent, OwnedFloEvent, ActorId, VersionVector, Timestamp};
     use engine::event_store::EventWriter;
 
@@ -410,7 +410,8 @@ mod test {
             namespace: "/deli/pickles".to_owned(),
             data: vec![9, 8, 7, 6, 5],
         };
-        subject.process(to_producer_message(client_connection_id, ProtocolMessage::ReceiveEvent(event.clone()))).expect("failed to process replicate event message");
+        let recv = ProtocolMessage::ReceiveEvent(RecvEvent::Owned(event.clone()));
+        subject.process(to_producer_message(client_connection_id, recv)).expect("failed to process replicate event message");
 
         assert_eq!(5, subject.version_vec.get(peer_actor_id));
         assert_event_written(event, &subject.event_store);
@@ -437,7 +438,7 @@ mod test {
                                peer_versions: Vec<FloEventId>,
                                subject_versions: VersionVector,
                                subject: &mut ProducerManager<MockEventWriter>,
-                               client: &mut UnboundedReceiver<ServerMessage>,
+                               client: &mut UnboundedReceiver<ProtocolMessage>,
                                consumer_manager: &mut Receiver<ConsumerManagerMessage>) {
 
         let peer_state = protocol::ClusterState {
@@ -457,7 +458,7 @@ mod test {
 
         assert_client_message_sent(client, |msg| {
             match msg {
-                ServerMessage::Other(ProtocolMessage::PeerUpdate(cluster_state)) => {
+                ProtocolMessage::PeerUpdate(cluster_state) => {
                     assert_eq!(SUBJECT_ACTOR_ID, cluster_state.actor_id);
                     let result = VersionVector::from_vec(cluster_state.version_vector).unwrap();
                     assert_eq!(subject_versions, result);
@@ -471,7 +472,7 @@ mod test {
 
     fn client_produces_event(client_id: ConnectionId,
                              subject: &mut ProducerManager<MockEventWriter>,
-                             client: &mut UnboundedReceiver<ServerMessage>,
+                             client: &mut UnboundedReceiver<ProtocolMessage>,
                              consumer_manager: &mut Receiver<ConsumerManagerMessage>) {
 
         let namespace = "/the/namespace";
@@ -490,7 +491,7 @@ mod test {
 
         assert_client_message_sent(client, |msg| {
             match msg {
-                ServerMessage::Other(ProtocolMessage::AckEvent(ack)) => {
+                ProtocolMessage::AckEvent(ack) => {
                     assert_eq!(ack.op_id, op_id);
                 },
                 other @ _ => {
@@ -529,7 +530,7 @@ mod test {
         fun(msg);
     }
 
-    fn assert_client_message_sent<F>(receiver: &mut UnboundedReceiver<ServerMessage>, fun: F) where F: Fn(ServerMessage) {
+    fn assert_client_message_sent<F>(receiver: &mut UnboundedReceiver<ProtocolMessage>, fun: F) where F: Fn(ProtocolMessage) {
         match receiver.poll().expect("failed to receive message") {
             Async::Ready(Some(message)) => fun(message),
             _ => {
@@ -567,7 +568,7 @@ mod test {
         }
     }
 
-    fn client_connects(id: ConnectionId, subject: &mut ProducerManager<MockEventWriter>) -> (ClientConnect, UnboundedReceiver<ServerMessage>) {
+    fn client_connects(id: ConnectionId, subject: &mut ProducerManager<MockEventWriter>) -> (ClientConnect, UnboundedReceiver<ProtocolMessage>) {
         use std::net::{SocketAddrV4, Ipv4Addr, SocketAddr};
         let (tx, rx) = unbounded();
         let connect = ClientConnect {

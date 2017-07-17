@@ -11,12 +11,13 @@
 //! All numbers use big endian byte order.
 //! All Strings are newline terminated.
 use nom::{be_u64, be_u32, be_u16, IResult};
-use event::{time, OwnedFloEvent, FloEventId, ActorId, Timestamp};
+use event::{time, OwnedFloEvent, FloEvent, FloEventId, ActorId, Timestamp};
 use serializer::Serializer;
 use std::net::SocketAddr;
 use std::io::{self, Read};
 use std::fmt::Write;
 use std::str::FromStr;
+use std::sync::Arc;
 
 pub mod headers {
     pub const CLIENT_AUTH: u8 = 1;
@@ -184,6 +185,73 @@ pub struct CursorInfo {
     pub batch_size: u32,
 }
 
+/// Used to be abstract over owned events versus shared references
+#[derive(Debug, PartialEq, Clone)]
+pub enum RecvEvent {
+    Owned(OwnedFloEvent),
+    Ref(Arc<OwnedFloEvent>)
+}
+
+impl RecvEvent {
+    /// Converts into an OwnedFloEvent and avoids copying if this is already an `Owned` variant
+    pub fn into_owned(self) -> OwnedFloEvent {
+        match self {
+            RecvEvent::Owned(owned) => owned,
+            RecvEvent::Ref(arc) => <Arc<OwnedFloEvent> as FloEvent>::to_owned(&arc)
+        }
+    }
+}
+
+impl FloEvent for RecvEvent {
+    fn id(&self) -> &FloEventId {
+        match *self {
+            RecvEvent::Owned(ref e) => e.id(),
+            RecvEvent::Ref(ref e) => e.id()
+        }
+    }
+
+    fn timestamp(&self) -> Timestamp {
+        match *self {
+            RecvEvent::Owned(ref e) => e.timestamp(),
+            RecvEvent::Ref(ref e) => e.timestamp()
+        }
+    }
+
+    fn parent_id(&self) -> Option<FloEventId> {
+        match *self {
+            RecvEvent::Owned(ref e) => e.parent_id(),
+            RecvEvent::Ref(ref e) => e.parent_id()
+        }
+    }
+
+    fn namespace(&self) -> &str {
+        match *self {
+            RecvEvent::Owned(ref e) => e.namespace(),
+            RecvEvent::Ref(ref e) => e.namespace()
+        }
+    }
+
+    fn data_len(&self) -> u32 {
+        match *self {
+            RecvEvent::Owned(ref e) => e.data_len(),
+            RecvEvent::Ref(ref e) => e.data_len()
+        }
+    }
+
+    fn data(&self) -> &[u8] {
+        match *self {
+            RecvEvent::Owned(ref e) => e.data(),
+            RecvEvent::Ref(ref e) => e.data()
+        }
+    }
+
+    fn to_owned(&self) -> OwnedFloEvent {
+        match *self {
+            RecvEvent::Owned(ref e) => <OwnedFloEvent as FloEvent>::to_owned(e),
+            RecvEvent::Ref(ref e) => <Arc<OwnedFloEvent> as FloEvent>::to_owned(e)
+        }
+    }
+}
 
 /// Defines all the distinct messages that can be sent over the wire between client and server.
 #[derive(Debug, PartialEq, Clone)]
@@ -191,7 +259,7 @@ pub enum ProtocolMessage {
     /// Signals a client's intent to publish a new event. The server will respond with either an `EventAck` or an `ErrorMessage`
     ProduceEvent(ProduceEvent),
     /// This is a complete event as serialized over the wire. This message is sent to to both consumers as well as other servers
-    ReceiveEvent(OwnedFloEvent),
+    ReceiveEvent(RecvEvent),
     /// Sent from the server to client to acknowledge that an event was persisted successfully.
     AckEvent(EventAck),
     /// Sent by a client to set it's current position in the event stream
@@ -230,7 +298,7 @@ pub enum ProtocolMessage {
 
 named!{pub parse_str<String>,
     map_res!(
-        take_until_and_consume!("\n"),
+        length_data!(be_u16),
         |res| {
             ::std::str::from_utf8(res).map(|val| val.to_owned())
         }
@@ -239,7 +307,7 @@ named!{pub parse_str<String>,
 
 named!{parse_string_slice<&str>,
     map_res!(
-        take_until_and_consume!("\n"),
+        length_data!(be_u16),
         |res| {
             ::std::str::from_utf8(res)
         }
@@ -315,13 +383,13 @@ named!{parse_receive_event_header<ProtocolMessage>,
         namespace: parse_str ~
         data: length_data!(be_u32),
         || {
-           ProtocolMessage::ReceiveEvent(OwnedFloEvent {
+           ProtocolMessage::ReceiveEvent(RecvEvent::Owned(OwnedFloEvent {
                 id: id,
                 parent_id: parent_id,
                 namespace: namespace,
                 timestamp: timestamp,
                 data: data.to_vec(),
-            })
+            }))
         }
     )
 }
@@ -504,7 +572,7 @@ fn serialize_new_produce_header(header: &ProduceEvent, mut buf: &mut [u8]) -> us
     }).unwrap_or((0, 0));
 
     Serializer::new(buf).write_u8(PRODUCE_EVENT)
-                        .newline_term_string(&header.namespace)
+                        .write_string(&header.namespace)
                         .write_u64(counter)
                         .write_u16(actor)
                         .write_u32(header.op_id)
@@ -524,7 +592,7 @@ fn serialize_error_message(err: &ErrorMessage, buf: &mut [u8]) -> usize {
     Serializer::new(buf).write_u8(ERROR_HEADER)
             .write_u32(err.op_id)
             .write_u8(err.kind.u8_value())
-            .newline_term_string(&err.description)
+            .write_string(&err.description)
             .finish()
 }
 
@@ -546,19 +614,33 @@ fn serialize_cluster_state(header: u8, state: &ClusterState, buf: &mut [u8]) -> 
         write!(addr_buffer, "{}", member.addr).unwrap();
 
         ser = ser.write_u16(member.actor_id)
-                 .newline_term_string(&addr_buffer)
+                 .write_string(&addr_buffer)
                  .write_bool(member.connected);
     }
     ser.finish()
 }
 
+fn serialize_receive_event_header(event: &RecvEvent, buf: &mut [u8]) -> usize {
+    use event::FloEvent;
+
+    Serializer::new(buf)
+            .write_u8(::client::headers::RECEIVE_EVENT)
+            .write_u64(event.id().event_counter)
+            .write_u16(event.id().actor)
+            .write_u64(event.parent_id().map(|id| id.event_counter).unwrap_or(0))
+            .write_u16(event.parent_id().map(|id| id.actor).unwrap_or(0))
+            .write_u64(time::millis_since_epoch(event.timestamp()))
+            .write_string(event.namespace())
+            .write_u32(event.data_len())
+            .finish()
+}
 
 impl ProtocolMessage {
 
     pub fn serialize(&self, buf: &mut [u8]) -> usize {
         match *self {
             ProtocolMessage::ReceiveEvent(ref event) => {
-                unimplemented!() //TODO: This message _shouldn't_ typically be serialized in this way, but should probably implement it anyway
+                serialize_receive_event_header(event, buf)
             }
             ProtocolMessage::CursorCreated(ref info) => {
                 Serializer::new(buf).write_u8(headers::CURSOR_CREATED)
@@ -578,7 +660,7 @@ impl ProtocolMessage {
             ProtocolMessage::StartConsuming(ConsumerStart{ref op_id, ref namespace, ref max_events}) => {
                 Serializer::new(buf).write_u8(START_CONSUMING)
                                     .write_u32(*op_id)
-                                    .newline_term_string(namespace)
+                                    .write_string(namespace)
                                     .write_u64(*max_events)
                                     .finish()
             }
@@ -590,9 +672,9 @@ impl ProtocolMessage {
             }
             ProtocolMessage::ClientAuth {ref namespace, ref username, ref password} => {
                 Serializer::new(buf).write_u8(CLIENT_AUTH)
-                                    .newline_term_string(namespace)
-                                    .newline_term_string(username)
-                                    .newline_term_string(password)
+                                    .write_string(namespace)
+                                    .write_string(username)
+                                    .write_string(password)
                                     .finish()
             }
             ProtocolMessage::PeerUpdate(ref state) => {
@@ -623,13 +705,17 @@ impl ProtocolMessage {
         }
     }
 
-    pub fn get_body_mut(&mut self) -> Option<&mut Vec<u8>> {
+    pub fn get_body(&self) -> Option<&Vec<u8>> {
         match *self {
-            ProtocolMessage::ProduceEvent(ref mut produce) => {
-                Some(&mut produce.data)
+            ProtocolMessage::ProduceEvent(ref produce) => {
+                Some(&produce.data)
             }
-            ProtocolMessage::ReceiveEvent(ref mut event) => {
-                Some(&mut event.data)
+            ProtocolMessage::ReceiveEvent(ref event) => {
+                let data = match *event {
+                    RecvEvent::Owned(ref owned) => &owned.data,
+                    RecvEvent::Ref(ref arc) => &arc.data
+                };
+                Some(data)
             }
             _ => None
         }
@@ -651,8 +737,8 @@ impl ProtocolMessage {
 mod test {
     use super::*;
     use std::io::Read;
-    use nom::IResult;
-    use event::FloEventId;
+    use nom::{IResult, Needed};
+    use event::{OwnedFloEvent, time, FloEventId};
     use std::net::{SocketAddr, SocketAddrV4, Ipv4Addr};
 
     fn test_serialize_then_deserialize(message: &ProtocolMessage) {
@@ -661,9 +747,19 @@ mod test {
     }
 
     fn ser_de(message: &ProtocolMessage) -> ProtocolMessage {
+        serde_with_body(message, false)
+    }
+
+    fn serde_with_body(message: &ProtocolMessage, include_body: bool) -> ProtocolMessage {
         let mut buffer = [0; 1024];
 
-        let len = message.serialize(&mut buffer[..]);
+        let mut len = message.serialize(&mut buffer[..]);
+        if include_body {
+            if let Some(body) = message.get_body() {
+                (&mut buffer[len..(len + body.len())]).copy_from_slice(body);
+                len += body.len();
+            }
+        }
         (&mut buffer[len..(len + 4)]).copy_from_slice(&[4, 3, 2, 1]); // extra bytes at the end of the buffer
         println!("buffer: {:?}", &buffer[..(len + 4)]);
 
@@ -679,6 +775,25 @@ mod test {
                 panic!("Got incomplete: {:?}", need)
             }
         }
+
+    }
+
+    #[test]
+    fn serde_receive_event() {
+        let event = OwnedFloEvent {
+            id: FloEventId::new(4, 5),
+            timestamp: time::from_millis_since_epoch(99),
+            parent_id: Some(FloEventId::new(4, 3)),
+            namespace: "/foo/bar".to_owned(),
+            data: vec![9; 99],
+        };
+        let message = ProtocolMessage::ReceiveEvent(RecvEvent::Owned(event.clone()));
+        let result = serde_with_body(&message, true);
+        assert_eq!(message, result);
+
+        let arc_message = ProtocolMessage::ReceiveEvent(RecvEvent::Ref(Arc::new(event.clone())));
+        let result = serde_with_body(&arc_message, true);
+        assert_eq!(message, result);
     }
 
     #[test]
@@ -856,19 +971,37 @@ mod test {
 
 
     #[test]
-    fn parse_string_returns_empty_string_when_first_byte_is_a_newline() {
-        let input = vec![10, 4, 5, 6, 7];
+    fn parse_string_returns_empty_string_string_length_is_0() {
+        let input = vec![0, 0, 110, 4, 5, 6, 7];
         let (remaining, result) = parse_str(&input).unwrap();
         assert_eq!("".to_owned(), result);
-        assert_eq!(&vec![4, 5, 6, 7], &remaining);
+        assert_eq!(&vec![110, 4, 5, 6, 7], &remaining);
     }
 
     #[test]
-    fn parse_string_returns_string_with_given_length() {
-        let input = b"hello\nextra bytes";
-        let (remaining, result) = parse_str(&input[..]).unwrap();
-        assert_eq!("hello".to_owned(), result);
-        let extra_bytes = b"extra bytes";
-        assert_eq!(&extra_bytes[..], remaining);
+    fn string_is_serialized_and_parsed() {
+        let input = "hello\n\tmoar bytes";
+        let mut buffer = [0; 64];
+
+        let n_bytes = Serializer::new(&mut buffer).write_string(input).finish();
+        assert_eq!(19, n_bytes);
+
+        let (_, result) = parse_str(&buffer[0..19]).unwrap();
+        assert_eq!(input.to_owned(), result);
+    }
+
+    #[test]
+    fn this_works_how_i_think_it_does() {
+        let input = vec![
+            3,
+            0, 0, 0, 0, 0, 0, 1, 34,  0, 1,
+            0, 0, 0, 0, 0, 0, 0, 0,   0, 0,
+            0, 0, 1, 93, 77, 45, 214, 26,
+            47, 101, 118, 101
+        ];
+
+        let result = parse_any(&input);
+        let expected = IResult::Incomplete(Needed::Size(12164));
+        assert_eq!(expected, result);
     }
 }

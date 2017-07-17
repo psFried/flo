@@ -1,31 +1,36 @@
 use server::engine::api::{ConnectionId};
-use protocol::{ServerProtocol, ServerMessage};
+use protocol::{ProtocolMessage, MessageWriter};
 
 use futures::stream::Stream;
 use futures::Async;
 use futures::sync::mpsc::UnboundedReceiver;
+use futures::{Future, Poll};
 
+use tokio_core::io::WriteHalf;
+use tokio_core::net::TcpStream;
 use std::io::{self, Read};
 
-pub struct ServerMessageStream<P: ServerProtocol> {
+pub type ServerWriteStream = WriteHalf<TcpStream>;
+
+pub struct ServerMessageStream {
     connection_id: ConnectionId,
-    server_receiver: UnboundedReceiver<ServerMessage>,
-    current_message: Option<P>,
+    server_receiver: UnboundedReceiver<ProtocolMessage>,
+    current_message: Option<MessageWriter<'static>>,
+    tcp_stream: ServerWriteStream,
 }
 
-impl <P: ServerProtocol> ServerMessageStream<P> {
-    pub fn new(connection_id: ConnectionId, server_rx: UnboundedReceiver<ServerMessage>) -> ServerMessageStream<P> {
+impl ServerMessageStream {
+    pub fn new(connection_id: ConnectionId, server_rx: UnboundedReceiver<ProtocolMessage>, tcp_stream: ServerWriteStream) -> ServerMessageStream {
         ServerMessageStream {
             connection_id: connection_id,
             server_receiver: server_rx,
             current_message: None,
+            tcp_stream: tcp_stream,
         }
     }
-}
 
-impl <P: ServerProtocol> Drop for ServerMessageStream<P> {
-    fn drop(&mut self) {
-        debug!("Dropping ServerMessageStream for connection_id: {}", self.connection_id);
+    fn needs_next_message(&self) -> bool {
+        self.current_message.as_ref().map(|m| m.is_done()).unwrap_or(true)
     }
 }
 
@@ -34,56 +39,52 @@ fn not_ready() -> io::Error {
     io::Error::new(io::ErrorKind::WouldBlock, NOT_READY_MSG)
 }
 
-impl <P: ServerProtocol> Read for ServerMessageStream<P> {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let mut message = self.current_message.take();
+impl Future for ServerMessageStream {
+    type Item = ();
+    type Error = io::Error;
 
-        let next_message_needed = match &message {
-            &Some(ref msg) => msg.is_done(),
-            _ => true
-        };
-
-        if next_message_needed {
-            // we don't currently have a message to read, so try to get one
-            match self.server_receiver.poll() {
-                Ok(Async::NotReady) => {
-                    return Err(not_ready());
-                }
-                Ok(Async::Ready(Some(msg))) => {
-                    trace!("ServerMessageStream got new message: {:?}", msg);
-                    message = Some(P::new(msg))
-                }
-                Ok(Async::Ready(None)) => {
-                    debug!("End of ServerMessageStream");
-                    return Ok(0);
-                }
-                Err(err) => {
-                    error!("Error reading next message from server: {:?}", err);
-                    return Err(io::Error::new(io::ErrorKind::Other, "Failed to read next message from server"));
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        loop {
+            if self.needs_next_message() {
+                match self.server_receiver.poll() {
+                    Ok(Async::Ready(Some(message))) => {
+                        self.current_message = Some(MessageWriter::new_owned(message));
+                    }
+                    Ok(Async::Ready(None)) => {
+                        return Ok(Async::Ready(()));
+                    }
+                    Ok(Async::NotReady) => {
+                        return Ok(Async::NotReady);
+                    }
+                    Err(()) => {
+                        warn!("Error reading from message receiver for connection_id: {}, Completing Stream", self.connection_id);
+                        return Ok(Async::Ready(()));
+                    }
                 }
             }
-        }
 
-        if let Some(mut msg) = message {
-            //we are current in process of reading this message
-            let read_res = msg.read(buf);
+            let ServerMessageStream {
+                connection_id,
+                ref mut current_message,
+                ref mut tcp_stream,
+                .. } = *self;
 
-            match read_res {
-                Ok(nread) if nread > 0 => {
-                    //if we've managed to read some bytes, then keep this message around since it may not be done
-                    trace!("Read {} bytes of current message", nread);
-                    self.current_message = Some(msg);
-                    Ok(nread)
+            if let Some(ref mut message) = current_message.as_mut() {
+                match message.write(tcp_stream) {
+                    Ok(()) => {
+                        // loop back around for another try
+                        trace!("Successfully wrote part of message to connection_id: {}, finished_message: {}", connection_id, message.is_done());
+                    }
+                    Err(ref io_err) if io_err.kind() == io::ErrorKind::WouldBlock => {
+                        return Ok(Async::NotReady);
+                    }
+                    Err(io_err) => {
+                        error!("Error writing message to connection_id: {}, {}", connection_id, io_err);
+                        return Err(io_err);
+                    }
                 }
-                Ok(_) => {
-                    //we've finished reading this message, so try later to get another from the backend
-                    trace!("Finished reading from current message");
-                    Err(not_ready())
-                }
-                e @ Err(_) => e
             }
-        } else {
-            unreachable!()
         }
     }
 }
+

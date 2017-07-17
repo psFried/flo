@@ -9,13 +9,12 @@ extern crate byteorder;
 
 mod serializer;
 mod client;
-mod server;
 
 use std::io::{self, Read, Write};
 use std::cmp;
+use std::borrow::Cow;
 
 pub use self::client::*;
-pub use self::server::{ServerMessage, ServerProtocol, ServerProtocolImpl};
 
 pub const BUFFER_LENGTH: usize = 8 * 1024;
 
@@ -173,7 +172,10 @@ impl <T> MessageStream<T> where T: Read {
                         break
                     }
                     IResult::Error(err) => {
-                        return Err(io::Error::new(io::ErrorKind::InvalidData, format!("Error parsing message: {:?}, buffer: {:?}", err, bytes)))
+                        let message = format!("Error parsing message: {:?}, buffer: {:?}",
+                                              err,
+                                              bytes);
+                        return Err(io::Error::new(io::ErrorKind::InvalidData, message))
                     }
                     IResult::Incomplete(_need) => {
                         grow_buffer = true;
@@ -257,22 +259,37 @@ fn copy_until_capacity(src: &[u8], dst: &mut Vec<u8>) -> usize {
 
 
 pub struct MessageWriter<'a> {
-    message: &'a mut ProtocolMessage,
+    message: Cow<'a, ProtocolMessage>,
     body_position: usize,
+    body_len: usize,
     header_written: bool,
 }
 
 impl <'a> MessageWriter<'a> {
-    pub fn new(message: &'a mut ProtocolMessage) -> MessageWriter<'a> {
+    pub fn new(message: &'a ProtocolMessage) -> MessageWriter<'a> {
         MessageWriter {
-            message: message,
+            message: Cow::Borrowed(message),
             body_position: 0,
+            body_len: 0,
             header_written: false,
         }
     }
 
+    pub fn new_owned(message: ProtocolMessage) -> MessageWriter<'static> {
+        MessageWriter {
+            message: Cow::Owned(message),
+            body_position: 0,
+            body_len: 0,
+            header_written: false,
+        }
+    }
+
+    pub fn is_done(&self) -> bool {
+        self.header_written && self.body_position >= self.body_len
+    }
+
     pub fn write<T: Write>(&mut self, dest: &mut T) -> io::Result<()> {
-        let MessageWriter {ref mut message, ref mut body_position, ref mut header_written} = *self;
+        let MessageWriter {ref message, ref mut body_position, ref mut body_len, ref mut header_written} = *self;
         if !*header_written {
             let mut buffer = [0; BUFFER_LENGTH];
             let len = message.serialize(&mut buffer[..]);
@@ -280,14 +297,15 @@ impl <'a> MessageWriter<'a> {
             *header_written = true;
         }
 
-        if let Some(body) = message.get_body_mut() {
-            let total_len = body.len();
-            while *body_position < total_len {
-                let to_write = &mut body[*body_position..];
+        if let Some(body) = message.get_body() {
+            *body_len = body.len();
+            while *body_position < *body_len {
+                let to_write = &body[*body_position..];
                 match dest.write(to_write) {
                     Ok(n) => *body_position += n,
                     Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {} // ignore and retry
                     Err(ref e) if cfg!(target_os = "macos") && e.raw_os_error() == Some(41) => {
+                        // osx is weird, and can sometimes return an EPROTOTYPE when writing
                         debug!(target: "eprototype", "Retrying write due to error: {:?}", e);
                     }
                     Err(other) => return Err(other)

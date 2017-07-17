@@ -2,7 +2,7 @@
 use event::OwnedFloEvent;
 use engine::consumer::client::context::{ConnectionContext, CursorType};
 use engine::api::{ConnectionId, ConsumerState};
-use protocol::{ProtocolMessage, ServerMessage, ErrorMessage, ErrorKind, CursorInfo, ConsumerStart};
+use protocol::{ProtocolMessage, ErrorMessage, ErrorKind, RecvEvent, CursorInfo, ConsumerStart};
 use super::connection_state::{ConnectionState};
 
 use std::sync::Arc;
@@ -10,7 +10,7 @@ use std::net::SocketAddr;
 use channels::Sender;
 
 
-pub struct ClientConnection<S: Sender<ServerMessage> + 'static> {
+pub struct ClientConnection<S: Sender<ProtocolMessage> + 'static> {
     pub connection_id: ConnectionId,
     pub address: SocketAddr,
     last_op_id: u32,
@@ -18,7 +18,7 @@ pub struct ClientConnection<S: Sender<ServerMessage> + 'static> {
     state: ConnectionState,
 }
 
-impl <S: Sender<ServerMessage> + 'static> ClientConnection<S> {
+impl <S: Sender<ProtocolMessage> + 'static> ClientConnection<S> {
 
     pub fn new(connection_id: ConnectionId, addr: SocketAddr, sender: S, batch_size: u64) -> ClientConnection<S> {
         ClientConnection {
@@ -82,7 +82,8 @@ impl <S: Sender<ServerMessage> + 'static> ClientConnection<S> {
         };
         if should_send {
             let id = event.id;
-            let result = self.client_sender.send(ServerMessage::Event(event.clone())).map_err(|_| ());
+            let message = ProtocolMessage::ReceiveEvent(RecvEvent::Ref(event.clone()));
+            let result = self.client_sender.send(message).map_err(|_| ());
             if result.is_ok() {
                 debug!("Sent event: {} to connection_id: {}", id, self.connection_id);
                 self.state.event_sent(id);
@@ -115,7 +116,7 @@ impl <S: Sender<ServerMessage> + 'static> ClientConnection<S> {
         });
 
         if let Err(err_message) = result {
-            self.client_sender.send(ServerMessage::Other(ProtocolMessage::Error(err_message))).map_err(|send_err| {
+            self.client_sender.send(ProtocolMessage::Error(err_message)).map_err(|send_err| {
                 // map to ()
                 warn!("Unable to send error message to connection_id: {}, message: {:?}", self.connection_id, send_err);
             })
@@ -134,7 +135,7 @@ impl <S: Sender<ServerMessage> + 'static> ClientConnection<S> {
                 batch_size: batch_size as u32
             });
 
-            self.client_sender.send(ServerMessage::Other(start_message)).map_err(|_| {
+            self.client_sender.send(start_message).map_err(|_| {
                 ErrorMessage{
                     op_id: self.last_op_id,
                     kind: ErrorKind::InvalidConsumerState,
@@ -201,7 +202,7 @@ impl <S: Sender<ServerMessage> + 'static> ClientConnection<S> {
     }
 
     fn send(&mut self, message: ProtocolMessage) -> Result<(), ()> {
-        self.client_sender.send(ServerMessage::Other(message)).map_err(|_| ())
+        self.client_sender.send(message).map_err(|_| ())
     }
 }
 
@@ -215,7 +216,7 @@ mod test {
     use engine::consumer::client::connection_state::{IdleState, ConnectionState};
     use engine::consumer::filecursor::{Cursor, CursorMessage};
     use engine::api::{ConnectionId, NamespaceGlob, ConsumerFilter, ConsumerState, ClientConnect};
-    use protocol::{ProtocolMessage, ServerMessage, ConsumerStart};
+    use protocol::{ProtocolMessage, RecvEvent, ConsumerStart};
 
     use channels::{Sender, MockSender};
     use futures::sync::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
@@ -241,7 +242,7 @@ mod test {
                                                 999);
 
         ctx.assert_argument_received(expected_state);
-        subject.client_sender.assert_message_sent(ServerMessage::Other(ProtocolMessage::CursorCreated(CursorInfo{op_id: start_op_id, batch_size: 999})));
+        subject.client_sender.assert_message_sent(ProtocolMessage::CursorCreated(CursorInfo{op_id: start_op_id, batch_size: 999}));
 
         let data = "data for event".to_owned().into_bytes();
         let timestamp = from_millis_since_epoch(678910);
@@ -251,7 +252,7 @@ mod test {
         subject.maybe_send_event(&expected_event).unwrap();
         subject.maybe_send_event(&extra_event).unwrap();
 
-        subject.client_sender.assert_message_sent(ServerMessage::Event(expected_event));
+        subject.client_sender.assert_message_sent(ProtocolMessage::ReceiveEvent(RecvEvent::Ref(expected_event)));
         subject.client_sender.assert_no_more_messages_sent();
     }
 
@@ -276,7 +277,7 @@ mod test {
                                                 5);
 
         ctx.assert_argument_received(expected_state);
-        subject.client_sender.assert_message_sent(ServerMessage::Other(ProtocolMessage::CursorCreated(CursorInfo{op_id: start_op_id, batch_size: 5})));
+        subject.client_sender.assert_message_sent(ProtocolMessage::CursorCreated(CursorInfo{op_id: start_op_id, batch_size: 5}));
 
         let data = "data for event".to_owned().into_bytes();
         let timestamp = from_millis_since_epoch(678910);
@@ -284,7 +285,7 @@ mod test {
             let id = FloEventId::new(1, i);
             let expected_event = Arc::new(OwnedFloEvent::new(id, None, timestamp, namespace.clone(), data.clone()));
             subject.maybe_send_event(&expected_event).unwrap();
-            subject.client_sender.assert_message_sent(ServerMessage::Event(expected_event));
+            subject.client_sender.assert_message_sent(ProtocolMessage::ReceiveEvent(RecvEvent::Ref(expected_event)));
         }
 
         let extra_event = Arc::new(OwnedFloEvent::new(FloEventId::new(1, 7), None, timestamp, namespace.clone(), data.clone()));
@@ -304,7 +305,7 @@ mod test {
 
         subject.maybe_send_event(&extra_event).unwrap();
 
-        subject.client_sender.assert_message_sent(ServerMessage::Event(extra_event));
+        subject.client_sender.assert_message_sent(ProtocolMessage::ReceiveEvent(RecvEvent::Ref(extra_event)));
     }
 
 
@@ -346,7 +347,7 @@ mod test {
         });
     }
 
-    fn expect_not_consuming_state<F>(conn: &ClientConnection<MockSender<ServerMessage>>, fun: F) where F: Fn(&IdleState) {
+    fn expect_not_consuming_state<F>(conn: &ClientConnection<MockSender<ProtocolMessage>>, fun: F) where F: Fn(&IdleState) {
         match &conn.state {
             &ConnectionState::NotConsuming(ref idle) => fun(&idle),
             other @ _ => {
@@ -361,7 +362,7 @@ mod test {
         SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(1, 2, 3, 4), 6789))
     }
 
-    type TestConnection = ClientConnection<MockSender<ServerMessage>>;
+    type TestConnection = ClientConnection<MockSender<ProtocolMessage>>;
 
     fn subject_with_state(state: ConnectionState) -> TestConnection {
         ClientConnection {
@@ -389,7 +390,7 @@ mod test {
     }
 
     impl ConnectionContext for MockContext {
-        fn start_consuming<S: Sender<ServerMessage>>(&mut self, consumer_state: ConsumerState, client_sender: &S) -> Result<CursorType, String> {
+        fn start_consuming<S: Sender<ProtocolMessage>>(&mut self, consumer_state: ConsumerState, client_sender: &S) -> Result<CursorType, String> {
             let ret_val = self.start_consuming_return_val.take().unwrap();
             self.start_consuming_args = Some(consumer_state);
             ret_val
@@ -414,7 +415,7 @@ mod test {
     }
 
     impl ConnectionContext for InMemoryMockContext {
-        fn start_consuming<S: Sender<ServerMessage> + 'static>(&mut self, consumer_state: ConsumerState, client_sender: &S) -> Result<CursorType, String> {
+        fn start_consuming<S: Sender<ProtocolMessage> + 'static>(&mut self, consumer_state: ConsumerState, client_sender: &S) -> Result<CursorType, String> {
             assert!(self.arg.is_none(), "start_consuming has already been called");
             self.arg = Some(consumer_state.clone());
             Ok(CursorType::InMemory(consumer_state))

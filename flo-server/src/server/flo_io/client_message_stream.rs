@@ -83,16 +83,21 @@ mod test {
         let reader = {
             let mut b = Vec::new();
             b.push(headers::PRODUCE_EVENT);
-            b.extend_from_slice(b"/foo/bar\n");
+            b.extend_from_slice(&[0, 8]);
+            b.extend_from_slice(b"/foo/bar");
             b.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, 9, 0, 5]);
             b.extend_from_slice(&[0, 0, 0, 4, 0, 0, 0, 7]);
             b.extend_from_slice(b"evt_one");
             b.push(headers::CLIENT_AUTH);
-            b.extend_from_slice(b"the namespace\n");
-            b.extend_from_slice(b"the username\n");
-            b.extend_from_slice(b"the password\n");
+            b.extend_from_slice(&[0, 13]);
+            b.extend_from_slice(b"the namespace");
+            b.extend_from_slice(&[0, 12]);
+            b.extend_from_slice(b"the username");
+            b.extend_from_slice(&[0, 12]);
+            b.extend_from_slice(b"the password");
             b.push(headers::PRODUCE_EVENT);
-            b.extend_from_slice(b"/baz\n");
+            b.extend_from_slice(&[0, 4]);
+            b.extend_from_slice(b"/baz");
             b.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, 9, 0, 5]);
             b.extend_from_slice(&[0, 0, 0, 5, 0, 0, 0, 7]);
             b.extend_from_slice(b"evt_two");

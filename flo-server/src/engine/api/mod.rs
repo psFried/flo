@@ -1,7 +1,7 @@
 mod consumer;
 mod namespace;
 
-use protocol::{ProtocolMessage, ServerMessage};
+use protocol::ProtocolMessage;
 use event::OwnedFloEvent;
 
 use futures::sync::mpsc::UnboundedSender;
@@ -30,7 +30,7 @@ pub enum ClientMessage {
 
 impl ClientMessage {
 
-    pub fn connect(connection_id: ConnectionId, address: SocketAddr, channel: UnboundedSender<ServerMessage>) -> ClientMessage {
+    pub fn connect(connection_id: ConnectionId, address: SocketAddr, channel: UnboundedSender<ProtocolMessage>) -> ClientMessage {
         let connect = ClientConnect {
             connection_id: connection_id,
             client_addr: address,
@@ -84,7 +84,7 @@ fn both(connection_id: ConnectionId, protocol_message: ProtocolMessage) -> Clien
 pub struct ClientConnect {
     pub connection_id: ConnectionId,
     pub client_addr: SocketAddr,
-    pub message_sender: UnboundedSender<ServerMessage>,
+    pub message_sender: UnboundedSender<ProtocolMessage>,
 }
 
 impl Debug for ClientConnect {
@@ -97,7 +97,7 @@ impl PartialEq for ClientConnect {
     fn eq(&self, other: &ClientConnect) -> bool {
         self.connection_id == other.connection_id &&
                 self.client_addr == other.client_addr &&
-                &(self.message_sender) as * const UnboundedSender<ServerMessage> == &(other.message_sender) as * const UnboundedSender<ServerMessage>
+                &(self.message_sender) as * const UnboundedSender<ProtocolMessage> == &(other.message_sender) as * const UnboundedSender<ProtocolMessage>
     }
 }
 
