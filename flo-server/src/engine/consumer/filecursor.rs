@@ -8,7 +8,7 @@ use std::sync::Arc;
 use event::OwnedFloEvent;
 use engine::api::{ConnectionId, ConsumerState, ConsumerManagerMessage};
 use engine::event_store::EventReader;
-use protocol::{ErrorMessage, ErrorKind, ProtocolMessage, ServerMessage};
+use protocol::{ErrorMessage, ErrorKind, ProtocolMessage, RecvEvent};
 use channels::Sender;
 
 pub trait Cursor {
@@ -54,7 +54,7 @@ impl PartialEq for Cursor {
     }
 }
 
-pub fn start<S: Sender<ServerMessage> + 'static, R: EventReader + 'static, C: Sender<ConsumerManagerMessage> + 'static>(mut state: ConsumerState,
+pub fn start<S: Sender<ProtocolMessage> + 'static, R: EventReader + 'static, C: Sender<ConsumerManagerMessage> + 'static>(mut state: ConsumerState,
                                                                            client_sender: S,
                                                                            mut reader: &mut R,
                                                                            consumer_manager_sender: C) -> io::Result<CursorImpl> {
@@ -88,15 +88,15 @@ pub fn start<S: Sender<ServerMessage> + 'static, R: EventReader + 'static, C: Se
                             kind: ErrorKind::StorageEngineError,
                             description: format!("{}", err)
                         };
-                        client_sender.send(ServerMessage::Other(ProtocolMessage::Error(error_message))).unwrap();
+                        client_sender.send(ProtocolMessage::Error(error_message)).unwrap();
                     }
                 }
 
             }
 
             if state.is_batch_exhausted() && !cursor_closed {
-                let message = ServerMessage::Other(ProtocolMessage::EndOfBatch);
-                client_sender.send(message).unwrap();
+                //TODO: eliminate this unwrap in file_cursor
+                client_sender.send(ProtocolMessage::EndOfBatch).unwrap();
                 // wait for message to tell us when to proceed
                 match my_receiver.recv() {
                     Ok(CursorMessage::NextBatch) => {
@@ -126,7 +126,7 @@ pub fn start<S: Sender<ServerMessage> + 'static, R: EventReader + 'static, C: Se
     })
 }
 
-fn send_next_event<I, S: Sender<ServerMessage>, E: Debug>(iter: &mut I, client: &mut ConsumerState, sender: &S) -> Result<bool, String> where I: Iterator<Item=Result<OwnedFloEvent, E>> {
+fn send_next_event<I, S: Sender<ProtocolMessage>, E: Debug>(iter: &mut I, client: &mut ConsumerState, sender: &S) -> Result<bool, String> where I: Iterator<Item=Result<OwnedFloEvent, E>> {
     loop {
         let next_event = match iter.next() {
             Some(event_result) => {
@@ -143,7 +143,7 @@ fn send_next_event<I, S: Sender<ServerMessage>, E: Debug>(iter: &mut I, client: 
         if client.should_send_event(&next_event) {
             let event_id = next_event.id;
             trace!("Cursor for connection_id: {} sending event: {}", client.connection_id, next_event.id);
-            let message = ServerMessage::Event(Arc::new(next_event));
+            let message = ProtocolMessage::ReceiveEvent(RecvEvent::Owned(next_event));
             sender.send(message).map_err(|_| {
                 format!("Error sending event to client io channel for connection_id: {}", client.connection_id)
             })?;

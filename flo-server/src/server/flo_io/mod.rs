@@ -8,7 +8,7 @@ use std::sync::atomic;
 pub use self::client_message_stream::ClientMessageStream;
 pub use self::server_message_stream::ServerMessageStream;
 use server::channel_sender::ChannelSender;
-use protocol::{ServerProtocolImpl, ServerMessage};
+use protocol::ProtocolMessage;
 use server::engine::api::{ConnectionId, ClientMessage};
 
 use tokio_core::reactor::Remote;
@@ -38,7 +38,7 @@ pub fn setup_message_streams(connection_id: ConnectionId, tcp_stream: TcpStream,
     remote_handle.spawn(move |_handle| {
         let current_connection_count = connection_opened();
         info!("Established new connection to: {} as connection_id: {}, total active connections: {}", client_addr, connection_id, current_connection_count);
-        let (server_tx, server_rx): (UnboundedSender<ServerMessage>, UnboundedReceiver<ServerMessage>) = unbounded();
+        let (server_tx, server_rx): (UnboundedSender<ProtocolMessage>, UnboundedReceiver<ProtocolMessage>) = unbounded();
         let (tcp_reader, tcp_writer) = tcp_stream.split();
 
         send_client_connect(&mut engine, connection_id, client_addr.clone(), &server_tx);
@@ -55,12 +55,9 @@ pub fn setup_message_streams(connection_id: ConnectionId, tcp_stream: TcpStream,
             Ok(())
         });
 
-        let server_to_client = nio::copy(ServerMessageStream::<ServerProtocolImpl>::new(connection_id, server_rx), tcp_writer).map_err(|err| {
+        let server_to_client = ServerMessageStream::new(connection_id, server_rx, tcp_writer).map_err(|err| {
             error!("Error writing to client: {:?}", err);
             format!("Error writing to client: {:?}", err)
-        }).map(move |amount| {
-            info!("Wrote: {} bytes to connection_id: {}, dropping connection", amount, connection_id);
-            ()
         });
 
         client_to_server.select(server_to_client).then(move |res| {
@@ -74,6 +71,6 @@ pub fn setup_message_streams(connection_id: ConnectionId, tcp_stream: TcpStream,
     });
 }
 
-fn send_client_connect(engine: &mut ChannelSender, connection_id: ConnectionId, client_address: SocketAddr, sender: &UnboundedSender<ServerMessage>) {
+fn send_client_connect(engine: &mut ChannelSender, connection_id: ConnectionId, client_address: SocketAddr, sender: &UnboundedSender<ProtocolMessage>) {
     engine.send(ClientMessage::connect(connection_id, client_address, sender.clone())).unwrap(); //TODO: something better than unwrapping this result
 }

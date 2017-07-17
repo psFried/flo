@@ -14,7 +14,7 @@ impl <'a> Serializer<'a> {
         }
     }
 
-    pub fn write_bool(mut self, value: bool) -> Self {
+    pub fn write_bool(self, value: bool) -> Self {
         let b = if value { 1 } else { 0 };
         self.write_u8(b)
     }
@@ -55,8 +55,9 @@ impl <'a> Serializer<'a> {
         self
     }
 
-    pub fn newline_term_string<S: AsRef<str>>(self, string: S) -> Self {
-        self.write_bytes(string.as_ref().as_bytes()).write_u8(b'\n')
+    pub fn write_string<S: AsRef<str>>(self, string: S) -> Self {
+        let string = string.as_ref();
+        self.write_u16(string.len() as u16).write_bytes(string.as_bytes())
     }
 
     pub fn finish(self) -> usize {
@@ -134,23 +135,24 @@ mod test {
     }
 
     #[test]
-    fn newline_terminated_string_is_written() {
+    fn string_is_written() {
         let mut buffer = [0; 64];
         let value = "bacon and eggs";
         {
             let mut subject = Serializer::new(&mut buffer[..]);
-            subject = subject.newline_term_string(value);
-            assert_eq!(value.len() + 1, subject.position);
+            subject = subject.write_string(value);
+            assert_eq!(value.len() + 2, subject.position);
         }
-        let expected = "bacon and eggs\n";
-        assert_eq!(expected.as_bytes(), &buffer[..(value.len()+1)]);
+        let mut expected = vec![0, 14];
+        expected.extend_from_slice(value.as_bytes());
+        assert_eq!(&expected[..], &buffer[..(value.len()+2)]);
     }
 
     #[test]
     fn multiple_values_are_written_in_sequence() {
         let mut buffer = [0; 64];
         let subject = Serializer::new(&mut buffer[..]);
-        let result = subject.write_u16(987).write_u64(23).newline_term_string("bacon").finish();
-        assert_eq!(16, result);
+        let result = subject.write_u16(987).write_u64(23).write_string("bacon").finish();
+        assert_eq!(17, result);
     }
 }

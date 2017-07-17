@@ -297,6 +297,13 @@ integration_test!{many_events_are_produced_and_read_in_batches, port, tcp_stream
         current_count: 0
     };
     client.run_consumer(ConsumerOptions::from_beginning("/**/*", 1000), &mut consumer).expect("failed to run the BatchConsumer");
+
+    client.set_batch_size(10000).expect("failed to set batch size");
+
+    let last = client.iter(ConsumerOptions::default()).unwrap().flat_map(|e| {
+        e.map(|it| it.id).ok()
+    }).last();
+    assert_eq!(Some(FloEventId::new(1, 1000)), last);
 }}
 
 pub struct BatchTestConsumer{

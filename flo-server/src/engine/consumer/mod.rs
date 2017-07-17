@@ -11,7 +11,7 @@ use futures::sync::mpsc::UnboundedSender;
 use self::client::{ClientConnection, ConnectionContext, CursorType};
 use self::cache::Cache;
 use engine::api::{ConnectionId, ClientConnect, ConsumerManagerMessage, ReceivedMessage, ConsumerState};
-use protocol::{ProtocolMessage, ServerMessage};
+use protocol::{ProtocolMessage, RecvEvent};
 use event::{FloEvent, OwnedFloEvent, FloEventId};
 use server::MemoryLimit;
 use engine::event_store::EventReader;
@@ -37,7 +37,7 @@ impl <R: EventReader + 'static> ManagerState<R> {
 }
 
 impl <R: EventReader + 'static> ConnectionContext for ManagerState<R> {
-    fn start_consuming<S: Sender<ServerMessage> + 'static>(&mut self, mut consumer_state: ConsumerState, client_sender: &S) -> Result<CursorType, String> {
+    fn start_consuming<S: Sender<ProtocolMessage> + 'static>(&mut self, mut consumer_state: ConsumerState, client_sender: &S) -> Result<CursorType, String> {
         use std::clone::Clone;
 
         let last_cache_evicted = self.cache.last_evicted_id();
@@ -59,7 +59,8 @@ impl <R: EventReader + 'static> ConnectionContext for ManagerState<R> {
             for (ref id, ref event) in self.cache.iter(start_id) {
                 if consumer_state.should_send_event(&*event) {
                     trace!("Sending event from cache. connection_id: {}, event_id: {:?}", connection_id, id);
-                    client_sender.send(ServerMessage::Event((*event).clone())).map_err(|_| {
+                    let message = RecvEvent::Ref((*event).clone());
+                    client_sender.send(ProtocolMessage::ReceiveEvent(message)).map_err(|_| {
                         error!("Failed to send event: {} to client sender for connection_id: {}", id, connection_id);
                         format!("Failed to send event: {} to client sender for connection_id: {}", id, connection_id)
                     })?; //early return with error if send fails
@@ -75,13 +76,13 @@ impl <R: EventReader + 'static> ConnectionContext for ManagerState<R> {
 
             if consumer_state.is_batch_exhausted() {
                 trace!("connection_id: {} exhausted batch", connection_id);
-                client_sender.send(ServerMessage::Other(ProtocolMessage::EndOfBatch)).map_err(|_| {
+                client_sender.send(ProtocolMessage::EndOfBatch).map_err(|_| {
                     warn!("Failed to send EndOfBatch for connection_id: {}", connection_id);
                     format!("Failed to send EndOfBatch for connection_id: {}", connection_id)
                 })?; //return early if we can't send messages to the client
             } else {
                 trace!("connection_id: {} reached end of stream and is awaiting new events", connection_id);
-                client_sender.send(ServerMessage::Other(ProtocolMessage::AwaitingEvents)).map_err(|_| {
+                client_sender.send(ProtocolMessage::AwaitingEvents).map_err(|_| {
                     warn!("Failed to send AwaitingEvents for connection_id: {}", connection_id);
                     format!("Failed to send AwaitingEvents for connection_id: {}", connection_id)
                 })?;
@@ -94,7 +95,7 @@ impl <R: EventReader + 'static> ConnectionContext for ManagerState<R> {
 } 
 
 pub struct ConsumerManager<R: EventReader + 'static> {
-    consumers: ConsumerMap<UnboundedSender<ServerMessage>>,
+    consumers: ConsumerMap<UnboundedSender<ProtocolMessage>>,
     state: ManagerState<R>,
     default_batch_size: u64,
 }
@@ -160,10 +161,10 @@ impl <R: EventReader + 'static> ConsumerManager<R> {
 
 }
 
-pub struct ConsumerMap<S: Sender<ServerMessage> + 'static>(HashMap<ConnectionId, ClientConnection<S>>);
+pub struct ConsumerMap<S: Sender<ProtocolMessage> + 'static>(HashMap<ConnectionId, ClientConnection<S>>);
 
 
-impl <S: Sender<ServerMessage> + 'static> ConsumerMap<S> {
+impl <S: Sender<ProtocolMessage> + 'static> ConsumerMap<S> {
     pub fn new() -> ConsumerMap<S> {
         ConsumerMap(HashMap::with_capacity(32))
     }
