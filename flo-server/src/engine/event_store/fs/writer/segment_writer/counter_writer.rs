@@ -1,5 +1,5 @@
 
-use std::io::{self, Seek};
+use std::io::{self, Write, Seek, BufWriter};
 use std::fs::{File, OpenOptions};
 use std::path::Path;
 
@@ -37,7 +37,7 @@ impl EventCounterWriter {
         self.file.seek(io::SeekFrom::Start(0))?;
         write_u64(new_counter, &mut self.file)?;
 
-        self.file.sync_data()?;
+        self.file.flush()?;
         self.current_counter = new_counter;
         Ok(())
     }
