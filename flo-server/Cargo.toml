@@ -11,11 +11,12 @@ log = "0.3"
 log4rs = "0.4"
 clap = "2.5"
 nom = "2.0"
-byteorder = "0.5"
+byteorder = "1"
 tokio-core = "0.1.4"
 futures = "0.1.10"
 glob = "0.2"
 chrono = "^0.2"
+memmap = "0.5.2"
 
 [dev-dependencies]
 flo-client-lib = { path = "../flo-client-lib" }
