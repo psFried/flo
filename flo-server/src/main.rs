@@ -2,11 +2,12 @@
 
 extern crate flo_event as event;
 extern crate flo_protocol as protocol;
-extern crate clap;
 
 #[macro_use]
 extern crate log;
 
+extern crate memmap;
+extern crate clap;
 extern crate log4rs;
 extern crate num_cpus;
 extern crate byteorder;
@@ -24,6 +25,7 @@ mod logging;
 mod server;
 mod engine;
 mod channels;
+mod new_engine;
 
 use chrono::Duration;
 use event::ActorId;

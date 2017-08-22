@@ -7,7 +7,7 @@ extern crate log;
 extern crate flo_event as event;
 extern crate byteorder;
 
-mod serializer;
+pub mod serializer;
 mod client;
 
 use std::io::{self, Read, Write};

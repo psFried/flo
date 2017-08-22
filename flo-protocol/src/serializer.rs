@@ -55,6 +55,7 @@ impl <'a> Serializer<'a> {
         self
     }
 
+    /// Writes a string prepended by a u16 length
     pub fn write_string<S: AsRef<str>>(self, string: S) -> Self {
         let string = string.as_ref();
         self.write_u16(string.len() as u16).write_bytes(string.as_bytes())

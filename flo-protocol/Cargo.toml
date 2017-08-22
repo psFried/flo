@@ -7,5 +7,5 @@ authors = ["pfried <philipsfried@gmail.com>"]
 flo-event = { path = "../flo-event" }
 log = "0.3"
 nom = "2.0"
-byteorder = "0.5"
+byteorder = "1"
 
