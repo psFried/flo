@@ -44,7 +44,8 @@ pub fn run(options: ServerOptions) -> io::Result<()> {
 
         info!("Started listening on port: {}", server_port);
 
-        listener.incoming().map_err(|io_err| {
+        let incoming = listener.incoming();
+        incoming.map_err(|io_err| {
             error!("Error creating new connection: {:?}", io_err);
         }).for_each(move |(tcp_stream, client_addr): (TcpStream, SocketAddr)| {
 

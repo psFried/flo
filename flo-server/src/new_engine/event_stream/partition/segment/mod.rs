@@ -9,7 +9,7 @@ use std::sync::Arc;
 use memmap::{Mmap, MmapViewSync, Protection};
 use chrono::Duration;
 
-use new_engine::event_stream::partition::get_events_file;
+use new_engine::event_stream::partition::{get_events_file, SegmentNum};
 use event::{EventCounter, Timestamp, FloEvent};
 
 pub use self::persistent_event::PersistentEvent;
@@ -18,7 +18,7 @@ pub use self::persistent_event::PersistentEvent;
 pub struct Segment {
     mmap: MmapViewSync,
     segment_file: File,
-    segment_num: u64,
+    segment_num: SegmentNum,
     first_event_time: Option<Timestamp>,
     first_event_counter: Option<EventCounter>,
     current_length_bytes: usize,
@@ -29,7 +29,7 @@ pub struct Segment {
 
 impl Segment {
 
-    pub fn initialize(directory_path: &Path, segment_num: u64, max_size: usize, max_duration: Duration) -> io::Result<Segment> {
+    pub fn initialize(directory_path: &Path, segment_num: SegmentNum, max_size: usize, max_duration: Duration) -> io::Result<Segment> {
         let file_path = get_events_file(directory_path, segment_num);
         if file_path.exists() {
             Segment::init_from_existing_file(&file_path, segment_num, max_size, max_duration)
@@ -83,12 +83,12 @@ impl Segment {
     }
 
 
-    fn init_from_existing_file(file_path: &Path, segment_num: u64, max_size: usize, max_duration: Duration) -> io::Result<Segment> {
+    fn init_from_existing_file(file_path: &Path, segment_num: SegmentNum, max_size: usize, max_duration: Duration) -> io::Result<Segment> {
         unimplemented!()
     }
 
-    fn init_new(file_path: &Path, segment_num: u64, max_size: usize, max_duration: Duration) -> io::Result<Segment> {
-        debug!("initializing new segment: {} at path: {:?}, max_size: {}, max_duration: {:?}", segment_num, file_path, max_size, max_duration);
+    fn init_new(file_path: &Path, segment_num: SegmentNum, max_size: usize, max_duration: Duration) -> io::Result<Segment> {
+        debug!("initializing new segment: {:?} at path: {:?}, max_size: {}, max_duration: {:?}", segment_num, file_path, max_size, max_duration);
         let file = OpenOptions::new().read(true).write(true).create(true).open(file_path)?;
         // Pre-allocate the file, since we're going to use it for mmap, and extending the file after it's been mapped since
         // it requires ensuring there are no existing borrows of it in any other threads
@@ -99,7 +99,7 @@ impl Segment {
         Ok(Segment::from_parts(file, mmap, segment_num, max_size, max_duration))
     }
 
-    fn from_parts(file: File, mut mmap: Mmap, segment_num: u64, max_size_bytes: usize, max_duration: Duration) -> Segment {
+    fn from_parts(file: File, mut mmap: Mmap, segment_num: SegmentNum, max_size_bytes: usize, max_duration: Duration) -> Segment {
         let ptr = mmap.mut_ptr();
         Segment {
             mmap: mmap.into_view_sync(),
@@ -157,7 +157,7 @@ mod test {
     fn write_one_event_to_segment_and_read_it_back() {
         let tmpdir = TempDir::new("write_events_to_segment").unwrap();
 
-        let mut subject = Segment::initialize(tmpdir.path(), 1, 4096, Duration::seconds(2))
+        let mut subject = Segment::initialize(tmpdir.path(), SegmentNum(1), 4096, Duration::seconds(2))
                 .expect("failed to initialize segment");
 
         let event = event(1);
@@ -175,7 +175,7 @@ mod test {
     fn write_multiple_events_and_read_them_back() {
         let tmpdir = TempDir::new("write_events_to_segment").unwrap();
 
-        let mut subject = Segment::initialize(tmpdir.path(), 1, 4096, Duration::seconds(2))
+        let mut subject = Segment::initialize(tmpdir.path(), SegmentNum(1), 4096, Duration::seconds(2))
                 .expect("failed to initialize segment");
 
         let input_events: Vec<OwnedFloEvent> = (1..11).map(|i| event(i)).collect();

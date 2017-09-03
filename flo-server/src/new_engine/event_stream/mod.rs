@@ -1,4 +1,5 @@
 mod partition;
+//mod consumer_manager;
 
 use std::path::PathBuf;
 use std::io;
@@ -11,8 +12,7 @@ use new_engine::api::{EventStreamOptions,
                       EngineSender,
                       ClientSender,
                       ClientMessageSender,
-                      PartitionMessage,
-                      PartitionOperation};
+                      Operation};
 
 
 

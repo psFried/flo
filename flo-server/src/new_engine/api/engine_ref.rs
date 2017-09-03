@@ -1,5 +1,5 @@
 use protocol::{ProduceEvent, ProtocolMessage};
-use new_engine::api::{ConnectionId, PartitionOperation, EngineSender};
+use new_engine::api::{ConnectionId, Operation, EngineSender};
 use event::ActorId;
 
 use std::time::Instant;
@@ -21,8 +21,8 @@ pub struct EventStreamRef {
 }
 
 pub enum PartitionSendError {
-    OutOfBounds(PartitionOperation),
-    ChannelError(PartitionOperation)
+    OutOfBounds(Operation),
+    ChannelError(Operation)
 }
 
 pub type EventStreamSendResult = Result<(), PartitionSendError>;
@@ -32,7 +32,7 @@ impl EventStreamRef {
         self.partitions.len() as ActorId
     }
 
-    pub fn send_to_partition(&mut self, partition: ActorId, op: PartitionOperation) -> EventStreamSendResult {
+    pub fn send_to_partition(&mut self, partition: ActorId, op: Operation) -> EventStreamSendResult {
         match self.partitions.get_mut(partition as usize) {
             Some(ref mut partition) => partition.sender.send(op).map_err(|e| PartitionSendError::ChannelError(e.0)),
             None => Err(PartitionSendError::OutOfBounds(op))
