@@ -15,8 +15,8 @@ pub type ConnectionId = u64;
 
 pub type ClientSender = ::futures::sync::mpsc::UnboundedSender<ProtocolMessage>;
 pub type ClientReceiver = ::futures::sync::mpsc::UnboundedReceiver<ProtocolMessage>;
-pub type EngineSender = ::std::sync::mpsc::Sender<PartitionOperation>;
-pub type EngineReceiver = ::std::sync::mpsc::Receiver<PartitionOperation>;
+pub type EngineSender = ::std::sync::mpsc::Sender<Operation>;
+pub type EngineReceiver = ::std::sync::mpsc::Receiver<Operation>;
 
 #[derive(Debug, PartialEq)]
 pub struct EventStreamOptions {
@@ -47,13 +47,6 @@ pub struct ClientMessageSender {
     sender: ClientSender,
 }
 
-pub struct StartConsuming {
-    client: ClientMessageSender,
-    namespace: NamespaceGlob,
-    batch_size: u32,
-    limit: u64,
-    start_exclusive: EventCounter
-}
 
 pub struct ProduceOperation {
     client: ClientMessageSender,
@@ -61,13 +54,7 @@ pub struct ProduceOperation {
     events: Vec<ProduceEvent>,
 }
 
-pub enum PartitionMessage {
-    ConsumerStart(StartConsuming),
-    NextBatch(ConnectionId),
-    Produce(ProduceOperation),
-}
-
-pub struct PartitionOperation {
+pub struct Operation {
     client_message_recv_time: Instant,
-    message: PartitionMessage,
+    message: ProduceOperation,
 }

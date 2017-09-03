@@ -2,8 +2,7 @@
 use std::sync::Arc;
 use std::collections::HashMap;
 
-use new_engine::api::{PartitionMessage,
-                      PartitionOperation,
+use new_engine::api::{Operation,
                       EngineRef,
                       EventStreamRef,
                       PartitionRef,
