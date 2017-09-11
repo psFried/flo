@@ -37,6 +37,10 @@ impl PersistentEvent {
         48u32 + event.namespace().len() as u32 + event.data_len()
     }
 
+    pub fn total_repr_len(&self) -> usize {
+        PersistentEvent::get_repr_length(self) as usize
+    }
+
     pub unsafe fn write<E: FloEvent>(event: &E,
                                      start_offset: usize,
                                      mmap: &mut MmapViewSync) -> io::Result<Self> {
