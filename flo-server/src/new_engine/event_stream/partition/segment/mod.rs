@@ -1,4 +1,5 @@
 mod persistent_event;
+mod mmap;
 
 use std::fs::{File, OpenOptions};
 use std::io;
@@ -9,14 +10,16 @@ use std::sync::Arc;
 use memmap::{Mmap, MmapViewSync, Protection};
 use chrono::Duration;
 
+use self::mmap::{MmapAppender};
 use new_engine::event_stream::partition::{get_events_file, SegmentNum};
 use event::{EventCounter, Timestamp, FloEvent};
 
 pub use self::persistent_event::PersistentEvent;
+pub use self::mmap::{AppendResult, MmapReader};
 
 
 pub struct Segment {
-    mmap: MmapViewSync,
+    appender: MmapAppender,
     segment_file: File,
     segment_num: SegmentNum,
     first_event_time: Option<Timestamp>,
@@ -38,48 +41,19 @@ impl Segment {
         }
     }
 
-    pub fn append<E: FloEvent>(&mut self, event: &E) -> io::Result<PersistentEvent> {
-        let Segment {
-            ref mut mmap,
-            ref mut segment_file,
-            ref mut segment_num,
-            ref mut first_event_time,
-            ref mut first_event_counter,
-            ref mut current_length_bytes,
-            ref mut last_flush_range_end,
-            ref mut max_length_bytes,
-            ref mut max_duration,
-        } = *self;
-
-        let event_len = PersistentEvent::get_repr_length(event);
-
-        if *current_length_bytes + event_len as usize > *max_length_bytes {
-            return Err(io::Error::new(io::ErrorKind::Other, "appending event would overflow segment"));
-        }
-
-        let write_result = unsafe {
-            PersistentEvent::write(event, *current_length_bytes, mmap)
-        };
-
-        if write_result.is_ok() {
-            *current_length_bytes += event_len as usize;
-        }
-
-        write_result
+    pub fn append<E: FloEvent>(&mut self, event: &E) -> AppendResult {
+        self.appender.append(event)
     }
 
-    pub fn range_iter(&self, start_offset: usize) -> SegmentRangeIter {
-        let mut mmap = unsafe { self.mmap.clone() };
-
-        SegmentRangeIter {
-            mmap: mmap,
-            max_offset: self.current_length_bytes,
-            current_offset: start_offset,
+    pub fn range_iter(&self, start_offset: usize) -> SegmentReader {
+        SegmentReader {
+            segment_id: self.segment_num,
+            reader: self.appender.reader(start_offset)
         }
     }
 
     pub fn fsync(&mut self) -> io::Result<()> {
-        self.mmap.flush()
+        self.appender.flush()
     }
 
 
@@ -102,7 +76,7 @@ impl Segment {
     fn from_parts(file: File, mut mmap: Mmap, segment_num: SegmentNum, max_size_bytes: usize, max_duration: Duration) -> Segment {
         let ptr = mmap.mut_ptr();
         Segment {
-            mmap: mmap.into_view_sync(),
+            appender: MmapAppender::new(mmap.into_view_sync()),
             segment_file: file,
             segment_num: segment_num,
             first_event_time: None,
@@ -117,28 +91,31 @@ impl Segment {
 }
 
 
-pub struct SegmentRangeIter {
-    mmap: MmapViewSync,
-    max_offset: usize,
-    current_offset: usize,
+#[derive(Clone)]
+pub struct SegmentReader {
+    pub segment_id: SegmentNum,
+    reader: MmapReader,
 }
 
-impl Iterator for SegmentRangeIter {
+impl SegmentReader {
+    pub fn read_next(&mut self) -> Option<io::Result<PersistentEvent>> {
+        self.reader.read_next()
+    }
+
+    pub fn is_exhausted(&self) -> bool {
+        self.reader.is_exhausted()
+    }
+
+    pub fn set_offset(&mut self, new_offset: usize) {
+        self.reader.set_offset(new_offset)
+    }
+}
+
+impl Iterator for SegmentReader {
     type Item = io::Result<PersistentEvent>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.current_offset < self.max_offset {
-            let read_result = PersistentEvent::read(&self.mmap, self.current_offset);
-            match read_result.as_ref() {
-                Ok(event) => self.current_offset += PersistentEvent::get_repr_length(event) as usize,
-                _ => {
-                    self.max_offset = 0;
-                }
-            }
-            Some(read_result)
-        } else {
-            None
-        }
+        self.read_next()
     }
 }
 
@@ -162,7 +139,7 @@ mod test {
 
         let event = event(1);
         let result = subject.append(&event).expect("failed to append event");
-        assert_events_eq(&event, &result);
+        assert_eq!(Some(0), result);
 
         let mut iter = subject.range_iter(0);
         let event_result = iter.next().expect("next returned None").expect("failed to read event");
@@ -181,8 +158,7 @@ mod test {
         let input_events: Vec<OwnedFloEvent> = (1..11).map(|i| event(i)).collect();
 
         for event in input_events.iter() {
-            let write_result = subject.append(event).expect("failed to write event");
-            assert_events_eq(event, &write_result);
+            let write_result = subject.append(event).expect("failed to write event").expect("write op returned None");
         }
 
         let mut read_results: Vec<io::Result<PersistentEvent>> = subject.range_iter(0).collect();
