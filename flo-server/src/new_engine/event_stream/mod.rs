@@ -1,8 +1,9 @@
 pub mod partition;
 
-use std::time::Duration;
 use std::path::PathBuf;
 use std::io;
+
+use chrono::Duration;
 
 use event::ActorId;
 use self::partition::{PartitionRef, PartitionSendError, PartitionSendResult, ProduceOperation, Operation};
@@ -14,7 +15,7 @@ pub struct EventStreamOptions {
     pub num_partitions: u16,
     pub event_retention: Duration,
     pub max_segment_duration: Duration,
-    pub segment_max_size_bytes: u64,
+    pub segment_max_size_bytes: usize,
 }
 
 
@@ -23,9 +24,9 @@ impl Default for EventStreamOptions {
         EventStreamOptions {
             name: "default".to_owned(),
             num_partitions: 1,
-            event_retention: Duration::from_secs(60 * 60 * 24 * 30), // 30 days
-            max_segment_duration: Duration::from_secs(60 * 60 * 24), // 24 hours
-            segment_max_size_bytes: 1024 * 1024 * 1024,                    // 1GB
+            event_retention: Duration::max_value(),     // For-ev-er
+            max_segment_duration: Duration::days(1),    // 24 hours
+            segment_max_size_bytes: 1024 * 1024 * 1024, // 1GB
         }
     }
 }

@@ -10,8 +10,6 @@ use new_engine::event_stream::partition::segment::PersistentEvent;
 use event::FloEvent;
 
 
-pub type AppendResult = io::Result<Option<usize>>;
-
 pub struct MmapAppender {
     inner: MmapViewSync,
     head: Arc<AtomicUsize>,
@@ -26,7 +24,7 @@ impl MmapAppender {
         }
     }
 
-    pub fn append<E: FloEvent>(&mut self, event: &E) -> AppendResult {
+    pub fn append<E: FloEvent>(&mut self, event: &E) -> io::Result<Option<usize>> {
         // relaxed load _should_ be ok here, right?
         let current_head = self.head.load(Ordering::Relaxed);
         //TODO: not sure if we need another fence here to make sure that the load doesn't get reordered?
@@ -121,8 +119,14 @@ impl MmapReader {
         self.current_offset = new_offset;
     }
 
+    pub fn set_offset_to_end(&mut self) {
+        let max = self.segment_end_ref.load(Ordering::Relaxed);
+        self.set_offset(max);
+    }
+
     pub fn is_exhausted(&self) -> bool {
-        self.current_offset >= self.whole_segment_region.len()
+        let end = self.segment_end_ref.load(Ordering::Relaxed);
+        self.current_offset >= end
     }
 }
 

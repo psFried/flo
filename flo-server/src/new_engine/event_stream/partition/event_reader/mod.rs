@@ -29,13 +29,14 @@ impl EventFilter {
 }
 
 //TODO: fill in event reader to iterate events in a partition
-
+#[derive(Debug)]
 pub struct PartitionReader {
     connection_id: ConnectionId,
     partition_num: ActorId,
     filter: EventFilter,
     current_segment_reader: SegmentReader,
     segment_readers_ref: SharedReaderRefs,
+    returned_error: bool,
 }
 
 
@@ -48,10 +49,15 @@ impl PartitionReader {
             filter: filter,
             current_segment_reader: current_reader,
             segment_readers_ref: segment_refs,
+            returned_error: false,
         }
     }
 
     pub fn read_next(&mut self) -> Option<io::Result<PersistentEvent>> {
+        if self.returned_error {
+            return None;
+        }
+
         if self.current_segment_reader.is_exhausted() {
             if let Some(mut next_segment) = self.segment_readers_ref.get_next_segment(self.current_segment_reader.segment_id) {
                 if next_segment.segment_id.0 - self.current_segment_reader.segment_id.0 > 1 {
@@ -66,8 +72,19 @@ impl PartitionReader {
             }
         }
 
-        self.current_segment_reader.read_next()
+        let next = self.current_segment_reader.read_next();
+        if next.as_ref().map(|r| r.is_err()).unwrap_or(false) {
+            self.returned_error = true;
+        }
+        next
     }
 }
 
+impl Iterator for PartitionReader {
+    type Item = io::Result<PersistentEvent>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.read_next()
+    }
+}
 

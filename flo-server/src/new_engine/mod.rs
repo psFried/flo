@@ -9,6 +9,7 @@ use protocol::{ProtocolMessage, ConsumerStart};
 
 use self::event_stream::EventStreamRef;
 use self::event_stream::partition::Operation;
+use self::event_stream::partition::PartitionReader;
 
 
 pub type ConnectionId = u64;
@@ -18,6 +19,13 @@ pub type ClientReceiver = ::futures::sync::mpsc::UnboundedReceiver<ProtocolMessa
 
 pub fn create_client_channels() -> (ClientSender, ClientReceiver) {
     ::futures::sync::mpsc::unbounded()
+}
+
+pub type ConsumerStartSender = ::futures::sync::oneshot::Sender<PartitionReader>;
+pub type ConsumerStartReceiver = ::futures::sync::oneshot::Receiver<PartitionReader>;
+
+pub fn create_consumer_start_oneshot() -> (ConsumerStartSender, ConsumerStartReceiver) {
+    ::futures::sync::oneshot::channel()
 }
 
 pub struct EngineRef {
