@@ -6,6 +6,7 @@ use std::io;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::fmt::{self, Debug};
 
 use memmap::{Mmap, MmapViewSync, Protection};
 use chrono::Duration;
@@ -13,36 +14,53 @@ use chrono::Duration;
 use self::mmap::{MmapAppender};
 use new_engine::event_stream::partition::{get_events_file, SegmentNum};
 use event::{EventCounter, Timestamp, FloEvent};
+use self::mmap::{MmapReader};
 
 pub use self::persistent_event::PersistentEvent;
-pub use self::mmap::{AppendResult, MmapReader};
 
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum AppendResult {
+    Success(usize),
+    EventTooBig,
+    TimeOutOfRange,
+    IoError(io::ErrorKind),
+}
+
+impl AppendResult {
+    pub fn is_success(&self) -> bool {
+        match *self {
+            AppendResult::Success(_) => true,
+            _ => false,
+        }
+    }
+}
 
 pub struct Segment {
+    pub segment_num: SegmentNum,
     appender: MmapAppender,
     segment_file: File,
-    segment_num: SegmentNum,
-    first_event_time: Option<Timestamp>,
-    first_event_counter: Option<EventCounter>,
     current_length_bytes: usize,
     last_flush_range_end: usize,
     max_length_bytes: usize,
-    max_duration: Duration,
+    segment_end_time: Timestamp,
 }
 
 impl Segment {
 
-    pub fn initialize(directory_path: &Path, segment_num: SegmentNum, max_size: usize, max_duration: Duration) -> io::Result<Segment> {
-        let file_path = get_events_file(directory_path, segment_num);
-        if file_path.exists() {
-            Segment::init_from_existing_file(&file_path, segment_num, max_size, max_duration)
-        } else {
-            Segment::init_new(&file_path, segment_num, max_size, max_duration)
+    pub fn append<E: FloEvent>(&mut self, event: &E) -> AppendResult {
+        if event.timestamp() > self.segment_end_time {
+            return AppendResult::TimeOutOfRange;
+        }
+        match self.appender.append(event) {
+            Ok(Some(offset)) => AppendResult::Success(offset),
+            Ok(None) => AppendResult::EventTooBig,
+            Err(io_err) => AppendResult::IoError(io_err.kind()),
         }
     }
 
-    pub fn append<E: FloEvent>(&mut self, event: &E) -> AppendResult {
-        self.appender.append(event)
+    pub fn get_end_time(&self) -> Timestamp {
+        self.segment_end_time
     }
 
     pub fn range_iter(&self, start_offset: usize) -> SegmentReader {
@@ -57,41 +75,41 @@ impl Segment {
     }
 
 
-    fn init_from_existing_file(file_path: &Path, segment_num: SegmentNum, max_size: usize, max_duration: Duration) -> io::Result<Segment> {
+    pub fn init_from_existing_file(file_path: &Path, segment_num: SegmentNum, max_size: usize, end_time: Timestamp) -> io::Result<Segment> {
         unimplemented!()
     }
 
-    fn init_new(file_path: &Path, segment_num: SegmentNum, max_size: usize, max_duration: Duration) -> io::Result<Segment> {
-        debug!("initializing new segment: {:?} at path: {:?}, max_size: {}, max_duration: {:?}", segment_num, file_path, max_size, max_duration);
+    pub fn init_new(dir_path: &Path, segment_num: SegmentNum, max_size: usize, end_time: Timestamp) -> io::Result<Segment> {
+        let file_path = get_events_file(dir_path, segment_num);
+        debug!("initializing new segment: {:?} at path: {:?}, max_size: {}, end_time: {:?}", segment_num, file_path, max_size, end_time);
         let file = OpenOptions::new().read(true).write(true).create(true).open(file_path)?;
-        // Pre-allocate the file, since we're going to use it for mmap, and extending the file after it's been mapped since
-        // it requires ensuring there are no existing borrows of it in any other threads
+        // Pre-allocate the file, since we're going to use it for mmap, and extending the file after it's been mapped
+        // requires ensuring there are no existing borrows of it in any other threads. Far simpler just to pre-allocate the
+        // maximum file size. Space is relatively cheap, anyway
         file.set_len(max_size as u64)?;
 
         let mut mmap = Mmap::open(&file, Protection::ReadWrite)?;
 
-        Ok(Segment::from_parts(file, mmap, segment_num, max_size, max_duration))
+        Ok(Segment::from_parts(file, mmap, segment_num, max_size, end_time))
     }
 
-    fn from_parts(file: File, mut mmap: Mmap, segment_num: SegmentNum, max_size_bytes: usize, max_duration: Duration) -> Segment {
+    fn from_parts(file: File, mut mmap: Mmap, segment_num: SegmentNum, max_size_bytes: usize, end_time: Timestamp) -> Segment {
         let ptr = mmap.mut_ptr();
         Segment {
             appender: MmapAppender::new(mmap.into_view_sync()),
             segment_file: file,
             segment_num: segment_num,
-            first_event_time: None,
-            first_event_counter: None,
             current_length_bytes: 0,
             last_flush_range_end: 0,
             max_length_bytes: max_size_bytes,
-            max_duration: max_duration,
+            segment_end_time: end_time,
         }
     }
 
 }
 
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct SegmentReader {
     pub segment_id: SegmentNum,
     reader: MmapReader,
@@ -104,6 +122,10 @@ impl SegmentReader {
 
     pub fn is_exhausted(&self) -> bool {
         self.reader.is_exhausted()
+    }
+
+    pub fn set_offset_to_end(&mut self) {
+        self.reader.set_offset_to_end();
     }
 
     pub fn set_offset(&mut self, new_offset: usize) {
@@ -130,16 +152,20 @@ mod test {
     use super::*;
     use event::*;
 
+    fn future_time(seconds_in_future: i64) -> Timestamp {
+        time::now() + Duration::seconds(seconds_in_future)
+    }
+
     #[test]
     fn write_one_event_to_segment_and_read_it_back() {
         let tmpdir = TempDir::new("write_events_to_segment").unwrap();
 
-        let mut subject = Segment::initialize(tmpdir.path(), SegmentNum(1), 4096, Duration::seconds(2))
+        let mut subject = Segment::init_new(tmpdir.path(), SegmentNum(1), 4096, future_time(2))
                 .expect("failed to initialize segment");
 
         let event = event(1);
-        let result = subject.append(&event).expect("failed to append event");
-        assert_eq!(Some(0), result);
+        let result = subject.append(&event);
+        assert_eq!(AppendResult::Success(0), result);
 
         let mut iter = subject.range_iter(0);
         let event_result = iter.next().expect("next returned None").expect("failed to read event");
@@ -152,13 +178,14 @@ mod test {
     fn write_multiple_events_and_read_them_back() {
         let tmpdir = TempDir::new("write_events_to_segment").unwrap();
 
-        let mut subject = Segment::initialize(tmpdir.path(), SegmentNum(1), 4096, Duration::seconds(2))
+        let mut subject = Segment::init_new(tmpdir.path(), SegmentNum(1), 4096, future_time(2))
                 .expect("failed to initialize segment");
 
         let input_events: Vec<OwnedFloEvent> = (1..11).map(|i| event(i)).collect();
 
         for event in input_events.iter() {
-            let write_result = subject.append(event).expect("failed to write event").expect("write op returned None");
+            let write_result = subject.append(event);
+            assert!(write_result.is_success());
         }
 
         let mut read_results: Vec<io::Result<PersistentEvent>> = subject.range_iter(0).collect();

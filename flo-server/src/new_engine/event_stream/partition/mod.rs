@@ -4,7 +4,7 @@ mod event_reader;
 mod controller;
 
 use std::fmt::{self, Debug, Display};
-use std::time::Instant;
+use std::time::{Instant, Duration};
 use std::path::{Path, PathBuf};
 use std::collections::VecDeque;
 use std::sync::{Arc, RwLock};
@@ -44,6 +44,15 @@ impl SegmentNum {
     pub fn is_set(&self) -> bool {
         self.0 > 0
     }
+
+    pub fn next(&self) -> SegmentNum {
+        SegmentNum(self.0 + 1)
+    }
+
+    pub fn previous(&self) -> SegmentNum {
+        // TODO: think about this
+        SegmentNum(self.0.saturating_sub(1))
+    }
 }
 
 impl Display for SegmentNum {
@@ -58,6 +67,12 @@ pub struct SharedReaderRefsMut {
 }
 
 impl SharedReaderRefsMut {
+    pub fn new() -> SharedReaderRefsMut {
+        SharedReaderRefsMut {
+            inner: Arc::new(RwLock::new(VecDeque::with_capacity(4)))
+        }
+    }
+
     pub fn add(&self, reader: SegmentReader) {
         let mut locked = self.inner.write().unwrap();
         locked.push_back(reader);
