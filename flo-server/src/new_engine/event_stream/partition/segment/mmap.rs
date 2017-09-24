@@ -7,21 +7,53 @@ use std::fmt::{self, Debug};
 use memmap::MmapViewSync;
 
 use new_engine::event_stream::partition::segment::PersistentEvent;
+use new_engine::event_stream::partition::SegmentNum;
+use new_engine::event_stream::partition::index::{PartitionIndex, IndexEntry};
 use event::FloEvent;
+use super::header::SegmentHeader;
 
 
 pub struct MmapAppender {
+    dirty: bool,
     inner: MmapViewSync,
     head: Arc<AtomicUsize>,
 }
 
 
 impl MmapAppender {
-    pub fn new(mmap: MmapViewSync) -> MmapAppender {
+    pub fn new(mmap: MmapViewSync, start_position: usize) -> MmapAppender {
         MmapAppender {
+            dirty: false,
             inner: mmap,
-            head: Arc::new(AtomicUsize::new(0)),
+            head: Arc::new(AtomicUsize::new(start_position)),
         }
+    }
+
+    pub fn init_existing(mmap: MmapViewSync, segment_num: SegmentNum, index: &mut PartitionIndex) -> MmapAppender {
+        // Files are pre-allocated, so the number of bytes in the file will be more than what's actually been written to.
+        // We'll first create the appender, then use a reader to figure out where the end of the file is.
+        // While we're at it, we'll initialize the index as well
+        let header_len = SegmentHeader::get_repr_length();
+        let file_len = mmap.len();
+        let mut appender = MmapAppender {
+            dirty: false,
+            inner: mmap,
+            // temporarily set the head to be the same as the file length
+            head: Arc::new(AtomicUsize::new(file_len))
+        };
+        let mut reader = appender.reader(header_len);
+
+        let mut event_count = 0;
+        while let Some(Ok(event)) = reader.next() {
+            let entry = IndexEntry::new(event.id().event_counter, segment_num, event.file_offset());
+            index.append(entry);
+            event_count += 1;
+        }
+        let head = reader.current_offset;
+        debug!("initialized appender to existing segment with {} events and total len: {}", event_count, head);
+        // reset the head to the actual value, now that we know what it is
+        appender.head.store(head, Ordering::SeqCst);
+        appender
     }
 
     pub fn append<E: FloEvent>(&mut self, event: &E) -> io::Result<Option<usize>> {
@@ -40,6 +72,7 @@ impl MmapAppender {
             // early return if write fails
             PersistentEvent::write(event, current_head, &mut self.inner)?;
         }
+        self.dirty = true;
 
         // Synchronizes with the loading of the head value in the Reader
         fence(Ordering::Release);
@@ -50,7 +83,15 @@ impl MmapAppender {
     }
 
     pub fn flush(&mut self) -> io::Result<()> {
-        self.inner.flush()
+        if self.dirty {
+            self.inner.flush()?;
+            self.dirty = false;
+        }
+        Ok(())
+    }
+
+    pub fn get_file_position(&self) -> usize {
+        self.head.load(Ordering::SeqCst)
     }
 
     pub fn reader(&self, start_offset: usize) -> MmapReader {

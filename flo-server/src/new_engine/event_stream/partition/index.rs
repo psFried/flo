@@ -134,6 +134,10 @@ impl PartitionIndex {
         None
     }
 
+    pub fn greatest_event_counter(&self) -> EventCounter {
+        self.highest_counter
+    }
+
     fn cap(&self) -> usize {
         self.entries.len()
     }

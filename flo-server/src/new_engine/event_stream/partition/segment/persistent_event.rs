@@ -14,6 +14,7 @@ use event::{FloEvent, OwnedFloEvent, FloEventId, EventCounter, ActorId, Timestam
 #[derive(Debug)]
 pub struct PersistentEvent {
     id: FloEventId,
+    file_offset: usize,
     raw_data: MmapViewSync,
 }
 
@@ -66,6 +67,10 @@ impl PersistentEvent {
         })
     }
 
+    pub fn file_offset(&self) -> usize {
+        self.file_offset
+    }
+
     fn from_raw(id: FloEventId, mmap: &MmapViewSync, start_offset: usize, data_len: usize) -> io::Result<PersistentEvent> {
         let mut view = unsafe {
             mmap.clone()
@@ -74,6 +79,7 @@ impl PersistentEvent {
 
         Ok(PersistentEvent {
             id: id,
+            file_offset: start_offset,
             raw_data: view,
         })
     }
