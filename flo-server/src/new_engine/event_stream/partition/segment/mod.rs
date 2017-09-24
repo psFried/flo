@@ -1,5 +1,6 @@
 mod persistent_event;
 mod mmap;
+mod header;
 
 use std::fs::{File, OpenOptions};
 use std::io;
@@ -13,10 +14,12 @@ use chrono::Duration;
 
 use self::mmap::{MmapAppender};
 use new_engine::event_stream::partition::{get_events_file, SegmentNum};
-use event::{EventCounter, Timestamp, FloEvent};
+use new_engine::event_stream::partition::index::PartitionIndex;
+use event::{EventCounter, Timestamp, FloEvent, time};
 use self::mmap::{MmapReader};
 
 pub use self::persistent_event::PersistentEvent;
+use self::header::SegmentHeader;
 
 
 #[derive(Debug, Clone, PartialEq)]
@@ -64,46 +67,71 @@ impl Segment {
     }
 
     pub fn range_iter(&self, start_offset: usize) -> SegmentReader {
+        let start = ::std::cmp::max(start_offset, SegmentHeader::get_repr_length());
         SegmentReader {
             segment_id: self.segment_num,
-            reader: self.appender.reader(start_offset)
+            reader: self.appender.reader(start)
         }
+    }
+
+    pub fn iter_from_start(&self) -> SegmentReader {
+        self.range_iter(SegmentHeader::get_repr_length())
     }
 
     pub fn fsync(&mut self) -> io::Result<()> {
         self.appender.flush()
     }
 
+    pub fn init_from_existing_file(file_path: &Path, segment_num: SegmentNum, index: &mut PartitionIndex) -> io::Result<Segment> {
+        let file = OpenOptions::new().read(true).write(true).open(&file_path)?;
+        let file_len = file.metadata()?.len() as usize;
+        let mmap = Mmap::open(&file, Protection::ReadWrite)?;
+        let header = SegmentHeader::read(&mmap)?;
 
-    pub fn init_from_existing_file(file_path: &Path, segment_num: SegmentNum, max_size: usize, end_time: Timestamp) -> io::Result<Segment> {
-        unimplemented!()
+        let mmap_appender = MmapAppender::init_existing(mmap.into_view_sync(), segment_num, index);
+        let current_position = mmap_appender.get_file_position();
+
+        let segment = Segment {
+            appender: mmap_appender,
+            segment_file: file,
+            segment_num: segment_num,
+            current_length_bytes: current_position,
+            last_flush_range_end: current_position,
+            max_length_bytes: file_len,
+            segment_end_time: header.end_time,
+        };
+
+        Ok(segment)
     }
 
     pub fn init_new(dir_path: &Path, segment_num: SegmentNum, max_size: usize, end_time: Timestamp) -> io::Result<Segment> {
         let file_path = get_events_file(dir_path, segment_num);
         debug!("initializing new segment: {:?} at path: {:?}, max_size: {}, end_time: {:?}", segment_num, file_path, max_size, end_time);
         let file = OpenOptions::new().read(true).write(true).create(true).open(file_path)?;
+
         // Pre-allocate the file, since we're going to use it for mmap, and extending the file after it's been mapped
         // requires ensuring there are no existing borrows of it in any other threads. Far simpler just to pre-allocate the
         // maximum file size. Space is relatively cheap, anyway
         file.set_len(max_size as u64)?;
 
         let mut mmap = Mmap::open(&file, Protection::ReadWrite)?;
+        let header = SegmentHeader {
+            create_time: time::now(),
+            end_time: end_time,
+        };
+        header.write(&mut mmap)?;
 
-        Ok(Segment::from_parts(file, mmap, segment_num, max_size, end_time))
-    }
+        let start_position = SegmentHeader::get_repr_length();
 
-    fn from_parts(file: File, mut mmap: Mmap, segment_num: SegmentNum, max_size_bytes: usize, end_time: Timestamp) -> Segment {
-        let ptr = mmap.mut_ptr();
-        Segment {
-            appender: MmapAppender::new(mmap.into_view_sync()),
+        Ok(Segment {
+            appender: MmapAppender::new(mmap.into_view_sync(), start_position),
             segment_file: file,
             segment_num: segment_num,
-            current_length_bytes: 0,
+            current_length_bytes: start_position,
             last_flush_range_end: 0,
-            max_length_bytes: max_size_bytes,
+            max_length_bytes: max_size,
             segment_end_time: end_time,
-        }
+        })
     }
 
 }
@@ -151,6 +179,7 @@ mod test {
 
     use super::*;
     use event::*;
+    use new_engine::event_stream::partition::index::PartitionIndex;
 
     fn future_time(seconds_in_future: i64) -> Timestamp {
         time::now() + Duration::seconds(seconds_in_future)
@@ -158,18 +187,34 @@ mod test {
 
     #[test]
     fn write_one_event_to_segment_and_read_it_back() {
+        let _ = ::env_logger::init();
+
         let tmpdir = TempDir::new("write_events_to_segment").unwrap();
-
-        let mut subject = Segment::init_new(tmpdir.path(), SegmentNum(1), 4096, future_time(2))
-                .expect("failed to initialize segment");
-
         let event = event(1);
-        let result = subject.append(&event);
-        assert_eq!(AppendResult::Success(0), result);
+        let segment_num = SegmentNum(1);
 
-        let mut iter = subject.range_iter(0);
-        let event_result = iter.next().expect("next returned None").expect("failed to read event");
+        {
+            let mut subject = Segment::init_new(tmpdir.path(), segment_num, 4096, future_time(2))
+                    .expect("failed to initialize segment");
 
+            let result = subject.append(&event);
+            assert_eq!(AppendResult::Success(16), result);
+
+            let mut iter = subject.iter_from_start();
+            let event_result = iter.next().expect("next returned None").expect("failed to read event");
+
+            assert_events_eq(&event, &event_result);
+            assert!(iter.next().is_none());
+        }
+
+        let mut index = PartitionIndex::new(1);
+
+        let segment_file = tmpdir.path().join("1.events");
+        let mut subject = Segment::init_from_existing_file(&segment_file, segment_num, &mut index)
+                .expect("failed to init segment from existing file");
+
+        let mut iter = subject.iter_from_start();
+        let event_result = iter.next().expect("next returned none").expect("failed to read event");
         assert_events_eq(&event, &event_result);
         assert!(iter.next().is_none());
     }
@@ -188,7 +233,7 @@ mod test {
             assert!(write_result.is_success());
         }
 
-        let mut read_results: Vec<io::Result<PersistentEvent>> = subject.range_iter(0).collect();
+        let mut read_results: Vec<io::Result<PersistentEvent>> = subject.iter_from_start().collect();
 
         for (expected, actual) in input_events.iter().zip(read_results.iter()) {
             assert_events_eq(expected, actual.as_ref().expect("failed to read event"));

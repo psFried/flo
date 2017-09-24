@@ -26,9 +26,10 @@ pub enum PartitionSendError {
 
 pub type PartitionSendResult = Result<(), PartitionSendError>;
 
+pub const DATA_FILE_EXTENSION: &'static str = ".events";
 
 fn get_events_file(partition_dir: &Path, segment_num: SegmentNum) -> PathBuf {
-    let filename = format!("{}.events", segment_num.0);
+    let filename = format!("{}{}", segment_num.0, DATA_FILE_EXTENSION);
     partition_dir.join(filename)
 }
 
@@ -57,7 +58,7 @@ impl SegmentNum {
 
 impl Display for SegmentNum {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "SegmentNum(")
+        write!(f, "SegmentNum({})", self.0)
     }
 }
 
@@ -68,8 +69,12 @@ pub struct SharedReaderRefsMut {
 
 impl SharedReaderRefsMut {
     pub fn new() -> SharedReaderRefsMut {
+        SharedReaderRefsMut::with_capacity(4)
+    }
+
+    pub fn with_capacity(init_capacity: usize) -> SharedReaderRefsMut {
         SharedReaderRefsMut {
-            inner: Arc::new(RwLock::new(VecDeque::with_capacity(4)))
+            inner: Arc::new(RwLock::new(VecDeque::with_capacity(init_capacity)))
         }
     }
 

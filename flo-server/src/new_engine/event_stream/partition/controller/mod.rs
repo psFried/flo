@@ -1,9 +1,10 @@
+mod util;
 
 use std::io;
 use std::collections::VecDeque;
 use std::path::PathBuf;
 
-use chrono::Duration;
+use chrono::{Duration};
 
 use protocol::ProduceEvent;
 use event::{ActorId, FloEventId, OwnedFloEvent, EventCounter, FloEvent, Timestamp, time};
@@ -12,6 +13,7 @@ use super::segment::{Segment, SegmentReader, PersistentEvent};
 use super::index::{PartitionIndex, IndexEntry};
 use new_engine::event_stream::EventStreamOptions;
 use new_engine::ConnectionId;
+use self::util::{SegmentFile, get_segment_files};
 
 const FIRST_SEGMENT_NUM: SegmentNum = SegmentNum(1);
 
@@ -30,6 +32,37 @@ pub struct PartitionImpl {
 }
 
 impl PartitionImpl {
+
+    pub fn init_existing(partition_num: ActorId, partition_data_dir: PathBuf, options: &EventStreamOptions) -> io::Result<PartitionImpl> {
+        let start_time = ::std::time::Instant::now();
+        debug!("Starting to init partition: {} with directory: {:?}, and options: {:?}", partition_num, partition_data_dir, options);
+
+        let mut index = PartitionIndex::new(partition_num);
+
+        let segment_files = get_segment_files(&partition_data_dir)?;
+        let mut initialized_segments = VecDeque::with_capacity(segment_files.len());
+        let mut reader_refs = SharedReaderRefsMut::with_capacity(segment_files.len());
+        for segment_file in segment_files {
+            let segment = segment_file.init_segment(&mut index)?;
+            let reader = segment.iter_from_start();
+            initialized_segments.push_front(segment);
+            reader_refs.add(reader);
+        }
+
+        let highest_counter = index.greatest_event_counter();
+
+        Ok(PartitionImpl {
+            event_stream_name: options.name.clone(),
+            partition_num: partition_num,
+            partition_dir: partition_data_dir,
+            max_segment_size: options.segment_max_size_bytes,
+            max_segment_duration: options.max_segment_duration,
+            segments: initialized_segments,
+            index: index,
+            greatest_event_id: highest_counter,
+            reader_refs: reader_refs,
+        })
+    }
 
     pub fn init_new(partition_num: ActorId, partition_data_dir: PathBuf, options: &EventStreamOptions) -> io::Result<PartitionImpl> {
         Ok(PartitionImpl {
@@ -103,11 +136,11 @@ impl PartitionImpl {
                 s.segment_num.next()
             }).unwrap_or(FIRST_SEGMENT_NUM);
 
-            let end_time = time::now() + self.max_segment_duration;
+            let segment_end_time = time::now() + self.max_segment_duration;
             let new_segment = Segment::init_new(&self.partition_dir,
                                                 segment_num,
                                                 self.max_segment_size,
-                                                end_time)?;
+                                                segment_end_time)?;
             self.reader_refs.add(new_segment.range_iter(0));
             self.segments.push_front(new_segment);
 
@@ -131,6 +164,13 @@ impl PartitionImpl {
             file_offset: byte_offset,
         };
         self.index.append(index_entry);
+        Ok(())
+    }
+
+    fn fsync(&mut self) -> io::Result<()> {
+        for segment in self.segments.iter_mut() {
+            segment.fsync()?
+        }
         Ok(())
     }
 
@@ -221,7 +261,9 @@ mod test {
     const CONNECTION: ConnectionId = 55;
 
     #[test]
-    fn persist_events_and_read_them_back() {
+    fn partition_impl_integration_test() {
+        let _ = ::env_logger::init();
+
         let options = EventStreamOptions {
             name: "superduper".to_owned(),
             num_partitions: 1,
@@ -231,63 +273,74 @@ mod test {
         };
         let tempdir = TempDir::new("partition_persist_events_and_read_them_back").unwrap();
 
-        let mut partition = PartitionImpl::init_new(PARTITION_NUM,
-                                                tempdir.path().to_owned(),
-                                                &options).unwrap();
-
-        let (client_tx, client_rx) = create_client_channels();
-
-        let produce = ProduceOperation {
-            client: client_tx.clone(),
-            op_id: 3,
-            events: vec![
-                ProduceEvent {
-                    op_id: 3,
-                    namespace: "/foo/bar".to_owned(),
-                    parent_id: None,
-                    data: "the quick".to_owned().into_bytes(),
-                },
-                ProduceEvent {
-                    op_id: 3,
-                    namespace: "/foo/bar".to_owned(),
-                    parent_id: None,
-                    data: "brown fox".to_owned().into_bytes(),
-                }
-            ],
-        };
-
-        partition.handle_produce(produce).unwrap();
-
+        // Init a new partition and append a bunch of events in two groups
         {
+            let mut partition = PartitionImpl::init_new(PARTITION_NUM,
+                                                        tempdir.path().to_owned(),
+                                                        &options).unwrap();
+
+            let (client_tx, client_rx) = create_client_channels();
+
+            let produce = ProduceOperation {
+                client: client_tx.clone(),
+                op_id: 3,
+                events: vec![
+                    ProduceEvent {
+                        op_id: 3,
+                        namespace: "/foo/bar".to_owned(),
+                        parent_id: None,
+                        data: "the quick".to_owned().into_bytes(),
+                    },
+                    ProduceEvent {
+                        op_id: 3,
+                        namespace: "/foo/bar".to_owned(),
+                        parent_id: None,
+                        data: "brown fox".to_owned().into_bytes(),
+                    }
+                ],
+            };
+
+            partition.handle_produce(produce).unwrap();
+
             let mut reader: PartitionReader = partition.create_reader(CONNECTION, EventFilter::All, 0);
             let event = reader.read_next().expect("read_next returned None").expect("read_next returned error");
             assert_eq!(b"the quick", event.data());
             let event2 = reader.read_next().expect("read_next returned None").expect("read_next returned error");
             assert_eq!(b"brown fox", event2.data());
-        }
+            assert!(reader.next().is_none());
 
-        let moar_events = (0..100).map(|i| {
-            ProduceEvent {
+            let moar_events = (0..100).map(|i| {
+                ProduceEvent {
+                    op_id: 4,
+                    namespace: "/boo/hoo".to_owned(),
+                    parent_id: None,
+                    data: "stew".to_owned().into_bytes()
+                }
+            }).collect::<Vec<_>>();
+
+            partition.handle_produce(ProduceOperation {
+                client: client_tx.clone(),
                 op_id: 4,
-                namespace: "/boo/hoo".to_owned(),
-                parent_id: None,
-                data: "stew".to_owned().into_bytes()
+                events: moar_events,
+            }).expect("failed to persist large batch");
+
+            let mut total = 0;
+            for result in reader {
+                result.expect("failed to read event");
+                total += 1;
             }
-        }).collect::<Vec<_>>();
-
-        partition.handle_produce(ProduceOperation{
-            client: client_tx.clone(),
-            op_id: 4,
-            events: moar_events,
-        }).expect("failed to persist large batch");
-
-        let mut reader = partition.create_reader(CONNECTION, EventFilter::All, 0);
-
-        let mut total = 0;
-        for result in reader {
-            result.expect("failed to read event");
-            total += 1;
+            assert_eq!(100, total);
+            partition.fsync().expect("failed to fsync");
         }
-        assert_eq!(102, total);
+
+        // now try to initialize the partition from an existing file
+        let result = PartitionImpl::init_existing(PARTITION_NUM, tempdir.path().to_owned(), &options);
+        let mut partition = result.expect("Failed to init partitionImpl");
+
+        let reader = partition.create_reader(77, EventFilter::All, 0);
+        let count = reader.map(|read_result| {
+            read_result.expect("failed to read event after re-init");
+        }).count();
+        assert_eq!(102, count);
     }
 }
