@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 
-use server::event_loops::LoopHandles;
+use event_loops::LoopHandles;
 use server::engine::api::{next_connection_id, ProducerManagerMessage, ClientMessage};
 use super::setup_message_streams;
 use server::channel_sender::ChannelSender;

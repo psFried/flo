@@ -36,6 +36,8 @@ pub mod headers {
     pub const END_OF_BATCH: u8 = 14;
     pub const STOP_CONSUMING: u8 = 15;
     pub const CURSOR_CREATED: u8 = 16;
+    pub const NEW_START_CONSUMING: u8 = 17;
+    pub const SET_EVENT_STREAM: u8 = 18;
 }
 
 use self::headers::*;
@@ -134,6 +136,14 @@ pub struct ConsumerStart {
     pub max_events: u64,
 
     /// The namespace to consume from. This can be any valid glob pattern, to allow reading from multiple namespaces.
+    pub namespace: String,
+}
+
+/// New message sent from client to server to begin reading events from the stream
+#[derive(Debug, PartialEq, Clone)]
+pub struct NewConsumerStart {
+    pub partitions: Vec<ActorId>,
+    pub max_events: u64,
     pub namespace: String,
 }
 
@@ -256,6 +266,8 @@ impl FloEvent for RecvEvent {
 /// Defines all the distinct messages that can be sent over the wire between client and server.
 #[derive(Debug, PartialEq, Clone)]
 pub enum ProtocolMessage {
+    /// Set the event stream that the client will work with
+    SetEventStream(String),
     /// Signals a client's intent to publish a new event. The server will respond with either an `EventAck` or an `ErrorMessage`
     ProduceEvent(ProduceEvent),
     /// This is a complete event as serialized over the wire. This message is sent to to both consumers as well as other servers
@@ -266,6 +278,8 @@ pub enum ProtocolMessage {
     UpdateMarker(FloEventId),
     /// sent by a client to start reading events from the stream
     StartConsuming(ConsumerStart),
+    /// New message sent by a client to start reading events from the stream
+    NewStartConsuming(NewConsumerStart),
     /// send by the server to a client in response to a StartConsuming message to indicate the start of a series of events
     CursorCreated(CursorInfo),
     /// sent by a client to a server to tell the server to stop sending events. This is required in order to reuse the connection for multiple queries
@@ -438,6 +452,32 @@ named!{parse_start_consuming<ProtocolMessage>,
     )
 }
 
+named!{parse_new_start_consuming<ProtocolMessage>,
+    chain!(
+        _tag: tag!(&[NEW_START_CONSUMING]) ~
+        partitions: length_count!(be_u16, be_u16) ~
+        max_events: be_u64 ~
+        namespace: parse_str,
+        || {
+            ProtocolMessage::NewStartConsuming(NewConsumerStart {
+                partitions: partitions,
+                max_events: max_events,
+                namespace: namespace,
+            })
+        }
+    )
+}
+
+named!{parse_set_event_stream<ProtocolMessage>,
+    chain!(
+        _tag: tag!(&[SET_EVENT_STREAM]) ~
+        name: parse_str,
+        || {
+            ProtocolMessage::SetEventStream(name)
+        }
+    )
+}
+
 named!{parse_cluster_state<ClusterState>,
     chain!(
         actor_id: be_u16 ~
@@ -563,7 +603,9 @@ named!{pub parse_any<ProtocolMessage>, alt!(
         parse_next_batch |
         parse_end_of_batch |
         parse_stop_consuming |
-        parse_cursor_created
+        parse_cursor_created |
+        parse_new_start_consuming |
+        parse_set_event_stream
 )}
 
 fn serialize_new_produce_header(header: &ProduceEvent, mut buf: &mut [u8]) -> usize {
@@ -639,6 +681,9 @@ impl ProtocolMessage {
 
     pub fn serialize(&self, buf: &mut [u8]) -> usize {
         match *self {
+            ProtocolMessage::SetEventStream(ref name) => {
+                Serializer::new(buf).write_u8(SET_EVENT_STREAM).write_string(name).finish()
+            }
             ProtocolMessage::ReceiveEvent(ref event) => {
                 serialize_receive_event_header(event, buf)
             }
@@ -663,6 +708,16 @@ impl ProtocolMessage {
                                     .write_string(namespace)
                                     .write_u64(*max_events)
                                     .finish()
+            }
+            ProtocolMessage::NewStartConsuming(NewConsumerStart{ref partitions, ref max_events, ref namespace}) => {
+                let mut serializer = Serializer::new(buf).write_u8(NEW_START_CONSUMING)
+                        .write_u16(partitions.len() as u16);
+
+                for partition in partitions.iter() {
+                    serializer = serializer.write_u16(*partition);
+                }
+                serializer.write_u64(*max_events)
+                        .write_string(namespace).finish()
             }
             ProtocolMessage::UpdateMarker(id) => {
                 Serializer::new(buf).write_u8(UPDATE_MARKER)
@@ -776,6 +831,20 @@ mod test {
             }
         }
 
+    }
+
+    #[test]
+    fn serde_set_event_stream() {
+        test_serialize_then_deserialize(&ProtocolMessage::SetEventStream("foo".to_owned()));
+    }
+
+    #[test]
+    fn serde_new_start_consuming() {
+        test_serialize_then_deserialize(&ProtocolMessage::NewStartConsuming(NewConsumerStart{
+            partitions: vec![3, 2, 7],
+            max_events: 987,
+            namespace: "/foo/bar/*".to_owned(),
+        }))
     }
 
     #[test]

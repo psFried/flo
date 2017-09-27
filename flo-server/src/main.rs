@@ -26,6 +26,7 @@ mod server;
 mod engine;
 mod channels;
 mod new_engine;
+mod event_loops;
 
 use chrono::Duration;
 use event::ActorId;
