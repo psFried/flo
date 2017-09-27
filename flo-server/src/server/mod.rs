@@ -1,6 +1,5 @@
 mod flo_io;
 mod channel_sender;
-mod event_loops;
 mod server_options;
 
 use futures::stream::Stream;
@@ -10,6 +9,7 @@ use tokio_core::reactor::Interval;
 use self::channel_sender::ChannelSender;
 use self::engine::api::next_connection_id;
 use server::engine::BackendChannels;
+use event_loops;
 
 use futures::sync::mpsc::unbounded;
 use std::net::{SocketAddr, Ipv4Addr, SocketAddrV4};
@@ -26,7 +26,7 @@ pub fn run(options: ServerOptions) -> io::Result<()> {
 
     let listener = ::std::net::TcpListener::bind(address)?;
 
-    let (join_handle, mut event_loop_handles) = self::event_loops::spawn_event_loop_threads(options.max_io_threads).unwrap();
+    let (join_handle, mut event_loop_handles) = event_loops::spawn_event_loop_threads(options.max_io_threads).unwrap();
 
     let (cluster_tx, cluster_rx) = unbounded();
 

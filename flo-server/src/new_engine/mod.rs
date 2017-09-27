@@ -1,13 +1,15 @@
 mod controller;
 mod event_stream;
+mod connection_handler;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use futures::{Stream, Sink, Future, Poll, Async, StartSend, AsyncSink, BoxFuture};
 use protocol::{ProtocolMessage, ConsumerStart};
 
-use self::event_stream::EventStreamRef;
+use self::event_stream::{EventStreamRef, };
 use self::event_stream::partition::Operation;
 use self::event_stream::partition::PartitionReader;
 
@@ -21,16 +23,17 @@ pub fn create_client_channels() -> (ClientSender, ClientReceiver) {
     ::futures::sync::mpsc::unbounded()
 }
 
-pub type ConsumerStartSender = ::futures::sync::oneshot::Sender<PartitionReader>;
-pub type ConsumerStartReceiver = ::futures::sync::oneshot::Receiver<PartitionReader>;
 
-pub fn create_consumer_start_oneshot() -> (ConsumerStartSender, ConsumerStartReceiver) {
-    ::futures::sync::oneshot::channel()
+pub static DEFAULT_STREAM_NAME: &'static str = "default";
+
+pub fn default_stream_name() -> String {
+    DEFAULT_STREAM_NAME.to_owned()
 }
 
+#[derive(Clone, Debug)]
 pub struct EngineRef {
-    current_connection_id: ::std::sync::atomic::AtomicUsize,
-    event_streams: Mutex<HashMap<String, EventStreamRef>>
+    current_connection_id: Arc<AtomicUsize>,
+    event_streams: Arc<Mutex<HashMap<String, EventStreamRef>>>
 }
 
 #[derive(Debug)]
@@ -40,6 +43,17 @@ pub enum ConnectError {
 }
 
 impl EngineRef {
+    pub fn new(streams: HashMap<String, EventStreamRef>) -> EngineRef {
+        if !streams.contains_key(DEFAULT_STREAM_NAME) {
+            panic!("Cannot create engine ref without a default stream");
+        }
+
+        EngineRef {
+            current_connection_id: Arc::new(AtomicUsize::new(0)),
+            event_streams: Arc::new(Mutex::new(streams))
+        }
+    }
+
     pub fn get_stream(&self, stream_name: &str) -> Result<EventStreamRef, ConnectError> {
         let streams = self.event_streams.lock().unwrap();
         if let Some(stream) = streams.get(stream_name).map(|s| s.clone()) {
@@ -50,63 +64,11 @@ impl EngineRef {
     }
 
     pub fn get_default_stream(&self) -> EventStreamRef {
-        unimplemented!()
+        let guard = self.event_streams.lock().unwrap();
+        guard.get(DEFAULT_STREAM_NAME).unwrap().clone()
     }
 }
 
 
-//pub fn connection_handler(client_sender: ClientSender, client_receiver: ClientReceiver, engine: EngineRef) -> BoxFuture {
-//
-//    let default_event_stream = engine.get_default_stream();
-//    let mut handler = ConnectionHandler {
-//        client_sender: client_sender,
-//        engine: engine,
-//        event_stream: default_event_stream,
-//    };
-//
-//    client_receiver.for_each(|client_message| {
-//        handler.handle_incoming_message(client_message)
-//    }).boxed()
-//}
 
 
-struct ConnectionHandler {
-    connection_id: ConnectionId,
-    client_sender: ClientSender,
-    engine: EngineRef,
-    event_stream: EventStreamRef,
-}
-
-
-
-
-impl ConnectionHandler {
-
-
-    pub fn handle_incoming_message(&mut self, message: ProtocolMessage) -> Result<(), String> {
-        match message {
-            ProtocolMessage::StartConsuming(start) => self.start_consuming(start),
-            _ => unimplemented!()
-        }
-    }
-
-    fn start_consuming(&mut self, start: ConsumerStart) -> Result<(), String> {
-        unimplemented!()
-    }
-}
-
-
-impl Sink for ConnectionHandler {
-    type SinkItem = ProtocolMessage;
-    type SinkError = String;
-
-    fn start_send(&mut self, item: Self::SinkItem) -> StartSend<Self::SinkItem, Self::SinkError> {
-        self.handle_incoming_message(item).map(|()| {
-            AsyncSink::Ready
-        })
-    }
-
-    fn poll_complete(&mut self) -> Poll<(), Self::SinkError> {
-        Ok(Async::Ready(()))
-    }
-}

@@ -78,6 +78,14 @@ impl PartitionImpl {
         })
     }
 
+    pub fn event_stream_name(&self) -> &str {
+        &self.event_stream_name
+    }
+
+    pub fn partition_num(&self) -> ActorId {
+        self.partition_num
+    }
+
     pub fn process(&mut self, operation: Operation) -> io::Result<()> {
         let Operation{client_message_recv_time, connection_id, op_type} = operation;
 
@@ -167,7 +175,7 @@ impl PartitionImpl {
         Ok(())
     }
 
-    fn fsync(&mut self) -> io::Result<()> {
+    pub fn fsync(&mut self) -> io::Result<()> {
         for segment in self.segments.iter_mut() {
             segment.fsync()?
         }

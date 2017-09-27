@@ -1,23 +1,31 @@
 mod segment;
 mod index;
 mod event_reader;
-mod controller;
+pub mod controller;
 
 use std::fmt::{self, Debug, Display};
 use std::time::{Instant, Duration};
 use std::path::{Path, PathBuf};
 use std::collections::VecDeque;
 use std::sync::{Arc, RwLock};
+use std::thread::{self, JoinHandle};
+use std::io;
 
 use new_engine::{ClientSender, ConnectionId};
+use new_engine::event_stream::EventStreamOptions;
 use protocol::{ProduceEvent};
 use event::{FloEventId, EventCounter, ActorId};
 use self::segment::{Segment, SegmentReader};
+use self::controller::PartitionImpl;
 
 pub use self::event_reader::{PartitionReader, EventFilter};
 
 pub type PartitionSender = ::std::sync::mpsc::Sender<Operation>;
 pub type PartitionReceiver = ::std::sync::mpsc::Receiver<Operation>;
+
+pub fn create_partition_channels() -> (PartitionSender, PartitionReceiver) {
+    ::std::sync::mpsc::channel()
+}
 
 pub enum PartitionSendError {
     OutOfBounds(Operation),
@@ -176,14 +184,29 @@ pub struct Operation {
 
 
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct PartitionRef {
     event_stream_name: String,
-    partion_num: ActorId,
+    partition_num: ActorId,
     sender: PartitionSender,
 }
 
 impl PartitionRef {
+    pub fn new(event_stream_name: String, partition_num: ActorId, sender: PartitionSender) -> PartitionRef {
+        PartitionRef{
+            event_stream_name: event_stream_name,
+            partition_num: partition_num,
+            sender: sender,
+        }
+    }
+    pub fn partition_num(&self) -> ActorId {
+        self.partition_num
+    }
+
+    pub fn event_stream_name(&self) -> &str {
+        &self.event_stream_name
+    }
+
     fn send(&mut self, op: Operation) -> PartitionSendResult {
         self.sender.send(op).map_err(|err| {
             PartitionSendError::ChannelError(err.0)
@@ -191,6 +214,59 @@ impl PartitionRef {
     }
 }
 
+
+
+pub fn initialize_existing_partition(partition_num: ActorId, event_stream_data_dir: &Path, event_stream_options: &EventStreamOptions) -> io::Result<PartitionRef> {
+
+    let partition_data_dir = get_partition_data_dir(event_stream_data_dir, partition_num);
+    let partition_impl = PartitionImpl::init_existing(partition_num, partition_data_dir, event_stream_options)?;
+    run_partition(partition_impl)
+}
+
+pub fn initialize_new_partition(partition_num: ActorId, event_stream_data_dir: &Path, event_stream_options: &EventStreamOptions) -> io::Result<PartitionRef> {
+
+    let partition_data_dir = get_partition_data_dir(event_stream_data_dir, partition_num);
+    let partition_impl = PartitionImpl::init_existing(partition_num, partition_data_dir, &event_stream_options)?;
+    run_partition(partition_impl)
+}
+
+pub fn run_partition(partition_impl: PartitionImpl) -> io::Result<PartitionRef> {
+    let partition_num = partition_impl.partition_num();
+    let event_stream_name = partition_impl.event_stream_name().to_owned();
+    let (tx, rx) = create_partition_channels();
+    let thread_name = get_partition_thread_name(partition_impl.event_stream_name(), partition_num);
+    let join_handle = thread::Builder::new().name(thread_name).spawn(move || {
+        info!("Starting partition: {} of event stream: '{}'", &partition_impl.event_stream_name(), partition_num);
+
+        let mut partition_controller = partition_impl;
+
+        loop {
+            if let Ok(message) = rx.recv() {
+                let process_result = partition_controller.process(message);
+                if let Err(io_err) = process_result {
+                    error!("Error in partition: {} of event stream: '{}': {:?}", partition_num, partition_controller.event_stream_name(), io_err);
+                }
+            } else {
+                break;
+            }
+        }
+        let fsync_result = partition_controller.fsync();
+        info!("Shutdown partition: {} of event stream: '{}' with fsync result: {:?}",
+              partition_num,
+              partition_controller.event_stream_name(),
+              fsync_result);
+    })?;
+
+    Ok(PartitionRef::new(event_stream_name, partition_num,tx))
+}
+
+fn get_partition_thread_name(event_stream_name: &str, partition_num: ActorId) -> String {
+    format!("partition_{}_{}", event_stream_name, partition_num)
+}
+
+pub fn get_partition_data_dir(event_stream_dir: &Path, partition_num: ActorId) -> PathBuf {
+    event_stream_dir.join(format!("{}", partition_num))
+}
 
 pub type ProduceResult = ::std::io::Result<FloEventId>;
 pub type AsyncProduceResult = ::futures::sync::oneshot::Receiver<ProduceResult>;

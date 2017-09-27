@@ -62,6 +62,8 @@ impl ClientMessage {
             m @ ProtocolMessage::NextBatch => consumer_message(connection_id, m),
 
             m @ ProtocolMessage::ClientAuth {..} => both(connection_id, m),
+
+            _ => unimplemented!()
         }
     }
 }
