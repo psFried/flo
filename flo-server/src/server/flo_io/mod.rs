@@ -5,7 +5,7 @@ mod cluster_io;
 use std::net::SocketAddr;
 use std::sync::atomic;
 
-pub use self::client_message_stream::ClientMessageStream;
+pub use self::client_message_stream::{ClientMessageStream, ProtocolMessageStream};
 pub use self::server_message_stream::ServerMessageStream;
 use server::channel_sender::ChannelSender;
 use protocol::ProtocolMessage;

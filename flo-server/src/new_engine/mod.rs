@@ -1,5 +1,6 @@
+pub mod event_stream;
+
 mod controller;
-mod event_stream;
 mod connection_handler;
 
 use std::collections::HashMap;
@@ -9,12 +10,15 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use futures::{Stream, Sink, Future, Poll, Async, StartSend, AsyncSink, BoxFuture};
 use protocol::{ProtocolMessage, ConsumerStart};
 
-use self::event_stream::{EventStreamRef, };
+use event_loops::LoopHandles;
+use self::event_stream::EventStreamRef;
 use self::event_stream::partition::Operation;
 use self::event_stream::partition::PartitionReader;
 
+pub use self::controller::{ControllerOptions, start_controller};
+pub use self::connection_handler::{ConnectionHandlerImpl, ConnectionHandler, ConnectionHandlerResult};
 
-pub type ConnectionId = u64;
+pub type ConnectionId = usize;
 
 pub type ClientSender = ::futures::sync::mpsc::UnboundedSender<ProtocolMessage>;
 pub type ClientReceiver = ::futures::sync::mpsc::UnboundedReceiver<ProtocolMessage>;
@@ -24,10 +28,10 @@ pub fn create_client_channels() -> (ClientSender, ClientReceiver) {
 }
 
 
-pub static DEFAULT_STREAM_NAME: &'static str = "default";
+pub static SYSTEM_STREAM_NAME: &'static str = "system";
 
-pub fn default_stream_name() -> String {
-    DEFAULT_STREAM_NAME.to_owned()
+pub fn system_stream_name() -> String {
+    SYSTEM_STREAM_NAME.to_owned()
 }
 
 #[derive(Clone, Debug)]
@@ -44,7 +48,7 @@ pub enum ConnectError {
 
 impl EngineRef {
     pub fn new(streams: HashMap<String, EventStreamRef>) -> EngineRef {
-        if !streams.contains_key(DEFAULT_STREAM_NAME) {
+        if !streams.contains_key(SYSTEM_STREAM_NAME) {
             panic!("Cannot create engine ref without a default stream");
         }
 
@@ -52,6 +56,11 @@ impl EngineRef {
             current_connection_id: Arc::new(AtomicUsize::new(0)),
             event_streams: Arc::new(Mutex::new(streams))
         }
+    }
+
+    pub fn next_connection_id(&self) -> ConnectionId {
+        let old = self.current_connection_id.fetch_add(1, ::std::sync::atomic::Ordering::SeqCst);
+        old + 1
     }
 
     pub fn get_stream(&self, stream_name: &str) -> Result<EventStreamRef, ConnectError> {
@@ -65,7 +74,7 @@ impl EngineRef {
 
     pub fn get_default_stream(&self) -> EventStreamRef {
         let guard = self.event_streams.lock().unwrap();
-        guard.get(DEFAULT_STREAM_NAME).unwrap().clone()
+        guard.get(SYSTEM_STREAM_NAME).unwrap().clone()
     }
 }
 

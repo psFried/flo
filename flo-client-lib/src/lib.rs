@@ -1,5 +1,6 @@
-#[cfg(feature = "serde-json-codec")]
+#[cfg(feature = "serde-client")]
 extern crate serde;
+
 #[cfg(feature = "serde-json-codec")]
 extern crate serde_json;
 
@@ -9,11 +10,13 @@ extern crate flo_protocol as protocol;
 #[macro_use]
 extern crate log;
 
-#[cfg(feature = "serde-client")]
-extern crate serde;
+#[macro_use]
+extern crate futures;
+extern crate tokio_core;
 
 pub mod codec;
 pub mod sync;
+pub mod async;
 
 pub use protocol::{ErrorKind, ErrorMessage};
 pub use event::{

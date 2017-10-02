@@ -4,12 +4,15 @@ version = "0.1.0"
 authors = ["pfried <philipsfried@gmail.com>"]
 
 [features]
-default = ["serde-json-codec"]
-serde-json-codec = ["serde", "serde_json"]
+default = ["serde-json-codec", "serde-client"]
+serde-client = ["serde"]
+serde-json-codec = ["serde-client", "serde_json"]
 
 [dependencies]
 flo-protocol = { path = "../flo-protocol" }
 flo-event = { path = "../flo-event" }
+tokio-core = "0.1.4"
+futures = "0.1.10"
 log = "0.3"
 serde = { optional = true, version = "^0.9" }
 serde_json = { optional = true, version = "^0.9" }
