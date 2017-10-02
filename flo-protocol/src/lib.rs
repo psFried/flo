@@ -13,6 +13,7 @@ mod client;
 use std::io::{self, Read, Write};
 use std::cmp;
 use std::borrow::Cow;
+use std::fmt::{self, Debug};
 
 pub use self::client::*;
 
@@ -52,7 +53,7 @@ fn read<R: Read>(buffer: &mut [u8], reader: &mut R) -> io::Result<usize> {
 impl Buffer {
     pub fn new() -> Buffer {
         Buffer {
-            bytes: vec![0; BUFFER_LENGTH],
+            bytes: vec![0u8; BUFFER_LENGTH],
             pos: 0,
             len: 0
         }
@@ -122,11 +123,27 @@ impl ::std::ops::Deref for Buffer {
     }
 }
 
+impl Debug for Buffer {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        use std::cmp::min;
+        let pos = self.pos;
+        let len = self.len;
+        let bytes = &self.bytes[self.pos..min(len, pos + 32)];
+        write!(f, "Buffer{{ pos: {}, len: {}, first 32 filled bytes: {:?} }}", pos, len, bytes)
+    }
+}
+
 pub struct MessageStream<T> {
     io: T,
     read_buffer: Buffer,
     current_read_message: Option<InProgressMessage>,
 
+}
+
+impl <T> Debug for MessageStream<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "MessageStream{{ current_read_message: {:?}, read_buffer: {:?} }}", self.current_read_message, self.read_buffer)
+    }
 }
 
 impl <T> MessageStream<T> {
@@ -207,6 +224,7 @@ impl <T> MessageStream<T> where T: Read {
 }
 
 
+#[derive(Debug)]
 struct InProgressMessage {
     message: ProtocolMessage,
     body_read_pos: usize,
@@ -258,6 +276,7 @@ fn copy_until_capacity(src: &[u8], dst: &mut Vec<u8>) -> usize {
 }
 
 
+#[derive(Debug)]
 pub struct MessageWriter<'a> {
     message: Cow<'a, ProtocolMessage>,
     body_position: usize,

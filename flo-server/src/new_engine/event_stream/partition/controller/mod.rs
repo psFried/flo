@@ -6,6 +6,7 @@ use std::path::PathBuf;
 
 use chrono::{Duration};
 
+use atomics::{AtomicCounterWriter, AtomicCounterReader, AtomicBoolReader};
 use protocol::ProduceEvent;
 use event::{ActorId, FloEventId, OwnedFloEvent, EventCounter, FloEvent, Timestamp, time};
 use super::{SharedReaderRefsMut, Operation, OpType, ProduceOperation, ConsumeOperation, PartitionReader, EventFilter, SegmentNum};
@@ -25,7 +26,8 @@ pub struct PartitionImpl {
     max_segment_duration: Duration,
     segments: VecDeque<Segment>,
     index: PartitionIndex,
-    greatest_event_id: EventCounter,
+    greatest_event_id: AtomicCounterWriter,
+    primary: AtomicBoolReader,
 
     /// new segments each have a reader added here. The readers are then accessed as needed by the EventReader
     reader_refs: SharedReaderRefsMut,
@@ -33,7 +35,7 @@ pub struct PartitionImpl {
 
 impl PartitionImpl {
 
-    pub fn init_existing(partition_num: ActorId, partition_data_dir: PathBuf, options: &EventStreamOptions) -> io::Result<PartitionImpl> {
+    pub fn init_existing(partition_num: ActorId, partition_data_dir: PathBuf, options: &EventStreamOptions, status_reader: AtomicBoolReader) -> io::Result<PartitionImpl> {
         let start_time = ::std::time::Instant::now();
         debug!("Starting to init partition: {} with directory: {:?}, and options: {:?}", partition_num, partition_data_dir, options);
 
@@ -49,7 +51,7 @@ impl PartitionImpl {
             reader_refs.add(reader);
         }
 
-        let highest_counter = index.greatest_event_counter();
+        let highest_counter = AtomicCounterWriter::with_value(index.greatest_event_counter() as usize);
 
         Ok(PartitionImpl {
             event_stream_name: options.name.clone(),
@@ -60,11 +62,12 @@ impl PartitionImpl {
             segments: initialized_segments,
             index: index,
             greatest_event_id: highest_counter,
+            primary: status_reader,
             reader_refs: reader_refs,
         })
     }
 
-    pub fn init_new(partition_num: ActorId, partition_data_dir: PathBuf, options: &EventStreamOptions) -> io::Result<PartitionImpl> {
+    pub fn init_new(partition_num: ActorId, partition_data_dir: PathBuf, options: &EventStreamOptions, status_reader: AtomicBoolReader) -> io::Result<PartitionImpl> {
         Ok(PartitionImpl {
             event_stream_name: options.name.to_owned(),
             partition_num: partition_num,
@@ -73,13 +76,22 @@ impl PartitionImpl {
             max_segment_size: options.segment_max_size_bytes,
             segments: VecDeque::with_capacity(4),
             index: PartitionIndex::new(partition_num),
-            greatest_event_id: 0,
+            greatest_event_id: AtomicCounterWriter::zero(),
+            primary: status_reader,
             reader_refs: SharedReaderRefsMut::new(),
         })
     }
 
     pub fn event_stream_name(&self) -> &str {
         &self.event_stream_name
+    }
+
+    pub fn event_counter_reader(&self) -> AtomicCounterReader {
+        self.greatest_event_id.reader()
+    }
+
+    pub fn primary_status_reader(&self) -> AtomicBoolReader {
+        self.primary.clone()
     }
 
     pub fn partition_num(&self) -> ActorId {
@@ -104,9 +116,9 @@ impl PartitionImpl {
         let ProduceOperation {client, op_id, events} = produce;
         let timestamp = time::now();
         for produce_event in events {
-            self.greatest_event_id += 1;
+            let new_counter = self.greatest_event_id.increment_and_get_relaxed(1) as u64;
             let event = EventToProduce {
-                id: FloEventId::new(self.partition_num, self.greatest_event_id),
+                id: FloEventId::new(self.partition_num, new_counter),
                 ts: timestamp,
                 produce: produce_event,
             };
@@ -264,6 +276,7 @@ mod test {
     use new_engine::event_stream::partition::{SharedReaderRefsMut, Operation, OpType, ProduceOperation, ConsumeOperation, EventFilter, PartitionReader};
     use new_engine::event_stream::EventStreamOptions;
     use new_engine::{ConnectionId, create_client_channels};
+    use atomics::{AtomicBoolReader, AtomicBoolWriter};
 
     const PARTITION_NUM: ActorId = 1;
     const CONNECTION: ConnectionId = 55;
@@ -272,6 +285,7 @@ mod test {
     fn partition_impl_integration_test() {
         let _ = ::env_logger::init();
 
+        let status = AtomicBoolWriter::with_value(true);
         let options = EventStreamOptions {
             name: "superduper".to_owned(),
             num_partitions: 1,
@@ -285,7 +299,8 @@ mod test {
         {
             let mut partition = PartitionImpl::init_new(PARTITION_NUM,
                                                         tempdir.path().to_owned(),
-                                                        &options).unwrap();
+                                                        &options,
+                                                        status.reader()).unwrap();
 
             let (client_tx, client_rx) = create_client_channels();
 
@@ -342,7 +357,7 @@ mod test {
         }
 
         // now try to initialize the partition from an existing file
-        let result = PartitionImpl::init_existing(PARTITION_NUM, tempdir.path().to_owned(), &options);
+        let result = PartitionImpl::init_existing(PARTITION_NUM, tempdir.path().to_owned(), &options, status.reader());
         let mut partition = result.expect("Failed to init partitionImpl");
 
         let reader = partition.create_reader(77, EventFilter::All, 0);

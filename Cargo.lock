@@ -244,9 +244,11 @@ dependencies = [
  "env_logger 0.4.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "flo-event 0.1.0",
  "flo-protocol 0.1.0",
+ "futures 0.1.10 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.3.7 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde 0.9.11 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde_json 0.9.9 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tokio-core 0.1.4 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]

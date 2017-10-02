@@ -74,7 +74,7 @@ impl <T: Transport, C: EventCodec> SyncConnection<T, C> {
         let namespace_string = namespace.to_string();
 
         self.codec.convert_produced(&namespace_string, data.into()).map_err(|codec_error| {
-            ClientError::Codec(Box::new(codec_error))
+            ClientError::Codec(codec_error)
         }).and_then(move |binary_data| {
             let send_msg = ProtocolMessage::ProduceEvent(ProduceEvent {
                 namespace: namespace_string,
@@ -274,7 +274,7 @@ impl <T: Transport, C: EventCodec> SyncConnection<T, C> {
                 data: converted,
             }
         }).map_err(|codec_err| {
-            ClientError::Codec(Box::new(codec_err))
+            ClientError::Codec(codec_err)
         })
     }
 

@@ -11,7 +11,7 @@
 //! All numbers use big endian byte order.
 //! All Strings are newline terminated.
 use nom::{be_u64, be_u32, be_u16, IResult};
-use event::{time, OwnedFloEvent, FloEvent, FloEventId, ActorId, Timestamp};
+use event::{time, OwnedFloEvent, FloEvent, FloEventId, ActorId, EventCounter, Timestamp};
 use serializer::Serializer;
 use std::net::SocketAddr;
 use std::io::{self, Read};
@@ -38,6 +38,7 @@ pub mod headers {
     pub const CURSOR_CREATED: u8 = 16;
     pub const NEW_START_CONSUMING: u8 = 17;
     pub const SET_EVENT_STREAM: u8 = 18;
+    pub const EVENT_STREAM_STATUS: u8 = 19;
 }
 
 use self::headers::*;
@@ -46,6 +47,7 @@ pub const ERROR_INVALID_NAMESPACE: u8 = 15;
 pub const ERROR_INVALID_CONSUMER_STATE: u8 = 16;
 pub const ERROR_INVALID_VERSION_VECTOR: u8 = 17;
 pub const ERROR_STORAGE_ENGINE_IO: u8 = 18;
+pub const ERROR_NO_STREAM: u8 = 19;
 
 /// Describes the type of error. This gets serialized a u8
 #[derive(Debug, PartialEq, Clone)]
@@ -58,6 +60,8 @@ pub enum ErrorKind {
     InvalidVersionVector,
     /// Unable to read or write to events file
     StorageEngineError,
+    /// Requested event stream does not exist
+    NoSuchStream,
 }
 
 /// Represents a response to any request that results in an error
@@ -81,6 +85,7 @@ impl ErrorKind {
             ERROR_INVALID_CONSUMER_STATE => Ok(ErrorKind::InvalidConsumerState),
             ERROR_INVALID_VERSION_VECTOR => Ok(ErrorKind::InvalidVersionVector),
             ERROR_STORAGE_ENGINE_IO => Ok(ErrorKind::StorageEngineError),
+            ERROR_NO_STREAM => Ok(ErrorKind::NoSuchStream),
             other => Err(other)
         }
     }
@@ -92,6 +97,7 @@ impl ErrorKind {
             &ErrorKind::InvalidConsumerState => ERROR_INVALID_CONSUMER_STATE,
             &ErrorKind::InvalidVersionVector => ERROR_INVALID_VERSION_VECTOR,
             &ErrorKind::StorageEngineError => ERROR_STORAGE_ENGINE_IO,
+            &ErrorKind::NoSuchStream => ERROR_NO_STREAM,
         }
     }
 }
@@ -263,11 +269,36 @@ impl FloEvent for RecvEvent {
     }
 }
 
+/// Information on the status of a partition. Included as part of `EventStreamStatus`
+#[derive(Debug, PartialEq, Clone)]
+pub struct PartitionStatus {
+    pub partition_num: ActorId,
+    pub head: EventCounter,
+    pub primary: bool,
+}
+
+/// Contains some basic information on an event stream. Sent in response to a `SetEventStream`
+#[derive(Debug, PartialEq, Clone)]
+pub struct EventStreamStatus {
+    pub op_id: u32,
+    pub name: String,
+    pub partitions: Vec<PartitionStatus>,
+}
+
+/// Sent by a client to tell the server which event stream to use for all future operations
+#[derive(Debug, PartialEq, Clone)]
+pub struct SetEventStream{
+    pub op_id: u32,
+    pub name: String,
+}
+
 /// Defines all the distinct messages that can be sent over the wire between client and server.
 #[derive(Debug, PartialEq, Clone)]
 pub enum ProtocolMessage {
+    /// Contains basic information about the status of an event stream
+    StreamStatus(EventStreamStatus),
     /// Set the event stream that the client will work with
-    SetEventStream(String),
+    SetEventStream(SetEventStream),
     /// Signals a client's intent to publish a new event. The server will respond with either an `EventAck` or an `ErrorMessage`
     ProduceEvent(ProduceEvent),
     /// This is a complete event as serialized over the wire. This message is sent to to both consumers as well as other servers
@@ -324,6 +355,38 @@ named!{parse_string_slice<&str>,
         length_data!(be_u16),
         |res| {
             ::std::str::from_utf8(res)
+        }
+    )
+}
+
+named!{parse_partition_status<PartitionStatus>,
+    chain!(
+        partition_num: be_u16 ~
+        head: be_u64 ~
+        status_num: be_u16,
+        || {
+            PartitionStatus {
+                partition_num: partition_num,
+                head: head,
+                primary: status_num == 1,
+            }
+        }
+
+    )
+}
+
+named!{parse_event_stream_status<ProtocolMessage>,
+    chain!(
+        _tag: tag!(&[EVENT_STREAM_STATUS]) ~
+        op_id: be_u32 ~
+        name: parse_str ~
+        partitions: length_count!(be_u16, parse_partition_status),
+        || {
+            ProtocolMessage::StreamStatus(EventStreamStatus {
+                op_id: op_id,
+                name: name,
+                partitions: partitions,
+            })
         }
     )
 }
@@ -471,9 +534,13 @@ named!{parse_new_start_consuming<ProtocolMessage>,
 named!{parse_set_event_stream<ProtocolMessage>,
     chain!(
         _tag: tag!(&[SET_EVENT_STREAM]) ~
+        op_id: be_u32 ~
         name: parse_str,
         || {
-            ProtocolMessage::SetEventStream(name)
+            ProtocolMessage::SetEventStream(SetEventStream {
+                op_id: op_id,
+                name: name,
+            })
         }
     )
 }
@@ -605,7 +672,8 @@ named!{pub parse_any<ProtocolMessage>, alt!(
         parse_stop_consuming |
         parse_cursor_created |
         parse_new_start_consuming |
-        parse_set_event_stream
+        parse_set_event_stream |
+        parse_event_stream_status
 )}
 
 fn serialize_new_produce_header(header: &ProduceEvent, mut buf: &mut [u8]) -> usize {
@@ -677,12 +745,34 @@ fn serialize_receive_event_header(event: &RecvEvent, buf: &mut [u8]) -> usize {
             .finish()
 }
 
+fn serialize_event_stream_status(status: &EventStreamStatus, buf: &mut [u8]) -> usize {
+    Serializer::new(buf)
+            .write_u8(EVENT_STREAM_STATUS)
+            .write_u32(status.op_id)
+            .write_string(&status.name)
+            .write_u16(status.partitions.len() as u16)
+            .write_many(status.partitions.iter(), |ser, partition| {
+                let status: u16 = if partition.primary { 1 } else { 0 };
+                ser.write_u16(partition.partition_num)
+                        .write_u64(partition.head)
+                        .write_u16(status)
+            })
+            .finish()
+}
+
 impl ProtocolMessage {
 
     pub fn serialize(&self, buf: &mut [u8]) -> usize {
         match *self {
-            ProtocolMessage::SetEventStream(ref name) => {
-                Serializer::new(buf).write_u8(SET_EVENT_STREAM).write_string(name).finish()
+            ProtocolMessage::StreamStatus(ref status) => {
+                serialize_event_stream_status(status, buf)
+            }
+            ProtocolMessage::SetEventStream(ref set_stream) => {
+                Serializer::new(buf)
+                        .write_u8(SET_EVENT_STREAM)
+                        .write_u32(set_stream.op_id)
+                        .write_string(&set_stream.name)
+                        .finish()
             }
             ProtocolMessage::ReceiveEvent(ref event) => {
                 serialize_receive_event_header(event, buf)
@@ -783,6 +873,8 @@ impl ProtocolMessage {
             ProtocolMessage::CursorCreated(ref info) => info.op_id,
             ProtocolMessage::Error(ref err) => err.op_id,
             ProtocolMessage::AckEvent(ref ack) => ack.op_id,
+            ProtocolMessage::StreamStatus(ref status) => status.op_id,
+            ProtocolMessage::SetEventStream(ref set) => set.op_id,
             _ => 0
         }
     }
@@ -834,8 +926,45 @@ mod test {
     }
 
     #[test]
+    fn serde_event_stream_status() {
+        let status = EventStreamStatus {
+            op_id: 6425,
+            name: "foo".to_owned(),
+            partitions: vec![
+                PartitionStatus {
+                    partition_num: 1,
+                    head: 638,
+                    primary: true,
+                },
+                PartitionStatus {
+                    partition_num: 2,
+                    head: 0,
+                    primary: false,
+                },
+                PartitionStatus {
+                    partition_num: 3,
+                    head: 638,
+                    primary: true,
+                },
+            ],
+        };
+        test_serialize_then_deserialize(&ProtocolMessage::StreamStatus(status));
+
+        let status = EventStreamStatus {
+            op_id: 0,
+            name: "".to_owned(),
+            partitions: Vec::new()
+        };
+        test_serialize_then_deserialize(&ProtocolMessage::StreamStatus(status));
+    }
+
+    #[test]
     fn serde_set_event_stream() {
-        test_serialize_then_deserialize(&ProtocolMessage::SetEventStream("foo".to_owned()));
+        let set_stream = SetEventStream {
+            op_id: 7264,
+            name: "foo".to_owned()
+        };
+        test_serialize_then_deserialize(&ProtocolMessage::SetEventStream(set_stream));
     }
 
     #[test]

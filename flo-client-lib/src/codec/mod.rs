@@ -12,22 +12,20 @@ pub use self::serde::{SerdeJsonCodec, SerdePrettyJsonCodec};
 /// may be different.
 pub trait EventCodec {
     type EventData;
-    type Error: Error + 'static;
-    fn convert_received(&self, namespace: &str, data: Vec<u8>) -> Result<Self::EventData, Self::Error>;
-    fn convert_produced(&self, namespace: &str, data: Self::EventData) -> Result<Vec<u8>, Self::Error>;
+    fn convert_received(&self, namespace: &str, data: Vec<u8>) -> Result<Self::EventData, Box<Error>>;
+    fn convert_produced(&self, namespace: &str, data: Self::EventData) -> Result<Vec<u8>, Box<Error>>;
 }
 
 /// The simplest possible codec. It just passes every event through as it is and only produces binary data.
 pub struct RawCodec;
 impl EventCodec for RawCodec {
     type EventData = Vec<u8>;
-    type Error = ImpossibleError;
 
-    fn convert_received(&self, _namespace: &str, data: Vec<u8>) -> Result<Vec<u8>, ImpossibleError> {
+    fn convert_received(&self, _namespace: &str, data: Vec<u8>) -> Result<Vec<u8>, Box<Error>> {
         Ok(data)
     }
 
-    fn convert_produced(&self, _namespace: &str, output: Vec<u8>) -> Result<Vec<u8>, ImpossibleError> {
+    fn convert_produced(&self, _namespace: &str, output: Vec<u8>) -> Result<Vec<u8>, Box<Error>> {
         Ok(output)
     }
 }
@@ -37,14 +35,13 @@ impl EventCodec for RawCodec {
 /// if the event data is not valid UTF-8. If this isn't what you want, then consider using the `LossyStringCodec` instead.
 pub struct StringCodec;
 impl EventCodec for StringCodec {
-    type Error = FromUtf8Error;
     type EventData = String;
 
-    fn convert_received(&self, _namespace: &str, data: Vec<u8>) -> Result<String, FromUtf8Error> {
-        String::from_utf8(data)
+    fn convert_received(&self, _namespace: &str, data: Vec<u8>) -> Result<String, Box<Error>> {
+        String::from_utf8(data).map_err(|e| Box::new(e) as Box<Error>)
     }
 
-    fn convert_produced(&self, _namespace: &str, output: String) -> Result<Vec<u8>, FromUtf8Error> {
+    fn convert_produced(&self, _namespace: &str, output: String) -> Result<Vec<u8>, Box<Error>> {
         Ok(output.into_bytes())
     }
 }
@@ -52,31 +49,13 @@ impl EventCodec for StringCodec {
 /// A more permissive version of the `StringCodec` that will allow non-utf8 characters by converting them into � characters.
 pub struct LossyStringCodec;
 impl EventCodec for LossyStringCodec {
-    type Error = ImpossibleError;
     type EventData = String;
 
-    fn convert_received(&self, _namespace: &str, data: Vec<u8>) -> Result<String, ImpossibleError> {
+    fn convert_received(&self, _namespace: &str, data: Vec<u8>) -> Result<String, Box<Error>> {
         Ok(String::from_utf8_lossy(&data).into_owned())
     }
 
-    fn convert_produced(&self, _namespace: &str, output: String) -> Result<Vec<u8>, ImpossibleError> {
+    fn convert_produced(&self, _namespace: &str, output: String) -> Result<Vec<u8>, Box<Error>> {
         Ok(output.into_bytes())
-    }
-}
-
-/// This error can never actually be instantiated. It only exists to satisfy the type checker.
-#[doc(hidden)]
-#[derive(Debug)]
-pub struct ImpossibleError;
-
-impl ::std::fmt::Display for ImpossibleError {
-    fn fmt(&self, _f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
-        unimplemented!()
-    }
-}
-
-impl ::std::error::Error for ImpossibleError {
-    fn description(&self) -> &str {
-        unimplemented!()
     }
 }

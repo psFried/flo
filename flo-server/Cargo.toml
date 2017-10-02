@@ -6,6 +6,7 @@ authors = ["pfried <philipsfried@gmail.com>"]
 [dependencies]
 flo-event = { path = "../flo-event" }
 flo-protocol = { path = "../flo-protocol" }
+flo-client-lib = { path = "../flo-client-lib" }
 num_cpus = "^1.2"
 log = "0.3"
 log4rs = "0.4"
@@ -19,7 +20,6 @@ chrono = "^0.2"
 memmap = "0.5.2"
 
 [dev-dependencies]
-flo-client-lib = { path = "../flo-client-lib" }
 env_logger = "*"
 tempdir = "*"
 url = "1.1"

@@ -5,10 +5,10 @@ use std::io;
 
 use chrono::Duration;
 
-use event_loops::LoopHandles;
 use event::ActorId;
 use self::partition::{PartitionRef, PartitionSendError, PartitionSendResult, ProduceOperation, Operation};
 use self::partition::controller::PartitionImpl;
+use atomics::AtomicBoolReader;
 
 
 #[derive(Debug, PartialEq)]
@@ -36,7 +36,7 @@ impl Default for EventStreamOptions {
 
 
 
-pub fn init_existing_event_stream(event_stream_storage_dir: PathBuf, options: EventStreamOptions, loop_handles: &mut LoopHandles) -> Result<EventStreamRef, io::Error> {
+pub fn init_existing_event_stream(event_stream_storage_dir: PathBuf, options: EventStreamOptions, status_reader: AtomicBoolReader) -> Result<EventStreamRef, io::Error> {
     use self::partition::{initialize_existing_partition, get_partition_data_dir, run_partition};
 
     debug!("Starting initialization of existing event stream with: {:?}", &options);
@@ -45,7 +45,7 @@ pub fn init_existing_event_stream(event_stream_storage_dir: PathBuf, options: Ev
 
     let mut partition_refs = Vec::with_capacity(partition_numbers.len());
     for partition_num in partition_numbers {
-        let partition_ref = initialize_existing_partition(partition_num, &event_stream_storage_dir, &options)?;
+        let partition_ref = initialize_existing_partition(partition_num, &event_stream_storage_dir, &options, status_reader.clone())?;
         partition_refs.push(partition_ref);
     }
 
@@ -57,7 +57,7 @@ pub fn init_existing_event_stream(event_stream_storage_dir: PathBuf, options: Ev
     })
 }
 
-pub fn init_new_event_stream(event_stream_storage_dir: PathBuf, options: EventStreamOptions, loop_handles: &mut LoopHandles) -> Result<EventStreamRef, io::Error> {
+pub fn init_new_event_stream(event_stream_storage_dir: PathBuf, options: EventStreamOptions, status_reader: AtomicBoolReader) -> Result<EventStreamRef, io::Error> {
     use self::partition::initialize_new_partition;
 
     debug!("Starting initialization of new event stream with: {:?}", &options);
@@ -68,7 +68,7 @@ pub fn init_new_event_stream(event_stream_storage_dir: PathBuf, options: EventSt
 
     for i in 0..partition_count {
         let partition_num: ActorId = i + 1;
-        let partition_ref = initialize_new_partition(partition_num, &event_stream_storage_dir, &options)?;
+        let partition_ref = initialize_new_partition(partition_num, &event_stream_storage_dir, &options, status_reader.clone())?;
 
         // We're appending these in order so that they can be indexed up by partition number later
         partition_refs.push(partition_ref);
@@ -130,6 +130,10 @@ impl EventStreamRef {
 
     pub fn get_partition_count(&self) -> ActorId {
         self.partitions.len() as ActorId
+    }
+
+    pub fn partitions(&self) -> &[PartitionRef] {
+        &self.partitions
     }
 
     pub fn get_partition(&mut self, partition: ActorId) -> Option<&mut PartitionRef> {

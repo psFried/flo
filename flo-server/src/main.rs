@@ -24,9 +24,11 @@ extern crate tempdir;
 mod logging;
 mod server;
 mod engine;
+mod embedded;
 mod channels;
 mod new_engine;
 mod event_loops;
+mod atomics;
 
 use chrono::Duration;
 use event::ActorId;
@@ -97,6 +99,9 @@ fn app_args() -> App<'static, 'static> {
                     .long("max-io-threads")
                     .takes_value(true)
                     .help("The maximum number of threads to spawn for handling client connections. The actual number of threads used may be less"))
+            .arg(Arg::with_name("use-new-engine")
+                    .long("use-new-engine")
+                    .help("use the new engine (breaks everything :D )"))
 }
 
 fn main() {
@@ -132,6 +137,7 @@ fn main() {
 
     let default_eviction_period = ::std::cmp::min(retention_duration.num_hours() / 6, MAX_SEGMENT_PERIOD_HOURS);
     let eviction_period_hours = parse_arg_or_exit(&args, "eviction-period", default_eviction_period);
+    let use_new_engine: bool = args.is_present("use-new-engine");
 
     let server_options = ServerOptions {
         event_retention_duration: retention_duration,
@@ -142,6 +148,7 @@ fn main() {
         cluster_addresses: cluster_addresses,
         actor_id: actor_id,
         max_io_threads: max_io_threads,
+        use_new_engine: use_new_engine,
     };
 
     server_options.validate().or_bail();

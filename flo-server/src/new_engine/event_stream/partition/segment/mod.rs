@@ -241,6 +241,24 @@ mod test {
         assert_eq!(10, read_results.len());
     }
 
+    #[test]
+    fn read_after_write() {
+        let tmpdir = TempDir::new("read_after_write").unwrap();
+        let mut subject = Segment::init_new(tmpdir.path(), SegmentNum(1), 4096, future_time(2))
+                .expect("failed to initialize segment");
+
+        let mut reader = subject.iter_from_start();
+        assert!(reader.next().is_none());
+
+        let event = event(1);
+
+        let append_result = subject.append(&event);
+        assert!(append_result.is_success());
+
+        // make sure we can read the new event
+        reader.next().expect("next returned none").expect("next returned error");
+    }
+
     fn assert_events_eq<L: FloEvent, R: FloEvent>(lhs: &L, rhs: &R) {
         assert_eq!(lhs.id(), rhs.id());
         assert_eq!(lhs.parent_id(), rhs.parent_id());

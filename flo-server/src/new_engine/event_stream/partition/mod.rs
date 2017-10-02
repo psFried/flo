@@ -11,6 +11,7 @@ use std::sync::{Arc, RwLock};
 use std::thread::{self, JoinHandle};
 use std::io;
 
+use atomics::{AtomicCounterReader, AtomicBoolReader};
 use new_engine::{ClientSender, ConnectionId};
 use new_engine::event_stream::EventStreamOptions;
 use protocol::{ProduceEvent};
@@ -143,11 +144,10 @@ impl SharedReaderRefs {
 }
 
 
-
 pub struct ProduceOperation {
-    client: ClientSender,
-    op_id: u64,
-    events: Vec<ProduceEvent>,
+    pub client: ClientSender,
+    pub op_id: u64,
+    pub events: Vec<ProduceEvent>,
 }
 
 impl Debug for ProduceOperation {
@@ -177,9 +177,9 @@ pub enum OpType {
 
 #[derive(Debug)]
 pub struct Operation {
-    connection_id: ConnectionId,
-    client_message_recv_time: Instant,
-    op_type: OpType,
+    pub connection_id: ConnectionId,
+    pub client_message_recv_time: Instant,
+    pub op_type: OpType,
 }
 
 
@@ -188,19 +188,31 @@ pub struct Operation {
 pub struct PartitionRef {
     event_stream_name: String,
     partition_num: ActorId,
+    highest_event_counter: AtomicCounterReader,
+    primary: AtomicBoolReader,
     sender: PartitionSender,
 }
 
 impl PartitionRef {
-    pub fn new(event_stream_name: String, partition_num: ActorId, sender: PartitionSender) -> PartitionRef {
-        PartitionRef{
+    pub fn new(event_stream_name: String, partition_num: ActorId, highest_event_counter: AtomicCounterReader, primary: AtomicBoolReader, sender: PartitionSender) -> PartitionRef {
+        PartitionRef {
             event_stream_name: event_stream_name,
             partition_num: partition_num,
+            highest_event_counter: highest_event_counter,
+            primary: primary,
             sender: sender,
         }
     }
     pub fn partition_num(&self) -> ActorId {
         self.partition_num
+    }
+
+    pub fn get_highest_event_counter(&self) -> EventCounter {
+        self.highest_event_counter.load_relaxed() as EventCounter
+    }
+
+    pub fn is_primary(&self) -> bool {
+        self.primary.get_relaxed()
     }
 
     pub fn event_stream_name(&self) -> &str {
@@ -216,22 +228,24 @@ impl PartitionRef {
 
 
 
-pub fn initialize_existing_partition(partition_num: ActorId, event_stream_data_dir: &Path, event_stream_options: &EventStreamOptions) -> io::Result<PartitionRef> {
+pub fn initialize_existing_partition(partition_num: ActorId, event_stream_data_dir: &Path, event_stream_options: &EventStreamOptions, status_reader: AtomicBoolReader) -> io::Result<PartitionRef> {
 
     let partition_data_dir = get_partition_data_dir(event_stream_data_dir, partition_num);
-    let partition_impl = PartitionImpl::init_existing(partition_num, partition_data_dir, event_stream_options)?;
+    let partition_impl = PartitionImpl::init_existing(partition_num, partition_data_dir, event_stream_options, status_reader)?;
     run_partition(partition_impl)
 }
 
-pub fn initialize_new_partition(partition_num: ActorId, event_stream_data_dir: &Path, event_stream_options: &EventStreamOptions) -> io::Result<PartitionRef> {
+pub fn initialize_new_partition(partition_num: ActorId, event_stream_data_dir: &Path, event_stream_options: &EventStreamOptions, status_reader: AtomicBoolReader) -> io::Result<PartitionRef> {
 
     let partition_data_dir = get_partition_data_dir(event_stream_data_dir, partition_num);
-    let partition_impl = PartitionImpl::init_existing(partition_num, partition_data_dir, &event_stream_options)?;
+    let partition_impl = PartitionImpl::init_new(partition_num, partition_data_dir, &event_stream_options, status_reader)?;
     run_partition(partition_impl)
 }
 
 pub fn run_partition(partition_impl: PartitionImpl) -> io::Result<PartitionRef> {
     let partition_num = partition_impl.partition_num();
+    let event_counter_reader = partition_impl.event_counter_reader();
+    let primary_status_reader = partition_impl.primary_status_reader();
     let event_stream_name = partition_impl.event_stream_name().to_owned();
     let (tx, rx) = create_partition_channels();
     let thread_name = get_partition_thread_name(partition_impl.event_stream_name(), partition_num);
@@ -257,7 +271,7 @@ pub fn run_partition(partition_impl: PartitionImpl) -> io::Result<PartitionRef> 
               fsync_result);
     })?;
 
-    Ok(PartitionRef::new(event_stream_name, partition_num,tx))
+    Ok(PartitionRef::new(event_stream_name, partition_num, event_counter_reader, primary_status_reader,tx))
 }
 
 fn get_partition_thread_name(event_stream_name: &str, partition_num: ActorId) -> String {
