@@ -1,5 +1,6 @@
 #![feature(conservative_impl_trait)]
 
+extern crate flo_server;
 extern crate flo_event as event;
 extern crate flo_protocol as protocol;
 
@@ -21,14 +22,8 @@ extern crate env_logger;
 #[cfg(test)]
 extern crate tempdir;
 
-mod logging;
-mod server;
-mod engine;
-mod embedded;
-mod channels;
-mod new_engine;
-mod event_loops;
-mod atomics;
+
+pub use flo_server::*;
 
 use chrono::Duration;
 use event::ActorId;

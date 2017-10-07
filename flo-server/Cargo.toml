@@ -24,6 +24,10 @@ env_logger = "*"
 tempdir = "*"
 url = "1.1"
 
+[lib]
+name = "flo_server"
+path = "src/lib.rs"
+
 [[bin]]
 name = "flo"
 path = "src/main.rs"
