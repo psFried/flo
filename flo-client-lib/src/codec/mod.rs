@@ -4,6 +4,9 @@ mod serde;
 use std::string::FromUtf8Error;
 use std::error::Error;
 
+use event::OwnedFloEvent;
+use ::Event;
+
 #[cfg(feature = "serde-json-codec")]
 pub use self::serde::{SerdeJsonCodec, SerdePrettyJsonCodec};
 
@@ -14,6 +17,23 @@ pub trait EventCodec {
     type EventData;
     fn convert_received(&self, namespace: &str, data: Vec<u8>) -> Result<Self::EventData, Box<Error>>;
     fn convert_produced(&self, namespace: &str, data: Self::EventData) -> Result<Vec<u8>, Box<Error>>;
+
+    fn convert_from_message(&self, input: OwnedFloEvent) -> Result<Event<Self::EventData>, Box<Error>> {
+        let OwnedFloEvent{id, parent_id, namespace, timestamp, data} = input;
+        let converted = {
+            self.convert_received(&namespace, data)
+        };
+
+        converted.map(move |body| {
+            Event{
+                id: id,
+                parent_id: parent_id,
+                timestamp: timestamp,
+                namespace: namespace,
+                data: body,
+            }
+        })
+    }
 }
 
 /// The simplest possible codec. It just passes every event through as it is and only produces binary data.

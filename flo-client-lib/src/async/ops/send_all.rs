@@ -65,6 +65,7 @@ impl Stream for Messages {
     }
 }
 
+#[derive(Debug)]
 pub struct SendError<D: Debug> {
     pub client: AsyncClient<D>,
     pub err: io::Error,
