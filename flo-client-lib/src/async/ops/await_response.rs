@@ -63,7 +63,8 @@ impl <D: Debug> Future for AwaitResponse<D> {
         }
 
         loop {
-            let message: ProtocolMessage = match self.client.as_mut().expect("Attempt to poll AwaitResponse after completion").recv.as_mut().unwrap().poll() {
+            let msg_result = self.client.as_mut().expect("Attempt to poll AwaitResponse after completion").recv.as_mut().unwrap().poll();
+            let message: ProtocolMessage = match msg_result {
                 Ok(Async::Ready(Some(msg))) => msg,
                 Ok(Async::Ready(None)) => {
                     let err = io::Error::new(io::ErrorKind::UnexpectedEof, format!("Got EOF before response to op_id: {}", self.op_id));
@@ -86,6 +87,7 @@ impl <D: Debug> Future for AwaitResponse<D> {
                 return Ok(Async::Ready((message, self.client.take().unwrap())));
             } else if self.can_buffer_received() {
                 // loop around for another try
+                trace!("Buffering message because await_response_op_id: {} did not match message: {:?}", self.op_id, message);
                 self.buffer_received(message);
             } else {
                 let err_message = format!("Filled receive buffer before getting response for op_id: {}", self.op_id);
@@ -101,6 +103,7 @@ impl <D: Debug> Future for AwaitResponse<D> {
 }
 
 
+#[derive(Debug)]
 pub struct AwaitResponseError<D: Debug> {
     pub client: AsyncClient<D>,
     pub err: io::Error,

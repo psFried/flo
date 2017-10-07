@@ -11,7 +11,7 @@
 //! All numbers use big endian byte order.
 //! All Strings are newline terminated.
 use nom::{be_u64, be_u32, be_u16, IResult};
-use event::{time, OwnedFloEvent, FloEvent, FloEventId, ActorId, EventCounter, Timestamp};
+use event::{time, OwnedFloEvent, FloEvent, FloEventId, ActorId, EventCounter, Timestamp, VersionVector};
 use serializer::Serializer;
 use std::net::SocketAddr;
 use std::io::{self, Read};
@@ -148,7 +148,7 @@ pub struct ConsumerStart {
 /// New message sent from client to server to begin reading events from the stream
 #[derive(Debug, PartialEq, Clone)]
 pub struct NewConsumerStart {
-    pub partitions: Vec<ActorId>,
+    pub version_vector: Vec<FloEventId>,
     pub max_events: u64,
     pub namespace: String,
 }
@@ -518,12 +518,12 @@ named!{parse_start_consuming<ProtocolMessage>,
 named!{parse_new_start_consuming<ProtocolMessage>,
     chain!(
         _tag: tag!(&[NEW_START_CONSUMING]) ~
-        partitions: length_count!(be_u16, be_u16) ~
+        version_vec: parse_version_vec ~
         max_events: be_u64 ~
         namespace: parse_str,
         || {
             ProtocolMessage::NewStartConsuming(NewConsumerStart {
-                partitions: partitions,
+                version_vector: version_vec,
                 max_events: max_events,
                 namespace: namespace,
             })
@@ -799,12 +799,12 @@ impl ProtocolMessage {
                                     .write_u64(*max_events)
                                     .finish()
             }
-            ProtocolMessage::NewStartConsuming(NewConsumerStart{ref partitions, ref max_events, ref namespace}) => {
+            ProtocolMessage::NewStartConsuming(NewConsumerStart{ref version_vector, ref max_events, ref namespace}) => {
                 let mut serializer = Serializer::new(buf).write_u8(NEW_START_CONSUMING)
-                        .write_u16(partitions.len() as u16);
+                        .write_u16(version_vector.len() as u16);
 
-                for partition in partitions.iter() {
-                    serializer = serializer.write_u16(*partition);
+                for id in version_vector.iter() {
+                    serializer = serializer.write_u64(id.event_counter).write_u16(id.actor);
                 }
                 serializer.write_u64(*max_events)
                         .write_string(namespace).finish()
@@ -969,8 +969,13 @@ mod test {
 
     #[test]
     fn serde_new_start_consuming() {
+        let mut version_vec = vec![
+            FloEventId::new(1, 5),
+            FloEventId::new(3, 8),
+            FloEventId::new(8, 5)
+        ];
         test_serialize_then_deserialize(&ProtocolMessage::NewStartConsuming(NewConsumerStart{
-            partitions: vec![3, 2, 7],
+            version_vector: version_vec,
             max_events: 987,
             namespace: "/foo/bar/*".to_owned(),
         }))
