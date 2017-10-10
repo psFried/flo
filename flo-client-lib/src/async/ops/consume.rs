@@ -33,7 +33,7 @@ impl <D: Debug> Consume<D> {
             namespace: namespace.clone(),
         };
         let messages = vec![ProtocolMessage::NewStartConsuming(consumer_start)];
-        let initial_state = State::RequestStart(client.send_messages(messages));
+        let initial_state = State::RequestStart(SendMessages::new(client, messages));
 
         Consume {
             op_id: op_id,
@@ -249,7 +249,7 @@ impl <D: Debug> EventReceiver<D> {
     fn start_requesting_new_batch(&mut self) -> PollState<D> {
         let client = self.0.take().unwrap();
         let message = ProtocolMessage::NextBatch;
-        let new_state = State::SendNextBatch(client.send_messages(vec![message]));
+        let new_state = State::SendNextBatch(SendMessages::new(client, vec![message]));
         Ok(Async::Ready(PollSuccess::NewState(new_state)))
     }
 

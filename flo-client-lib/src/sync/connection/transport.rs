@@ -23,13 +23,10 @@ impl SyncStream {
 
     /// Connects to the flo server at the specified address, using the default TCP options and a 10 second timeout
     pub fn connect<T: ToSocketAddrs>(addr: T) -> io::Result<SyncStream> {
-        TcpStream::connect(addr).and_then(|stream| {
-            stream.set_read_timeout(Some(Duration::from_millis(10_000))).and_then(|()| {
-                stream.set_nonblocking(false).map(|()| {
-                    SyncStream::from_stream(stream)
-                })
-            })
-        })
+        let stream = TcpStream::connect(addr)?;
+        stream.set_nodelay(true)?;
+        stream.set_read_timeout(Some(Duration::from_millis(10_000)))?;
+        Ok(SyncStream::from_stream(stream))
     }
 
     /// Creates a `SyncStream` from a `TcpStream` that is already connected. This allows for setting any

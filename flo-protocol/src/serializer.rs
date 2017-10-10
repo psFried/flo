@@ -61,7 +61,7 @@ impl <'a> Serializer<'a> {
         self.write_u16(string.len() as u16).write_bytes(string.as_bytes())
     }
 
-    pub fn write_many<I, F, T>(self, mut iter: I, fun: F) -> Self
+    pub fn write_many<I, F, T>(self, iter: I, fun: F) -> Self
         where I: Iterator<Item=T>,
               F: Fn(Self, T) -> Self {
 

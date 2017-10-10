@@ -10,11 +10,10 @@
 //!
 //! All numbers use big endian byte order.
 //! All Strings are newline terminated.
-use nom::{be_u64, be_u32, be_u16, IResult};
-use event::{time, OwnedFloEvent, FloEvent, FloEventId, ActorId, EventCounter, Timestamp, VersionVector};
+use nom::{be_u64, be_u32, be_u16};
+use event::{time, OwnedFloEvent, FloEvent, FloEventId, ActorId, EventCounter, Timestamp};
 use serializer::Serializer;
 use std::net::SocketAddr;
-use std::io::{self, Read};
 use std::fmt::Write;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -39,6 +38,7 @@ pub mod headers {
     pub const NEW_START_CONSUMING: u8 = 17;
     pub const SET_EVENT_STREAM: u8 = 18;
     pub const EVENT_STREAM_STATUS: u8 = 19;
+    pub const CLIENT_ANNOUNCE: u8 = 170;
 }
 
 use self::headers::*;
@@ -292,9 +292,20 @@ pub struct SetEventStream{
     pub name: String,
 }
 
+/// Sent by the client as the very first message to the server. The server will respond with an `EventStreamStatus` for the current (default) stream
+#[derive(Debug, PartialEq, Clone)]
+pub struct ClientAnnounce {
+    pub protocol_version: u32,
+    pub op_id: u32,
+    pub client_name: String,
+}
+
+
 /// Defines all the distinct messages that can be sent over the wire between client and server.
 #[derive(Debug, PartialEq, Clone)]
 pub enum ProtocolMessage {
+    /// Always the first message sent by the client to the server
+    Announce(ClientAnnounce),
     /// Contains basic information about the status of an event stream
     StreamStatus(EventStreamStatus),
     /// Set the event stream that the client will work with
@@ -655,6 +666,20 @@ named!{parse_cursor_created<ProtocolMessage>, chain!(
     }
 )}
 
+named!{parse_client_announce<ProtocolMessage>, chain!(
+    _tag: tag!(&[CLIENT_ANNOUNCE]) ~
+    protocol_version: be_u32 ~
+    op_id: be_u32 ~
+    client_name: parse_str,
+    || {
+        ProtocolMessage::Announce(ClientAnnounce{
+            protocol_version: protocol_version,
+            op_id: op_id,
+            client_name: client_name,
+        })
+    }
+)}
+
 named!{pub parse_any<ProtocolMessage>, alt!(
         parse_event_ack |
         parse_receive_event_header |
@@ -673,7 +698,8 @@ named!{pub parse_any<ProtocolMessage>, alt!(
         parse_cursor_created |
         parse_new_start_consuming |
         parse_set_event_stream |
-        parse_event_stream_status
+        parse_event_stream_status |
+        parse_client_announce
 )}
 
 fn serialize_new_produce_header(header: &ProduceEvent, mut buf: &mut [u8]) -> usize {
@@ -764,6 +790,14 @@ impl ProtocolMessage {
 
     pub fn serialize(&self, buf: &mut [u8]) -> usize {
         match *self {
+            ProtocolMessage::Announce(ref announce) => {
+                Serializer::new(buf)
+                        .write_u8(CLIENT_ANNOUNCE)
+                        .write_u32(announce.protocol_version)
+                        .write_u32(announce.op_id)
+                        .write_string(&announce.client_name)
+                        .finish()
+            }
             ProtocolMessage::StreamStatus(ref status) => {
                 serialize_event_stream_status(status, buf)
             }
@@ -868,6 +902,7 @@ impl ProtocolMessage {
 
     pub fn get_op_id(&self) -> u32 {
         match *self {
+            ProtocolMessage::Announce(ref ann) => ann.op_id,
             ProtocolMessage::ProduceEvent(ref prod) => prod.op_id,
             ProtocolMessage::StartConsuming(ref start) => start.op_id,
             ProtocolMessage::CursorCreated(ref info) => info.op_id,
@@ -883,7 +918,6 @@ impl ProtocolMessage {
 #[cfg(test)]
 mod test {
     use super::*;
-    use std::io::Read;
     use nom::{IResult, Needed};
     use event::{OwnedFloEvent, time, FloEventId};
     use std::net::{SocketAddr, SocketAddrV4, Ipv4Addr};
@@ -923,6 +957,16 @@ mod test {
             }
         }
 
+    }
+
+    #[test]
+    fn serde_client_announce() {
+        let announce = ClientAnnounce {
+            protocol_version: 1,
+            op_id: 765,
+            client_name: "nathan".to_owned()
+        };
+        test_serialize_then_deserialize(&ProtocolMessage::Announce(announce));
     }
 
     #[test]
@@ -969,7 +1013,7 @@ mod test {
 
     #[test]
     fn serde_new_start_consuming() {
-        let mut version_vec = vec![
+        let version_vec = vec![
             FloEventId::new(1, 5),
             FloEventId::new(3, 8),
             FloEventId::new(8, 5)

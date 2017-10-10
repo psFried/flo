@@ -1,5 +1,6 @@
-use tokio_core::reactor::{Core, Remote};
+use tokio_core::reactor::{Core, Remote, CoreId};
 use std::thread::{self, JoinHandle};
+use std::fmt::{self, Debug};
 
 use std::cmp::{max, min};
 use std::sync::mpsc::sync_channel;
@@ -9,7 +10,7 @@ fn thread_startup_timeout() -> Duration {
     Duration::from_millis(500)
 }
 
-fn spawn_event_loop_thread(thread_num: u8) -> Result<(JoinHandle<()>, Remote), String> {
+pub fn spawn_event_loop_thread(thread_num: u8) -> Result<(JoinHandle<()>, Remote), String> {
     let (tx, rx) = sync_channel(0);
 
     let thread_handle = thread::Builder::new()
@@ -85,12 +86,15 @@ pub fn spawn_event_loop_threads(max: Option<usize>) -> Result<(EventLoopsJoinHan
 #[derive(Clone)]
 pub struct LoopHandles {
     handles: Vec<Remote>,
+    reactor_ids: Vec<CoreId>,
     current: usize,
 }
 impl LoopHandles {
     fn new(remotes: Vec<Remote>) -> LoopHandles {
+        let ids = remotes.iter().map(|r| r.id()).collect::<Vec<CoreId>>();
         LoopHandles {
             handles: remotes,
+            reactor_ids: ids,
             current: 0,
         }
     }
@@ -99,5 +103,11 @@ impl LoopHandles {
         let remote = self.handles[self.current].clone();
         self.current = (self.current + 1) % self.handles.len();
         remote
+    }
+}
+
+impl Debug for LoopHandles {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "LoopHandles{{ reactors: {:?}, current_index: {} }}", self.reactor_ids, self.current)
     }
 }
