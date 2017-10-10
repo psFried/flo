@@ -69,6 +69,10 @@ fn run_new_engine(options: ServerOptions) -> io::Result<()> {
         incoming.map_err(|io_err| {
             error!("Error creating new connection: {:?}", io_err);
         }).for_each(move |(tcp_stream, client_addr): (TcpStream, SocketAddr)| {
+            tcp_stream.set_nodelay(true).map_err(|io_err| {
+                error!("Error setting NODELAY. Nagle yet lives!: {:?}", io_err);
+                ()
+            })?;
             let client_engine_ref = engine_ref.clone();
             let connection_id = client_engine_ref.next_connection_id();
             let remote_handle = event_loop_handles.next_handle();

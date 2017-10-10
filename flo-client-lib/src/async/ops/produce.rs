@@ -8,25 +8,22 @@ use event::FloEventId;
 use codec::EventCodec;
 use protocol::{ProtocolMessage, ProduceEvent};
 use async::{AsyncClient, ErrorType, MessageSender, MessageReceiver};
-use async::ops::{SendMessages, SendError, AwaitResponse, AwaitResponseError};
+use async::ops::{RequestResponse, RequestResponseError};
 
-#[derive(Debug)]
 pub struct ProduceOne<D: Debug> {
     op_id: u32,
-    inner: Option<Inner<D>>,
+    inner: Inner<D>,
 }
 
-#[derive(Debug)]
 enum Inner<D: Debug> {
     CodecErr(Option<ProduceErr<D>>),
-    Send(SendMessages<D>),
-    Recv(AwaitResponse<D>),
+    RequestResp(RequestResponse<D>)
 }
 
 
 impl <D: Debug> ProduceOne<D> {
-    pub fn new(client: AsyncClient<D>, namespace: String, parent_id: Option<FloEventId>, data: D) -> ProduceOne<D> {
-        let op_id = client.current_op_id;
+    pub fn new(mut client: AsyncClient<D>, namespace: String, parent_id: Option<FloEventId>, data: D) -> ProduceOne<D> {
+        let op_id = client.next_op_id();
         let inner: Inner<D> = match client.codec.convert_produced(&namespace, data) {
             Ok(converted) => {
                 let proto_msg = ProduceEvent{
@@ -35,7 +32,7 @@ impl <D: Debug> ProduceOne<D> {
                     parent_id: parent_id,
                     data: converted,
                 };
-                Inner::Send(client.send_messages(vec![ProtocolMessage::ProduceEvent(proto_msg)]))
+                Inner::RequestResp(RequestResponse::new(client, ProtocolMessage::ProduceEvent(proto_msg)))
             }
             Err(codec_err) => {
                 let err = ProduceErr {
@@ -48,7 +45,7 @@ impl <D: Debug> ProduceOne<D> {
 
         ProduceOne{
             op_id: op_id,
-            inner: Some(inner),
+            inner: inner,
         }
     }
 
@@ -80,30 +77,16 @@ impl <D: Debug> Future for ProduceOne<D> {
     type Error = ProduceErr<D>;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        let mut new_inner: Option<Inner<D>> = None;
-        match self.inner.as_mut() {
-            Some(&mut Inner::CodecErr(ref mut err)) => {
+        match self.inner {
+            Inner::CodecErr(ref mut err) => {
                 let produce_err = err.take().expect("Attempted to poll ProduceOne after error completion");
-                return Err(produce_err);
+                Err(produce_err)
             }
-            Some(&mut Inner::Send(ref mut send)) => {
-                let client = try_ready!(send.poll());
-                new_inner = Some(Inner::Recv(client.await_response(self.op_id)));
-            }
-            Some(&mut Inner::Recv(ref mut receiver)) => {
-                let (message, client) = try_ready!(receiver.poll());
-                return ProduceOne::response_received(client, message)
-            }
-            None => {
-                panic!("Attempted to poll ProduceOne after completion");
+            Inner::RequestResp(ref mut request) => {
+                let (response, client) = try_ready!(request.poll());
+                ProduceOne::response_received(client, response)
             }
         }
-
-        if let Some(inner) = new_inner {
-            self.inner = Some(inner);
-        }
-
-        return self.poll()
     }
 }
 
@@ -115,22 +98,12 @@ pub struct ProduceErr<D: Debug> {
 }
 
 
-impl <D: Debug> From<AwaitResponseError<D>> for ProduceErr<D> {
-    fn from(send_err: AwaitResponseError<D>) -> Self {
-        let AwaitResponseError {client, err} = send_err;
+impl <D: Debug> From<RequestResponseError<D>> for ProduceErr<D> {
+    fn from(send_err: RequestResponseError<D>) -> Self {
+        let RequestResponseError {client, error} = send_err;
         ProduceErr {
             client: client,
-            err: ErrorType::Io(err),
-        }
-    }
-}
-
-impl <D: Debug> From<SendError<D>> for ProduceErr<D> {
-    fn from(send_err: SendError<D>) -> Self {
-        let SendError {client, err} = send_err;
-        ProduceErr {
-            client: client,
-            err: ErrorType::Io(err),
+            err: ErrorType::Io(error),
         }
     }
 }

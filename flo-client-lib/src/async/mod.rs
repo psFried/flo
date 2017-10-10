@@ -1,14 +1,19 @@
 pub mod recv;
 pub mod send;
-
 pub mod ops;
+
+mod event_stream_status;
+mod tcp_connect;
 
 use std::error::Error;
 use std::time::Duration;
 use std::collections::VecDeque;
 use std::io;
 use std::fmt::{self, Debug};
+use std::net::{SocketAddr, ToSocketAddrs};
 
+use tokio_core::net::TcpStream;
+use tokio_core::io::{ReadHalf, WriteHalf, Io};
 use futures::{Future, Async, Poll, Stream, Sink, AsyncSink, StartSend};
 
 use protocol::{ProtocolMessage, ErrorMessage};
@@ -16,18 +21,21 @@ use event::{FloEventId, VersionVector};
 use codec::EventCodec;
 use self::recv::{MessageStream, MessageRecvStream};
 use self::send::{MessageSink, MessageSendSink};
-use self::ops::{SendMessages, AwaitResponse, ProduceOne, Consume};
+use self::ops::{SendMessages, AwaitResponse, ProduceOne, Consume, RequestResponse, ConnectAsyncClient};
 
+pub use self::event_stream_status::{EventStreamStatus, PartitionStatus};
 pub type MessageSender = Box<Sink<SinkItem=ProtocolMessage, SinkError=io::Error>>;
 pub type MessageReceiver = Box<Stream<Item=ProtocolMessage, Error=io::Error>>;
 
 pub const DEFAULT_RECV_BATCH_SIZE: usize = 1000;
 
 pub struct AsyncClient<D: Debug> {
+    client_name: String,
     recv_batch_size: Option<usize>,
     send: Option<MessageSender>,
     recv: Option<MessageReceiver>,
     codec: Box<EventCodec<EventData=D>>,
+    current_stream: Option<EventStreamStatus>,
     current_op_id: u32,
     received_message_buffer: VecDeque<ProtocolMessage>,
 }
@@ -40,12 +48,24 @@ impl <D: Debug> Debug for AsyncClient<D> {
 
 
 impl <D: Debug> AsyncClient<D> {
-    pub fn new(send: MessageSender, recv: MessageReceiver, codec: Box<EventCodec<EventData=D>>) -> AsyncClient<D> {
+
+    pub fn from_tcp_stream(name: String, tcp_stream: TcpStream, codec: Box<EventCodec<EventData=D>>) -> io::Result<AsyncClient<D>> {
+        tcp_stream.set_nodelay(true)?; // TODO: perhaps there's a better place to set this. Should we allow the caller to leave Nagle enabled?
+        let (tcp_read, tcp_write) = tcp_stream.split();
+        let send_sink = MessageSendSink::new(tcp_write);
+        let read_stream = MessageRecvStream::new(tcp_read);
+
+        Ok(AsyncClient::new(name, Box::new(send_sink) as MessageSender, Box::new(read_stream) as MessageReceiver, codec))
+    }
+
+    pub fn new(name: String, send: MessageSender, recv: MessageReceiver, codec: Box<EventCodec<EventData=D>>) -> AsyncClient<D> {
         AsyncClient {
+            client_name: name,
             recv_batch_size: None,
             send: Some(send),
             recv: Some(recv),
             codec: codec,
+            current_stream: None,
             current_op_id: 0,
             received_message_buffer: VecDeque::with_capacity(8),
         }
@@ -59,10 +79,10 @@ impl <D: Debug> AsyncClient<D> {
         Consume::new(self, namespace.into(), version_vector, event_limit)
     }
 
-
-    fn send_messages(self, messages: Vec<ProtocolMessage>) -> SendMessages<D> {
-        SendMessages::new(self, messages)
+    pub fn connect(self) -> ConnectAsyncClient<D> {
+        ConnectAsyncClient::new(self)
     }
+
 
     fn await_response(self, op_id: u32) -> AwaitResponse<D> {
         AwaitResponse::new(self, op_id)
@@ -229,7 +249,7 @@ mod test {
     }
 
     fn create_client(recv: MessageReceiver, send: MessageSender) -> AsyncClient<String> {
-        AsyncClient::new(send, recv, Box::new(StringCodec) as Box<EventCodec<EventData=String>>)
+        AsyncClient::new("testClient".to_owned(), send, recv, Box::new(StringCodec) as Box<EventCodec<EventData=String>>)
     }
 
     fn run_future<T, E, F>(mut future: F) -> Result<T, E> where F: Future<Item=T, Error=E> {
@@ -286,7 +306,7 @@ mod test {
             ProtocolMessage::EndOfBatch,
             ProtocolMessage::AckEvent(EventAck { op_id: 7, event_id: FloEventId::new(8, 9) }),
         ];
-        let send_all = client.send_messages(messages.clone());
+        let send_all = SendMessages::new(client, messages.clone());
 
         let result = run_future(send_all).expect("failed to run send_all");
 
@@ -305,7 +325,7 @@ mod test {
         let (send, mut send_verify) = MockSendStream::new();
         let client = create_client(recv, send);
 
-        let await = client.await_response(7);
+        let await = AwaitResponse::new(client, 7);
         let (response, client): (ProtocolMessage, AsyncClient<String>) = run_future(await).expect("await response returned error");
         assert_eq!(ProtocolMessage::AckEvent(EventAck { op_id: 7, event_id: FloEventId::new(8, 9) }), response);
 

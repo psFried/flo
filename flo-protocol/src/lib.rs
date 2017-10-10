@@ -254,10 +254,6 @@ impl InProgressMessage {
         *body_read_pos += n_appended;
         n_appended
     }
-
-    fn finish(self) -> ProtocolMessage {
-        self.message
-    }
 }
 
 fn get_body_buffer(message: &mut ProtocolMessage) -> Option<&mut Vec<u8>> {
