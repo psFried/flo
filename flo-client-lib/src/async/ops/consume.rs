@@ -8,7 +8,7 @@ use futures::sink::SendAll;
 use event::{OwnedFloEvent, VersionVector};
 use protocol::{ProtocolMessage, NewConsumerStart, ErrorMessage, RecvEvent};
 use async::{AsyncClient, ErrorType};
-use async::ops::{SendMessages, SendError, AwaitResponse, AwaitResponseError};
+use async::ops::{SendMessage, SendError, AwaitResponse, AwaitResponseError};
 use ::Event;
 
 
@@ -32,8 +32,8 @@ impl <D: Debug> Consume<D> {
             max_events: event_limit.unwrap_or(0),
             namespace: namespace.clone(),
         };
-        let messages = vec![ProtocolMessage::NewStartConsuming(consumer_start)];
-        let initial_state = State::RequestStart(SendMessages::new(client, messages));
+        let message = ProtocolMessage::NewStartConsuming(consumer_start);
+        let initial_state = State::RequestStart(SendMessage::new(client, message));
 
         Consume {
             op_id: op_id,
@@ -104,7 +104,7 @@ impl <D: Debug> Stream for Consume<D> {
         let poll_state = match self.state {
             State::RequestStart(ref mut send) => {
                 let client = try_ready!(send.poll());
-                let await_response = client.await_response(self.op_id);
+                let await_response = AwaitResponse::new(client, self.op_id);
                 new_state(State::ReceiveStart(await_response))
             }
             State::ReceiveStart(ref mut recv) => {
@@ -151,10 +151,10 @@ enum PollSuccess<D: Debug> {
 }
 
 enum State<D: Debug> {
-    RequestStart(SendMessages<D>),
+    RequestStart(SendMessage<D>),
     ReceiveStart(AwaitResponse<D>),
     ReceiveEvents(EventReceiver<D>),
-    SendNextBatch(SendMessages<D>),
+    SendNextBatch(SendMessage<D>),
 }
 
 impl <D: Debug> Debug for State<D> {
@@ -249,7 +249,7 @@ impl <D: Debug> EventReceiver<D> {
     fn start_requesting_new_batch(&mut self) -> PollState<D> {
         let client = self.0.take().unwrap();
         let message = ProtocolMessage::NextBatch;
-        let new_state = State::SendNextBatch(SendMessages::new(client, vec![message]));
+        let new_state = State::SendNextBatch(SendMessage::new(client, message));
         Ok(Async::Ready(PollSuccess::NewState(new_state)))
     }
 

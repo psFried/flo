@@ -2,7 +2,7 @@ pub mod recv;
 pub mod send;
 pub mod ops;
 
-mod event_stream_status;
+mod current_stream_state;
 mod tcp_connect;
 
 use std::error::Error;
@@ -21,9 +21,9 @@ use event::{FloEventId, VersionVector};
 use codec::EventCodec;
 use self::recv::{MessageStream, MessageRecvStream};
 use self::send::{MessageSink, MessageSendSink};
-use self::ops::{SendMessages, AwaitResponse, ProduceOne, Consume, RequestResponse, ConnectAsyncClient};
+use self::ops::{SendMessage, AwaitResponse, ProduceOne, Consume, RequestResponse, ConnectAsyncClient};
 
-pub use self::event_stream_status::{EventStreamStatus, PartitionStatus};
+pub use self::current_stream_state::{CurrentStreamState, PartitionState};
 pub type MessageSender = Box<Sink<SinkItem=ProtocolMessage, SinkError=io::Error>>;
 pub type MessageReceiver = Box<Stream<Item=ProtocolMessage, Error=io::Error>>;
 
@@ -35,7 +35,7 @@ pub struct AsyncClient<D: Debug> {
     send: Option<MessageSender>,
     recv: Option<MessageReceiver>,
     codec: Box<EventCodec<EventData=D>>,
-    current_stream: Option<EventStreamStatus>,
+    current_stream: Option<CurrentStreamState>,
     current_op_id: u32,
     received_message_buffer: VecDeque<ProtocolMessage>,
 }
@@ -71,6 +71,10 @@ impl <D: Debug> AsyncClient<D> {
         }
     }
 
+    pub fn current_stream(&self) -> Option<&CurrentStreamState> {
+        self.current_stream.as_ref()
+    }
+
     pub fn produce<N: Into<String>>(self, namespace: N, parent_id: Option<FloEventId>, data: D) -> ProduceOne<D> {
         ProduceOne::new(self, namespace.into(), parent_id, data)
     }
@@ -83,10 +87,6 @@ impl <D: Debug> AsyncClient<D> {
         ConnectAsyncClient::new(self)
     }
 
-
-    fn await_response(self, op_id: u32) -> AwaitResponse<D> {
-        AwaitResponse::new(self, op_id)
-    }
 
     fn can_buffer_received(&self) -> bool {
         let max_buffered = self.recv_batch_size.unwrap_or(DEFAULT_RECV_BATCH_SIZE);
@@ -101,7 +101,6 @@ impl <D: Debug> AsyncClient<D> {
         self.current_op_id += 1;
         self.current_op_id
     }
-
 }
 
 
@@ -124,9 +123,10 @@ mod test {
 
     use futures::{Stream, Async, Poll, AsyncSink};
 
-    use protocol::{ProtocolMessage, EventAck};
+    use protocol::*;
     use event::*;
     use codec::{EventCodec, StringCodec};
+
 
     #[derive(Copy, Clone, PartialEq)]
     enum MockState {
@@ -164,7 +164,6 @@ mod test {
 
             let result = ::std::mem::replace(vec.as_mut(), Vec::new());
             let mut result = result;
-            result.reverse();
             result
         }
     }
@@ -296,21 +295,59 @@ mod test {
     }
 
     #[test]
-    fn send_all_sends_all_messages() {
+    fn connect_initiates_connection() {
+        let to_recv = vec![ProtocolMessage::StreamStatus(EventStreamStatus {
+            op_id: 1,
+            name: "foo".to_owned(),
+            partitions: vec![
+                PartitionStatus {
+                    partition_num: 1,
+                    head: 7,
+                    primary: true
+                },
+                PartitionStatus {
+                    partition_num: 2,
+                    head: 5,
+                    primary: false,
+                }
+            ],
+        })];
+        let recv = MockReceiveStream::will_produce(to_recv);
+        let (send, mut send_verify) = MockSendStream::new();
+        let mut client = create_client(recv, send);
+
+        let connect = client.connect();
+        let client = run_future(connect).expect("failed to execute connect");
+
+        let expected_stream = CurrentStreamState {
+            name: "foo".to_owned(),
+            partitions: vec![
+                PartitionState {
+                    partition_num: 1,
+                    head: 7,
+                    writable: true,
+                },
+                PartitionState {
+                    partition_num: 2,
+                    head: 5,
+                    writable: false
+                }
+            ]
+        };
+        assert_eq!(Some(&expected_stream), client.current_stream());
+    }
+
+    #[test]
+    fn send_sends_all_messages() {
         let recv = MockReceiveStream::empty();
         let (send, mut send_verify) = MockSendStream::new();
         let mut client = create_client(recv, send);
 
-        let messages = vec![
-            ProtocolMessage::NextBatch,
-            ProtocolMessage::EndOfBatch,
-            ProtocolMessage::AckEvent(EventAck { op_id: 7, event_id: FloEventId::new(8, 9) }),
-        ];
-        let send_all = SendMessages::new(client, messages.clone());
+        let send = SendMessage::new(client, ProtocolMessage::NextBatch);
 
-        let result = run_future(send_all).expect("failed to run send_all");
+        let result = run_future(send).expect("failed to run send");
 
-        assert_eq!(messages, send_verify.get_received());
+        assert_eq!(vec![ProtocolMessage::NextBatch], send_verify.get_received());
     }
 
     #[test]
@@ -340,7 +377,7 @@ mod test {
     #[test]
     fn consume_yields_stream_of_events() {
         use protocol::{CursorInfo, RecvEvent};
-        use event::{OwnedFloEvent, VersionVector, time};
+        use event::{OwnedFloEvent, VersionVector, FloEventId, time};
         use ::Event;
 
         let consume_op_id = 999;
@@ -365,7 +402,7 @@ mod test {
             })),
         ];
         let receiver = MockReceiveStream::will_produce(to_receive);
-        let (sender, send_verify) = MockSendStream::new();
+        let (sender, mut send_verify) = MockSendStream::new();
         let mut client = create_client(receiver, sender);
 
         // setup the client so that the next op_id will be `consume_op_id`
@@ -378,6 +415,18 @@ mod test {
 
         let consume_stream = client.consume("/foo/*", &version_vec, Some(2));
         let results = get_stream_results(consume_stream);
+
+        let sent = send_verify.get_received();
+        let expected_sent = vec![
+            ProtocolMessage::NewStartConsuming(NewConsumerStart {
+                version_vector: vec![FloEventId::new(1, 2), FloEventId::new(2, 8), FloEventId::new(3, 4)],
+                max_events: 2,
+                namespace: "/foo/*".to_owned(),
+            }),
+            ProtocolMessage::NextBatch,
+        ];
+        assert_eq!(expected_sent, sent);
+
         let expected = vec![
             Event {
                 id: FloEventId::new(3, 4),

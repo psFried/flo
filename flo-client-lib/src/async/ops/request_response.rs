@@ -6,7 +6,7 @@ use futures::{Future, Async, Poll};
 
 use protocol::{ProtocolMessage, ErrorMessage};
 use async::{AsyncClient};
-use async::ops::{SendMessages, SendError, AwaitResponse, AwaitResponseError};
+use async::ops::{SendMessage, SendError, AwaitResponse, AwaitResponseError};
 
 
 pub struct RequestResponse<D: Debug> {
@@ -20,7 +20,7 @@ impl <D: Debug> RequestResponse<D> {
         debug_assert_ne!(op_id, 0);
         RequestResponse {
             op_id: op_id,
-            state: State::Request(SendMessages::new(client, vec![request]))
+            state: State::Request(SendMessage::new(client, request))
         }
     }
 }
@@ -35,7 +35,8 @@ impl <D: Debug> Future for RequestResponse<D> {
         match self.state {
             State::Request(ref mut req) => {
                 let client = try_ready!(req.poll());
-                new_state = Some(State::Response(client.await_response(self.op_id)));
+                let await_response = AwaitResponse::new(client, self.op_id);
+                new_state = Some(State::Response(await_response));
             }
             State::Response(ref mut resp) => {
                 let (resp, client) = try_ready!(resp.poll());
@@ -80,7 +81,7 @@ impl <D: Debug> From<SendError<D>> for RequestResponseError<D> {
 
 
 enum State<D: Debug> {
-    Request(SendMessages<D>),
+    Request(SendMessage<D>),
     Response(AwaitResponse<D>)
 }
 
