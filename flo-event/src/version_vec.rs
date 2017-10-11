@@ -79,7 +79,11 @@ impl VersionVector {
 
     /// Returns a clone of all the entries in the version vector as a vector of FloEventIds
     pub fn snapshot(&self) -> Vec<FloEventId> {
-        self.0.iter().map(|(actor, counter)| FloEventId::new(*actor, *counter)).collect()
+        let mut as_vec = self.0.iter()
+                .map(|(actor, counter)| FloEventId::new(*actor, *counter))
+                .collect::<Vec<FloEventId>>();
+        as_vec.sort_by_key(|id| id.actor);
+        as_vec
     }
 
     /// returns the smallest value in the version vector

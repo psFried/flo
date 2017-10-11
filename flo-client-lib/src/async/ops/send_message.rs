@@ -3,42 +3,42 @@ use std::error::Error;
 use std::io;
 
 use futures::{Sink, Stream, AsyncSink, Future, Async, Poll};
-use futures::sink::SendAll;
+use futures::sink::Send;
 
 use protocol::ProtocolMessage;
 use async::{AsyncClient, MessageSender};
 
-pub struct SendMessages<D: Debug> {
+pub struct SendMessage<D: Debug> {
     client: Option<AsyncClient<D>>,
-    sender: SendAll<MessageSender, Messages>
+    sender: Send<MessageSender>
 }
 
-impl <D: Debug> Debug for SendMessages<D> {
+impl <D: Debug> Debug for SendMessage<D> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "SendMessages{{ client: {:?} }}", self.client)
     }
 }
 
-impl <D: Debug> SendMessages<D> {
-    pub fn new(mut client: AsyncClient<D>, messages: Vec<ProtocolMessage>) -> SendMessages<D> {
+impl <D: Debug> SendMessage<D> {
+    pub fn new(mut client: AsyncClient<D>, message: ProtocolMessage) -> SendMessage<D> {
         let sender = client.send.take().expect("Client.send is missing");
 
-        let send_all = sender.send_all(Messages(messages));
+        let send = sender.send(message);
 
-        SendMessages {
+        SendMessage {
             client: Some(client),
-            sender: send_all,
+            sender: send,
         }
     }
 }
 
 
-impl <D: Debug> Future for SendMessages<D> {
+impl <D: Debug> Future for SendMessage<D> {
     type Item = AsyncClient<D>;
     type Error = SendError<D>;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        let (sender, messages) = try_ready!(self.sender.poll().map_err(|io_err| {
+        let sender = try_ready!(self.sender.poll().map_err(|io_err| {
             SendError{
                 client: self.client.take().unwrap(),
                 err: io_err,
@@ -53,17 +53,6 @@ impl <D: Debug> Future for SendMessages<D> {
     }
 }
 
-
-pub struct Messages(Vec<ProtocolMessage>);
-
-impl Stream for Messages {
-    type Item = ProtocolMessage;
-    type Error = ::std::io::Error;
-
-    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        Ok(Async::Ready(self.0.pop()))
-    }
-}
 
 #[derive(Debug)]
 pub struct SendError<D: Debug> {

@@ -1,11 +1,11 @@
 mod produce;
-mod send_all;
+mod send_message;
 mod await_response;
 mod consume;
 mod request_response;
 mod connect;
 
-pub use self::send_all::{SendMessages, SendError};
+pub use self::send_message::{SendMessage, SendError};
 pub use self::await_response::{AwaitResponse, AwaitResponseError};
 pub use self::produce::{ProduceOne, ProduceErr};
 pub use self::consume::{Consume, ConsumeError};
