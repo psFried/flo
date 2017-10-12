@@ -6,17 +6,19 @@ use std::fmt::Debug;
 use std::io;
 
 use tokio_core::reactor::{Handle};
+use futures::Stream;
 
 use flo_client_lib::async::{AsyncClient, MessageReceiver, MessageSender};
 use flo_client_lib::codec::EventCodec;
 
-use new_engine::{EngineRef, ControllerOptions, ClientSender, ClientReceiver, create_client_channels, start_controller, ConnectionHandlerImpl};
-use event_loops::{LoopHandles, spawn_event_loop_thread};
+use new_engine::{EngineRef, ClientSender, ClientReceiver, create_client_channels, start_controller, ConnectionHandlerImpl};
+
+pub use new_engine::ControllerOptions;
+pub use new_engine::event_stream::EventStreamOptions;
 
 
 #[derive(Clone, Debug)]
 pub struct EmbeddedFloServer {
-    loop_handles: LoopHandles,
     engine_ref: EngineRef,
 }
 
@@ -34,7 +36,7 @@ impl EmbeddedFloServer {
         let receiver = client_receiver.map_err(|recv_err| {
             io::Error::new(io::ErrorKind::UnexpectedEof, format!("Error reading from channel: {:?}", recv_err))
         });
-        let recv = Box::new(client_receiver) as MessageReceiver;
+        let recv = Box::new(receiver) as MessageReceiver;
         let send = Box::new(connection_handler) as MessageSender;
 
         AsyncClient::new(name, send, recv, codec)
@@ -42,9 +44,11 @@ impl EmbeddedFloServer {
 }
 
 
-fn run_embedded_server(options: ControllerOptions) -> io::Result<EmbeddedFloServer> {
-
-    let engine_ref = start_controller(options);
-    unimplemented!()
+pub fn run_embedded_server(options: ControllerOptions) -> io::Result<EmbeddedFloServer> {
+    start_controller(options).map(|engine_ref| {
+        EmbeddedFloServer {
+            engine_ref: engine_ref,
+        }
+    })
 }
 
