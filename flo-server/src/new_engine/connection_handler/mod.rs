@@ -22,6 +22,7 @@ pub fn create_consumer_start_oneshot() -> (ConsumerStartSender, ConsumerStartRec
 pub type ConnectionHandlerImpl = ConnectionHandler<ClientSender>;
 
 pub struct ConnectionHandler<C: Sender<ProtocolMessage>> {
+    client_name: Option<String>,
     connection_id: ConnectionId,
     client_sender: C,
     engine: EngineRef,
@@ -34,6 +35,7 @@ impl <C: Sender<ProtocolMessage>> ConnectionHandler<C> {
     pub fn new(connection: ConnectionId, client_sender: C, engine: EngineRef) -> ConnectionHandler<C> {
         let event_stream = engine.get_default_stream();
         ConnectionHandler {
+            client_name: None,
             connection_id: connection,
             client_sender: client_sender,
             engine: engine,
@@ -42,10 +44,24 @@ impl <C: Sender<ProtocolMessage>> ConnectionHandler<C> {
     }
 
     pub fn handle_incoming_message(&mut self, message: ProtocolMessage) -> ConnectionHandlerResult {
+        trace!("client: '{:?}', connection_id: {}, received message: {:?}", self.client_name, self.connection_id, message);
+
         match message {
             ProtocolMessage::SetEventStream(SetEventStream{op_id, name}) => self.set_event_stream(op_id, name),
+            ProtocolMessage::Announce(announce) => self.handle_announce(announce),
             _ => unimplemented!()
         }
+    }
+
+    fn handle_announce(&mut self, announce: ClientAnnounce) -> ConnectionHandlerResult {
+        let ClientAnnounce {op_id, client_name, protocol_version} = announce;
+        // todo: return error if client name is already set or if protocol version != 1
+        self.client_name = Some(client_name);
+
+        let status = create_stream_status(op_id, &self.event_stream);
+        self.client_sender.send(ProtocolMessage::StreamStatus(status)).map_err(|err| {
+            format!("Error sending message to client: {:?}", err)
+        })
     }
 
     fn set_event_stream(&mut self, op_id: u32, name: String) -> ConnectionHandlerResult {

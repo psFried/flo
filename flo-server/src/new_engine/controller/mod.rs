@@ -44,7 +44,7 @@ pub fn start_controller(options: ControllerOptions) -> io::Result<EngineRef> {
     // There's only one machine, so all partitions will always be primary. Again, this is just temporary
     let status_writer = AtomicBoolWriter::with_value(true);
 
-    let system_stream_dir = storage_dir.join(SYSTEM_STREAM_NAME);
+    let system_stream_dir = storage_dir.join(&default_stream_options.name);
     let event_stream_ref = if system_stream_dir.exists() {
         init_existing_event_stream(system_stream_dir, default_stream_options, status_writer.reader())?
     } else {
