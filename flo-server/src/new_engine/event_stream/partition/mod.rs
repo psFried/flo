@@ -1,6 +1,7 @@
 mod segment;
 mod index;
 mod event_reader;
+mod ops;
 pub mod controller;
 
 use std::fmt::{self, Debug, Display};
@@ -11,6 +12,7 @@ use std::sync::{Arc, RwLock};
 use std::thread::{self, JoinHandle};
 use std::io;
 
+use futures::sync::oneshot;
 use atomics::{AtomicCounterReader, AtomicBoolReader};
 use new_engine::{ClientSender, ConnectionId};
 use new_engine::event_stream::EventStreamOptions;
@@ -19,6 +21,7 @@ use event::{FloEventId, EventCounter, ActorId};
 use self::segment::{Segment, SegmentReader};
 use self::controller::PartitionImpl;
 
+pub use self::ops::{OpType, Operation, ProduceOperation, ConsumeOperation};
 pub use self::event_reader::{PartitionReader, EventFilter};
 
 pub type PartitionSender = ::std::sync::mpsc::Sender<Operation>;
@@ -28,10 +31,7 @@ pub fn create_partition_channels() -> (PartitionSender, PartitionReceiver) {
     ::std::sync::mpsc::channel()
 }
 
-pub enum PartitionSendError {
-    OutOfBounds(Operation),
-    ChannelError(Operation)
-}
+pub struct PartitionSendError(pub Operation);
 
 pub type PartitionSendResult = Result<(), PartitionSendError>;
 
@@ -144,45 +144,6 @@ impl SharedReaderRefs {
 }
 
 
-pub struct ProduceOperation {
-    pub client: ClientSender,
-    pub op_id: u64,
-    pub events: Vec<ProduceEvent>,
-}
-
-impl Debug for ProduceOperation {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "ProduceOperation {{ op_id: {}, events: {:?} }}", self.op_id, self.events)
-    }
-}
-
-pub struct ConsumeOperation {
-    pub client_sender: ::futures::sync::oneshot::Sender<PartitionReader>,
-    pub filter: EventFilter,
-    pub start_exclusive: EventCounter,
-}
-
-impl Debug for ConsumeOperation {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "ConsumeOperation {{ filter: {:?}, start_exclusive: {} }}", self.filter, self.start_exclusive)
-    }
-}
-
-#[derive(Debug)]
-pub enum OpType {
-    Produce(ProduceOperation),
-    Consume(ConsumeOperation),
-}
-
-
-#[derive(Debug)]
-pub struct Operation {
-    pub connection_id: ConnectionId,
-    pub client_message_recv_time: Instant,
-    pub op_type: OpType,
-}
-
-
 
 #[derive(Clone, Debug)]
 pub struct PartitionRef {
@@ -219,9 +180,14 @@ impl PartitionRef {
         &self.event_stream_name
     }
 
+    pub fn produce(&mut self, connection_id: ConnectionId, op_id: u32, events: Vec<ProduceEvent>) -> AsyncProduceResult {
+        let (op, rx) = Operation::produce(connection_id, op_id, events);
+        self.send(op).map(|()| rx)
+    }
+
     fn send(&mut self, op: Operation) -> PartitionSendResult {
         self.sender.send(op).map_err(|err| {
-            PartitionSendError::ChannelError(err.0)
+            PartitionSendError(err.0)
         })
     }
 }
@@ -283,7 +249,6 @@ pub fn get_partition_data_dir(event_stream_dir: &Path, partition_num: ActorId) -
 }
 
 pub type ProduceResult = ::std::io::Result<FloEventId>;
-pub type AsyncProduceResult = ::futures::sync::oneshot::Receiver<ProduceResult>;
-
+pub type AsyncProduceResult = Result<oneshot::Receiver<io::Result<FloEventId>>, PartitionSendError>;
 
 
