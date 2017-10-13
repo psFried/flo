@@ -1,6 +1,7 @@
 
 use std::fmt::{self, Debug};
 use std::io;
+use std::error::Error;
 
 use futures::sync::oneshot;
 use futures::{Async, Poll, AsyncSink, StartSend, Sink, Future};
@@ -9,7 +10,8 @@ use channels::Sender;
 use protocol::*;
 use new_engine::{ConnectionId, ClientSender, EngineRef, SYSTEM_STREAM_NAME, system_stream_name};
 use new_engine::event_stream::EventStreamRef;
-use new_engine::event_stream::partition::PartitionReader;
+use new_engine::event_stream::partition::{PartitionReader, PartitionSendError, Operation};
+use event::FloEventId;
 
 
 pub type ConsumerStartSender = oneshot::Sender<PartitionReader>;
@@ -27,7 +29,9 @@ pub struct ConnectionHandler<C: Sender<ProtocolMessage>> {
     client_sender: C,
     engine: EngineRef,
     event_stream: EventStreamRef,
+    produce_operation: Option<(u32, oneshot::Receiver<io::Result<FloEventId>>)>,
 }
+
 
 pub type ConnectionHandlerResult = Result<(), String>;
 
@@ -40,17 +44,39 @@ impl <C: Sender<ProtocolMessage>> ConnectionHandler<C> {
             client_sender: client_sender,
             engine: engine,
             event_stream: event_stream,
+            produce_operation: None,
         }
     }
 
+    pub fn can_process(&self, message: &ProtocolMessage) -> bool {
+        self.produce_operation.is_none()
+    }
+
     pub fn handle_incoming_message(&mut self, message: ProtocolMessage) -> ConnectionHandlerResult {
+
+
         trace!("client: '{:?}', connection_id: {}, received message: {:?}", self.client_name, self.connection_id, message);
 
         match message {
             ProtocolMessage::SetEventStream(SetEventStream{op_id, name}) => self.set_event_stream(op_id, name),
             ProtocolMessage::Announce(announce) => self.handle_announce(announce),
+            ProtocolMessage::ProduceEvent(produce) => self.handle_produce(produce),
             _ => unimplemented!()
         }
+    }
+
+    fn handle_produce(&mut self, produce: ProduceEvent) -> ConnectionHandlerResult {
+        debug_assert!(self.produce_operation.is_none());
+        let op_id = produce.op_id;
+
+        let partition = self.event_stream.get_partition(0).unwrap();
+        let receiver = partition.produce(self.connection_id, op_id, vec![produce]).map_err(|err| {
+            format!("Failed to send operation: {:?}", err.0)
+        })?;
+
+        self.produce_operation = Some((op_id, receiver));
+
+        Ok(())
     }
 
     fn handle_announce(&mut self, announce: ClientAnnounce) -> ConnectionHandlerResult {
@@ -93,7 +119,7 @@ impl <C: Sender<ProtocolMessage>> ConnectionHandler<C> {
         }
     }
 
-    fn send_to_client(&mut self, message: ProtocolMessage) -> ConnectionHandlerResult {
+    fn send_to_client(&self, message: ProtocolMessage) -> ConnectionHandlerResult {
         self.client_sender.send(message).map_err(|e| {
             format!("Error sending outgoing message for connection_id: {}, message: {:?}", self.connection_id, e.into_message())
         })
@@ -127,6 +153,10 @@ impl <C: Sender<ProtocolMessage>> Sink for ConnectionHandler<C> {
     type SinkError = io::Error;
 
     fn start_send(&mut self, item: Self::SinkItem) -> StartSend<Self::SinkItem, Self::SinkError> {
+        if !self.can_process(&item) {
+            return Ok(AsyncSink::NotReady(item));
+        }
+
         self.handle_incoming_message(item).map(|()| {
             AsyncSink::Ready
         }).map_err(|err_string| {
@@ -135,6 +165,36 @@ impl <C: Sender<ProtocolMessage>> Sink for ConnectionHandler<C> {
     }
 
     fn poll_complete(&mut self) -> Poll<(), Self::SinkError> {
+        let response = match self.produce_operation {
+            Some((op_id, ref mut pending)) => {
+                let result = try_ready!(pending.poll().map_err(|recv_err| {
+                    error!("Failed to poll produce operation for client: op_id: {}: {:?}", op_id, recv_err);
+                    io::Error::new(io::ErrorKind::Other, "failed to poll produce operation")
+                }));
+
+                match result {
+                    Ok(id) => {
+                        ProtocolMessage::AckEvent(EventAck{
+                            op_id: op_id,
+                            event_id: id,
+                        })
+                    }
+                    Err(io_err) => {
+                        ProtocolMessage::Error(ErrorMessage {
+                            op_id: op_id,
+                            kind: ErrorKind::StorageEngineError,
+                            description: format!("Persistence Error: {}", io_err.description()),
+                        })
+                    }
+                }
+            },
+            None => return Ok(Async::Ready(()))
+        };
+
+        self.send_to_client(response).map_err(|e| {
+            io::Error::new(io::ErrorKind::Other, e)
+        })?;
+
         Ok(Async::Ready(()))
     }
 }

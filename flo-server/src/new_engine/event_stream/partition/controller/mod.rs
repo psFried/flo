@@ -68,6 +68,9 @@ impl PartitionImpl {
     }
 
     pub fn init_new(partition_num: ActorId, partition_data_dir: PathBuf, options: &EventStreamOptions, status_reader: AtomicBoolReader) -> io::Result<PartitionImpl> {
+
+        ::std::fs::create_dir_all(&partition_data_dir)?;
+
         Ok(PartitionImpl {
             event_stream_name: options.name.to_owned(),
             partition_num: partition_num,
@@ -99,6 +102,8 @@ impl PartitionImpl {
     }
 
     pub fn process(&mut self, operation: Operation) -> io::Result<()> {
+        trace!("Partition: {}, got operation: {:?}", self.partition_num, operation);
+
         let Operation{client_message_recv_time, connection_id, op_type} = operation;
 
         match op_type {
@@ -114,18 +119,30 @@ impl PartitionImpl {
 
     fn handle_produce(&mut self, produce: ProduceOperation) -> io::Result<()> {
         let ProduceOperation {client, op_id, events} = produce;
+        let result = self.append_all(events);
+        if let Err(e) = result.as_ref() {
+            error!("Failed to handle produce operation for op_id: {}, err: {:?}", op_id, e);
+        }
+        client.complete(result);
+        Ok(())
+    }
+
+    fn append_all(&mut self, events: Vec<ProduceEvent>) -> io::Result<FloEventId> {
+        let event_count = events.len();
         let timestamp = time::now();
+        let mut event_counter = 0;
         for produce_event in events {
-            let new_counter = self.greatest_event_id.increment_and_get_relaxed(1) as u64;
+            event_counter = self.greatest_event_id.increment_and_get_relaxed(1) as u64;
             let event = EventToProduce {
-                id: FloEventId::new(self.partition_num, new_counter),
+                id: FloEventId::new(self.partition_num, event_counter),
                 ts: timestamp,
                 produce: produce_event,
             };
             // early return if creating segment fails or if appending fails
             self.append(&event)?;
         }
-        Ok(())
+        debug!("partition: {} finished appending {} events ending with counter: {}", self.partition_num, event_count, event_counter);
+        Ok(FloEventId::new(self.partition_num, event_counter))
     }
 
     fn append(&mut self, event: &EventToProduce) -> io::Result<()> {

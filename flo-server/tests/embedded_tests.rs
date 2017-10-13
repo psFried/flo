@@ -50,7 +50,20 @@ fn integration_test<F>(test_name: &'static str, stream_opts: EventStreamOptions,
 
 
 #[test]
-fn startup_and_shutdown_embedded_server() {
+fn produce_one_event() {
+    integration_test("produce one event", default_test_options(), |server, mut reactor| {
+        let client = server.connect_client::<String>("testy mctesterson".to_owned(), codec());
+
+        let client = reactor.run(client.connect()).expect("failed to connect client");
+        let future = client.produce("/foo/bar", None, "my data".to_owned());
+
+        let (id, client) = reactor.run(future).expect("failed to run produce future");
+        println!("produced event: {}", id);
+    });
+}
+
+#[test]
+fn startup_embedded_server_and_connect_async_client() {
     integration_test("connect client", default_test_options(), |server, mut reactor| {
         let client = server.connect_client::<String>("testy mctesterson".to_owned(), codec());
         assert!(client.current_stream().is_none());

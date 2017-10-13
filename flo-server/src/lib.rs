@@ -7,15 +7,18 @@ extern crate flo_client_lib;
 #[macro_use]
 extern crate log;
 
+#[macro_use]
+extern crate futures;
+
+extern crate tokio_core;
+extern crate chrono;
+extern crate glob;
 extern crate memmap;
 extern crate clap;
 extern crate log4rs;
 extern crate num_cpus;
 extern crate byteorder;
-extern crate tokio_core;
-extern crate futures;
-extern crate chrono;
-extern crate glob;
+
 
 #[cfg(test)]
 extern crate env_logger;
