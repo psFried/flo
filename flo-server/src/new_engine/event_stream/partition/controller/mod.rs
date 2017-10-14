@@ -286,6 +286,7 @@ impl FloEvent for EventToProduce {
 mod test {
     use chrono::Duration;
     use tempdir::TempDir;
+    use futures::sync::oneshot;
 
     use super::*;
     use event::{FloEventId, ActorId};
@@ -319,10 +320,10 @@ mod test {
                                                         &options,
                                                         status.reader()).unwrap();
 
-            let (client_tx, client_rx) = create_client_channels();
+            let (client_tx, client_rx) = oneshot::channel();
 
             let produce = ProduceOperation {
-                client: client_tx.clone(),
+                client: client_tx,
                 op_id: 3,
                 events: vec![
                     ProduceEvent {
@@ -358,8 +359,10 @@ mod test {
                 }
             }).collect::<Vec<_>>();
 
+            let (client_tx, client_rx) = oneshot::channel();
+
             partition.handle_produce(ProduceOperation {
-                client: client_tx.clone(),
+                client: client_tx,
                 op_id: 4,
                 events: moar_events,
             }).expect("failed to persist large batch");

@@ -10,6 +10,9 @@ use new_engine::ConnectionId;
 use protocol::ProduceEvent;
 use event::{FloEventId, EventCounter};
 
+pub type ProduceResult = Result<FloEventId, io::Error>;
+pub type ProduceResponder = oneshot::Sender<ProduceResult>;
+pub type ProduceResponseReceiver = oneshot::Receiver<ProduceResult>;
 
 pub struct ProduceOperation {
     pub client: oneshot::Sender<io::Result<FloEventId>>,
@@ -51,7 +54,7 @@ pub struct Operation {
 }
 
 impl Operation {
-    pub fn produce(connection_id: ConnectionId, op_id: u32, events: Vec<ProduceEvent>) -> (Operation, oneshot::Receiver<io::Result<FloEventId>>) {
+    pub fn produce(connection_id: ConnectionId, op_id: u32, events: Vec<ProduceEvent>) -> (Operation, ProduceResponseReceiver) {
         let (tx, rx) = oneshot::channel();
         let produce = ProduceOperation {
             client: tx,
