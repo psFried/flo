@@ -21,7 +21,7 @@ use event::{FloEventId, EventCounter, ActorId};
 use self::segment::{Segment, SegmentReader};
 use self::controller::PartitionImpl;
 
-pub use self::ops::{OpType, Operation, ProduceOperation, ConsumeOperation};
+pub use self::ops::{OpType, Operation, ProduceOperation, ConsumeOperation, ProduceResult, ProduceResponder, ProduceResponseReceiver};
 pub use self::event_reader::{PartitionReader, EventFilter};
 
 pub type PartitionSender = ::std::sync::mpsc::Sender<Operation>;
@@ -144,6 +144,7 @@ impl SharedReaderRefs {
 }
 
 
+pub type AsyncProduceResult = Result<ProduceResponseReceiver, PartitionSendError>;
 
 #[derive(Clone, Debug)]
 pub struct PartitionRef {
@@ -248,7 +249,5 @@ pub fn get_partition_data_dir(event_stream_dir: &Path, partition_num: ActorId) -
     event_stream_dir.join(format!("{}", partition_num))
 }
 
-pub type ProduceResult = ::std::io::Result<FloEventId>;
-pub type AsyncProduceResult = Result<oneshot::Receiver<io::Result<FloEventId>>, PartitionSendError>;
 
 
