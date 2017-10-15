@@ -148,6 +148,7 @@ pub struct ConsumerStart {
 /// New message sent from client to server to begin reading events from the stream
 #[derive(Debug, PartialEq, Clone)]
 pub struct NewConsumerStart {
+    pub op_id: u32,
     pub version_vector: Vec<FloEventId>,
     pub max_events: u64,
     pub namespace: String,
@@ -205,7 +206,7 @@ pub struct CursorInfo {
 #[derive(Debug, PartialEq, Clone)]
 pub enum RecvEvent {
     Owned(OwnedFloEvent),
-    Ref(Arc<OwnedFloEvent>)
+    Ref(Arc<OwnedFloEvent>),
 }
 
 impl RecvEvent {
@@ -529,11 +530,13 @@ named!{parse_start_consuming<ProtocolMessage>,
 named!{parse_new_start_consuming<ProtocolMessage>,
     chain!(
         _tag: tag!(&[NEW_START_CONSUMING]) ~
+        op_id: be_u32 ~
         version_vec: parse_version_vec ~
         max_events: be_u64 ~
         namespace: parse_str,
         || {
             ProtocolMessage::NewStartConsuming(NewConsumerStart {
+                op_id: op_id,
                 version_vector: version_vec,
                 max_events: max_events,
                 namespace: namespace,
@@ -833,8 +836,9 @@ impl ProtocolMessage {
                                     .write_u64(*max_events)
                                     .finish()
             }
-            ProtocolMessage::NewStartConsuming(NewConsumerStart{ref version_vector, ref max_events, ref namespace}) => {
+            ProtocolMessage::NewStartConsuming(NewConsumerStart{ref op_id, ref version_vector, ref max_events, ref namespace}) => {
                 let mut serializer = Serializer::new(buf).write_u8(NEW_START_CONSUMING)
+                        .write_u32(*op_id)
                         .write_u16(version_vector.len() as u16);
 
                 for id in version_vector.iter() {
@@ -1019,6 +1023,7 @@ mod test {
             FloEventId::new(8, 5)
         ];
         test_serialize_then_deserialize(&ProtocolMessage::NewStartConsuming(NewConsumerStart{
+            op_id: 321,
             version_vector: version_vec,
             max_events: 987,
             namespace: "/foo/bar/*".to_owned(),

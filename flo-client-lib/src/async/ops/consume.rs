@@ -25,9 +25,9 @@ type PollState<D> = Poll<PollSuccess<D>, ConsumeError<D>>;
 impl <D: Debug> Consume<D> {
 
     pub fn new(mut client: AsyncClient<D>, namespace: String, version_vec: &VersionVector, event_limit: Option<u64>) -> Consume<D> {
-        let total_event_limit = event_limit.unwrap_or(::std::u64::MAX);
         let op_id = client.next_op_id();
         let consumer_start = NewConsumerStart {
+            op_id: op_id,
             version_vector: version_vec.snapshot(),
             max_events: event_limit.unwrap_or(0),
             namespace: namespace.clone(),

@@ -21,8 +21,19 @@ use event::{FloEventId, EventCounter, ActorId};
 use self::segment::{Segment, SegmentReader};
 use self::controller::PartitionImpl;
 
-pub use self::ops::{OpType, Operation, ProduceOperation, ConsumeOperation, ProduceResult, ProduceResponder, ProduceResponseReceiver};
+pub use self::ops::{OpType,
+                    Operation,
+                    ProduceOperation,
+                    ConsumeOperation,
+                    ProduceResult,
+                    ProduceResponder,
+                    ProduceResponseReceiver,
+                    ConsumeResponseReceiver,
+                    ConsumeResponder,
+                    ConsumerNotifier,
+};
 pub use self::event_reader::{PartitionReader, EventFilter};
+pub use self::segment::PersistentEvent;
 
 pub type PartitionSender = ::std::sync::mpsc::Sender<Operation>;
 pub type PartitionReceiver = ::std::sync::mpsc::Receiver<Operation>;
@@ -145,6 +156,7 @@ impl SharedReaderRefs {
 
 
 pub type AsyncProduceResult = Result<ProduceResponseReceiver, PartitionSendError>;
+pub type AsyncConsumeResult = Result<ConsumeResponseReceiver, PartitionSendError>;
 
 #[derive(Clone, Debug)]
 pub struct PartitionRef {
@@ -180,6 +192,12 @@ impl PartitionRef {
     pub fn event_stream_name(&self) -> &str {
         &self.event_stream_name
     }
+
+    pub fn consume(&mut self, connection_id: ConnectionId, op_id: u32, notifier: Box<ConsumerNotifier>, filter: EventFilter, start: EventCounter) -> AsyncConsumeResult {
+        let (op, rx) = Operation::consume(connection_id, notifier, filter, start);
+        self.send(op).map(|()| rx)
+    }
+
 
     pub fn produce(&mut self, connection_id: ConnectionId, op_id: u32, events: Vec<ProduceEvent>) -> AsyncProduceResult {
         let (op, rx) = Operation::produce(connection_id, op_id, events);

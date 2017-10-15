@@ -216,7 +216,7 @@ impl PartitionImpl {
     }
 
     fn handle_consume(&mut self, connection_id: ConnectionId, consume: ConsumeOperation) -> io::Result<()> {
-        let ConsumeOperation {client_sender, filter, start_exclusive} = consume;
+        let ConsumeOperation {client_sender, notifier, filter, start_exclusive} = consume;
         let reader = self.create_reader(connection_id, filter, start_exclusive);
         let _ = client_sender.complete(reader);
         Ok(())
@@ -344,9 +344,9 @@ mod test {
             partition.handle_produce(produce).unwrap();
 
             let mut reader: PartitionReader = partition.create_reader(CONNECTION, EventFilter::All, 0);
-            let event = reader.read_next().expect("read_next returned None").expect("read_next returned error");
+            let event = reader.next_matching().expect("read_next returned None").expect("read_next returned error");
             assert_eq!(b"the quick", event.data());
-            let event2 = reader.read_next().expect("read_next returned None").expect("read_next returned error");
+            let event2 = reader.next_matching().expect("read_next returned None").expect("read_next returned error");
             assert_eq!(b"brown fox", event2.data());
             assert!(reader.next().is_none());
 

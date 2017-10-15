@@ -26,6 +26,14 @@ impl EventFilter {
             EventFilter::Glob(ref glob) => glob.matches(event.namespace()),
         }
     }
+
+    pub fn parse(string: &str) -> Result<EventFilter, String> {
+        if string == "/**/*" || string == "**/*" {
+            Ok(EventFilter::All)
+        } else {
+            NamespaceGlob::new(string).map(|glob| EventFilter::Glob(glob))
+        }
+    }
 }
 
 //TODO: fill in event reader to iterate events in a partition
@@ -53,7 +61,23 @@ impl PartitionReader {
         }
     }
 
-    pub fn read_next(&mut self) -> Option<io::Result<PersistentEvent>> {
+    pub fn next_matching(&mut self) -> Option<io::Result<PersistentEvent>> {
+        let mut next = self.read_next();
+        while self.should_skip(&next) {
+            next = self.read_next();
+        }
+        next
+    }
+
+    fn should_skip(&self, result: &Option<Result<PersistentEvent, io::Error>>) -> bool {
+        if let Some(Ok(ref event)) = *result {
+            !self.filter.matches(event)
+        } else {
+            false
+        }
+    }
+
+    fn read_next(&mut self) -> Option<io::Result<PersistentEvent>> {
         if self.returned_error {
             return None;
         }
@@ -84,7 +108,7 @@ impl Iterator for PartitionReader {
     type Item = io::Result<PersistentEvent>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.read_next()
+        self.next_matching()
     }
 }
 

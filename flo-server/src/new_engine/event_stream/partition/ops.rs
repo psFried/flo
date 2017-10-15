@@ -3,6 +3,7 @@ use std::io;
 use std::fmt::{self, Debug};
 use std::time::Instant;
 
+use futures::task::Task;
 use futures::sync::oneshot;
 
 use new_engine::event_stream::partition::{EventFilter, PartitionReader};
@@ -27,10 +28,22 @@ impl Debug for ProduceOperation {
     }
 }
 
+pub type ConsumeResponder = oneshot::Sender<PartitionReader>;
+pub type ConsumeResponseReceiver = oneshot::Receiver<PartitionReader>;
+
+pub trait ConsumerNotifier: Send {
+    /// Notify the consumer that an event is ready to be read.
+    /// The impl just calls `notify()` on the `futures::task::Task` associated with the consumer
+    fn notify(&mut self);
+    /// returns `false` if the consumer is finished and will never again want to be notified about future events. Otherwise, `true`
+    fn is_active(&self) -> bool;
+}
+
 pub struct ConsumeOperation {
     pub client_sender: oneshot::Sender<PartitionReader>,
     pub filter: EventFilter,
     pub start_exclusive: EventCounter,
+    pub notifier: Box<ConsumerNotifier>,
 }
 
 impl Debug for ConsumeOperation {
@@ -54,6 +67,22 @@ pub struct Operation {
 }
 
 impl Operation {
+    pub fn consume(connection_id: ConnectionId, notifier: Box<ConsumerNotifier>, filter: EventFilter, start_exclusive: EventCounter) -> (Operation, ConsumeResponseReceiver) {
+        let (tx, rx) = oneshot::channel();
+        let consume = ConsumeOperation {
+            client_sender: tx,
+            filter: filter,
+            start_exclusive: start_exclusive,
+            notifier: notifier,
+        };
+        let op = Operation {
+            connection_id: connection_id,
+            client_message_recv_time: Instant::now(),
+            op_type: OpType::Consume(consume)
+        };
+        (op, rx)
+    }
+
     pub fn produce(connection_id: ConnectionId, op_id: u32, events: Vec<ProduceEvent>) -> (Operation, ProduceResponseReceiver) {
         let (tx, rx) = oneshot::channel();
         let produce = ProduceOperation {
