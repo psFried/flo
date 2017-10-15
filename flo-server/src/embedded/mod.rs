@@ -5,13 +5,13 @@
 use std::fmt::Debug;
 use std::io;
 
-use tokio_core::reactor::{Handle};
+use tokio_core::reactor::{Handle, Remote};
 use futures::Stream;
 
 use flo_client_lib::async::{AsyncClient, MessageReceiver, MessageSender};
 use flo_client_lib::codec::EventCodec;
 
-use new_engine::{EngineRef, ClientSender, ClientReceiver, create_client_channels, start_controller, ConnectionHandlerImpl};
+use new_engine::{EngineRef, ClientSender, ClientReceiver, create_client_channels, start_controller, ConnectionHandler};
 
 pub use new_engine::ControllerOptions;
 pub use new_engine::event_stream::EventStreamOptions;
@@ -24,14 +24,15 @@ pub struct EmbeddedFloServer {
 
 impl EmbeddedFloServer {
 
-    pub fn connect_client<D: Debug>(&self, name: String, codec: Box<EventCodec<EventData=D>>) -> AsyncClient<D> {
+    pub fn connect_client<D: Debug>(&self, name: String, codec: Box<EventCodec<EventData=D>>, handle: Handle) -> AsyncClient<D> {
         let engine_ref = self.engine_ref.clone();
         let connection_id = engine_ref.next_connection_id();
         let (client_sender, client_receiver) = create_client_channels();
 
-        let connection_handler = ConnectionHandlerImpl::new(connection_id,
+        let connection_handler = ConnectionHandler::new(connection_id,
                                                             client_sender.clone(),
-                                                            engine_ref);
+                                                            engine_ref,
+                                                             handle);
 
         let receiver = client_receiver.map_err(|recv_err| {
             io::Error::new(io::ErrorKind::UnexpectedEof, format!("Error reading from channel: {:?}", recv_err))

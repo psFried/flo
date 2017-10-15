@@ -53,7 +53,7 @@ fn run_future<T: Debug, E: Debug, F: Future<Item=T, Error=E> + Debug>(reactor: &
     use tokio_core::reactor::Timeout;
     use futures::future::Either;
 
-    let timeout_millis = 100;
+    let timeout_millis = 250000;
 
     let timeout = Timeout::new(::std::time::Duration::from_millis(timeout_millis), &reactor.handle()).unwrap();
     let either_future = timeout.select2(future);
@@ -69,7 +69,7 @@ fn run_future<T: Debug, E: Debug, F: Future<Item=T, Error=E> + Debug>(reactor: &
 #[test]
 fn produce_one_event_then_consume_it() {
     integration_test("produce one event", default_test_options(), |server, mut reactor| {
-        let client = server.connect_client::<String>("testy mctesterson".to_owned(), codec());
+        let client = server.connect_client::<String>("testy mctesterson".to_owned(), codec(), reactor.handle());
 
         let client = reactor.run(client.connect()).expect("failed to connect client");
         let future = client.produce("/foo/bar", None, "my data".to_owned());
@@ -90,7 +90,7 @@ fn produce_one_event_then_consume_it() {
 #[test]
 fn startup_embedded_server_and_connect_async_client() {
     integration_test("connect client", default_test_options(), |server, mut reactor| {
-        let client = server.connect_client::<String>("testy mctesterson".to_owned(), codec());
+        let client = server.connect_client::<String>("testy mctesterson".to_owned(), codec(), reactor.handle());
         assert!(client.current_stream().is_none());
         let future = client.connect();
         let client = reactor.run(future).expect("failed to run connect");

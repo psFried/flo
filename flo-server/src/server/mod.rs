@@ -33,7 +33,7 @@ fn run_new_engine(options: ServerOptions) -> io::Result<()> {
                      start_controller,
                      system_stream_name,
                      create_client_channels,
-                     ConnectionHandlerImpl,
+                     ConnectionHandler,
                      ConnectionHandlerResult};
     use new_engine::event_stream::EventStreamOptions;
     use self::flo_io::{ProtocolMessageStream, ServerMessageStream};
@@ -59,7 +59,9 @@ fn run_new_engine(options: ServerOptions) -> io::Result<()> {
     let address: SocketAddr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), server_port));
     let listener = ::std::net::TcpListener::bind(address)?;
 
-    event_loop_handles.next_handle().spawn(move |handle| {
+    let remote = event_loop_handles.next_handle();
+    // use the same remote for the connection handler so that all the io for a given connection is on the same thread
+    remote.spawn(move |handle| {
 
         let listener = TcpListener::from_listener(listener, &address, &handle).unwrap();
 
@@ -76,8 +78,9 @@ fn run_new_engine(options: ServerOptions) -> io::Result<()> {
             let client_engine_ref = engine_ref.clone();
             let connection_id = client_engine_ref.next_connection_id();
             let remote_handle = event_loop_handles.next_handle();
-            let (client_tx, client_rx) = create_client_channels();
+            let connection_handler_remote = remote_handle.clone();
 
+            let (client_tx, client_rx) = create_client_channels();
 
             info!("Opened connection_id: {} to address: {}", connection_id, client_addr);
 
@@ -87,10 +90,12 @@ fn run_new_engine(options: ServerOptions) -> io::Result<()> {
                 let server_to_client = ServerMessageStream::new(connection_id, client_rx, tcp_writer);
 
                 let client_message_stream = ProtocolMessageStream::new(connection_id, tcp_reader);
-                let connection_handler = ConnectionHandlerImpl::new(
+                let connection_handler = ConnectionHandler::new(
                     connection_id,
                     client_tx.clone(),
-                    client_engine_ref);
+                    client_engine_ref,
+                     client_handle.clone());
+
                 let client_to_server = connection_handler
                         .send_all(client_message_stream)
                         .map(|_| ());

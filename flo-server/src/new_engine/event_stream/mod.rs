@@ -137,7 +137,7 @@ impl EventStreamRef {
     }
 
     pub fn get_partition(&mut self, partition: ActorId) -> Option<&mut PartitionRef> {
-        self.partitions.get_mut(partition as usize)
+        self.partitions.get_mut(partition as usize - 1)
     }
 }
 
