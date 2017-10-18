@@ -352,7 +352,7 @@ mod test {
 
     struct Fixture {
         partition_receivers: HashMap<(String, ActorId), PartitionReceiver>,
-        client_receiver: ClientReceiver,
+        client_receiver: Option<ClientReceiver>,
         engine: EngineRef,
         reactor: Core,
     }
@@ -383,7 +383,7 @@ mod test {
 
             let fixture = Fixture {
                 partition_receivers: partition_receivers,
-                client_receiver: client_rx,
+                client_receiver: Some(client_rx),
                 engine: engine,
                 reactor: reactor
             };
@@ -426,7 +426,24 @@ mod test {
         }
 
         fn assert_sent_to_client(&mut self, expected: ProtocolMessage) {
-            unimplemented!()
+            use tokio_core::reactor::Timeout;
+            use futures::future::Either;
+
+            let recv = self.client_receiver.take().unwrap();
+            let timeout = Timeout::new(::std::time::Duration::from_millis(100), &self.reactor.handle());
+            let future = recv.into_future().select2(timeout);
+
+            let result = self.reactor.run(future);
+            match result {
+                Ok(Either::A(((message, receiver), _))) => {
+                    self.client_receiver = Some(receiver);
+                    assert_eq!(Some(expected), message)
+                },
+                Ok(Either::B(_)) => panic!("Timed out on recv with Ok"),
+                Err(Either::A(_)) => panic!("Recv err attempting to recv next message, expected: {:?}", expected),
+                Err(Either::B(_)) => panic!("Timout Err")
+            }
+
         }
 
     }
