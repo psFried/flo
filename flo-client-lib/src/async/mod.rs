@@ -211,6 +211,10 @@ mod test {
                 Ok(Async::NotReady)
             }
         }
+
+        fn close(&mut self) -> Poll<(), Self::SinkError> {
+            self.poll_complete()
+        }
     }
 
 
@@ -419,6 +423,7 @@ mod test {
         let sent = send_verify.get_received();
         let expected_sent = vec![
             ProtocolMessage::NewStartConsuming(NewConsumerStart {
+                op_id: consume_op_id,
                 version_vector: vec![FloEventId::new(1, 2), FloEventId::new(2, 8), FloEventId::new(3, 4)],
                 max_events: 2,
                 namespace: "/foo/*".to_owned(),
