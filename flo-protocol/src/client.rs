@@ -427,6 +427,16 @@ named!{parse_non_zero_event_id<FloEventId>,
     map_res!(parse_event_id, require_event_id)
 }
 
+named!{pub parse_zeroable_event_id<FloEventId>,
+    chain!(
+        counter: be_u64 ~
+        actor: be_u16,
+        || {
+            FloEventId::new(actor, counter)
+        }
+    )
+}
+
 named!{pub parse_event_id<Option<FloEventId>>,
     chain!(
         counter: be_u64 ~
@@ -612,7 +622,7 @@ named!{parse_peer_announce<ProtocolMessage>,
 }
 
 named!{parse_version_vec<Vec<FloEventId>>,
-    length_count!(be_u16, parse_non_zero_event_id)
+    length_count!(be_u16, parse_zeroable_event_id)
 }
 
 named!{parse_peer_update<ProtocolMessage>,
@@ -1027,7 +1037,19 @@ mod test {
             version_vector: version_vec,
             max_events: 987,
             namespace: "/foo/bar/*".to_owned(),
-        }))
+        }));
+    }
+
+    #[test]
+    fn serde_new_start_consuming_with_one_event() {
+        let vv = vec![FloEventId::new(1, 0)];
+        let msg = ProtocolMessage::NewStartConsuming(NewConsumerStart {
+            op_id: 3,
+            version_vector: vv,
+            max_events: 1,
+            namespace: "/foo/*".to_owned(),
+        });
+        test_serialize_then_deserialize(&msg);
     }
 
     #[test]
