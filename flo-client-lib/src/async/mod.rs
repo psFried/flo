@@ -23,12 +23,23 @@ use self::recv::{MessageStream, MessageRecvStream};
 use self::send::{MessageSink, MessageSendSink};
 use self::ops::{SendMessage, AwaitResponse, ProduceOne, Consume, RequestResponse, ConnectAsyncClient};
 
+
+pub use self::tcp_connect::{tcp_connect, AsyncTcpClientConnect};
 pub use self::current_stream_state::{CurrentStreamState, PartitionState};
 pub type MessageSender = Box<Sink<SinkItem=ProtocolMessage, SinkError=io::Error>>;
 pub type MessageReceiver = Box<Stream<Item=ProtocolMessage, Error=io::Error>>;
 
 pub const DEFAULT_RECV_BATCH_SIZE: usize = 1000;
 
+
+/// Represents a single connection to a flo server.
+/// All operations return a `Future` representing the result of the operation. The actual operation will not be performed
+/// until the `Future` is driven to completion by an `Executor`. Most of these futures will yield a result containing both
+/// the desired result and the client itself.
+///
+/// An `AsyncClient` uses an `EventCodec` to convert between an application's event data type and the binary data used by flo.
+/// The transport layer is abstracted, allowing the client to work over TCP or use in memory channels (for an embedded server).
+///
 pub struct AsyncClient<D: Debug> {
     client_name: String,
     recv_batch_size: Option<usize>,
@@ -49,15 +60,18 @@ impl <D: Debug> Debug for AsyncClient<D> {
 
 impl <D: Debug> AsyncClient<D> {
 
-    pub fn from_tcp_stream(name: String, tcp_stream: TcpStream, codec: Box<EventCodec<EventData=D>>) -> io::Result<AsyncClient<D>> {
-        tcp_stream.set_nodelay(true)?; // TODO: perhaps there's a better place to set this. Should we allow the caller to leave Nagle enabled?
+    /// Creates a new client from an already connected `TCPStream`. Generally, you should prefer to just use the `tcp_connect`
+    /// function, but using `from_tcp_stream` is available for when extra control is needed in how the tcp stream is
+    /// configured.
+    pub fn from_tcp_stream(name: String, tcp_stream: TcpStream, codec: Box<EventCodec<EventData=D>>) -> AsyncClient<D> {
         let (tcp_read, tcp_write) = tcp_stream.split();
         let send_sink = MessageSendSink::new(tcp_write);
         let read_stream = MessageRecvStream::new(tcp_read);
 
-        Ok(AsyncClient::new(name, Box::new(send_sink) as MessageSender, Box::new(read_stream) as MessageReceiver, codec))
+        AsyncClient::new(name, Box::new(send_sink) as MessageSender, Box::new(read_stream) as MessageReceiver, codec)
     }
 
+    /// Creates a new AsyncClient from raw parts
     pub fn new(name: String, send: MessageSender, recv: MessageReceiver, codec: Box<EventCodec<EventData=D>>) -> AsyncClient<D> {
         AsyncClient {
             client_name: name,
@@ -71,18 +85,30 @@ impl <D: Debug> AsyncClient<D> {
         }
     }
 
+    /// If this connection has successfully connected to the server, then this will return the most recent `CurrentStreamState`
+    /// received from the server. If the connection has never been completed, then this will return `None`.
+    /// Note that the `CurrentStreamState` may not necessarily be up to date with the most recent state of the server, as
+    /// this function does not actually query the state, but just returns the result from the last query or handshake.
     pub fn current_stream(&self) -> Option<&CurrentStreamState> {
         self.current_stream.as_ref()
     }
 
+    /// Produce a single event on the stream and await acknowledgement that it was persisted. Returns a future that resolves
+    /// to a tuple of the `FloEventId` of the produced event and this `AsyncClient`.
     pub fn produce<N: Into<String>>(self, namespace: N, parent_id: Option<FloEventId>, data: D) -> ProduceOne<D> {
         ProduceOne::new(self, namespace.into(), parent_id, data)
     }
 
+    /// Start consuming events from the server. Returns a `Stream` that yields events continuously until the `event_limit` is reached.
+    /// If `event_limit` is `None`, then the resulting `Stream` will never terminate unless there's an error.
+    /// The `version_vector` represents the exclusive starting `EventCounter` for each partition on the stream that the consumer
+    /// will receive events for. Only events matching the `namespace` glob will be received.
     pub fn consume<N: Into<String>>(self, namespace: N, version_vector: &VersionVector, event_limit: Option<u64>) -> Consume<D> {
         Consume::new(self, namespace.into(), version_vector, event_limit)
     }
 
+    /// Initiates the handshake with the server. The returned `Future` resolves the this client, which will then be guaranteed
+    /// to have the `current_stream()` return `Some`.
     pub fn connect(self) -> ConnectAsyncClient<D> {
         ConnectAsyncClient::new(self)
     }
@@ -110,6 +136,13 @@ pub enum ErrorType {
     Io(io::Error),
     Server(ErrorMessage)
 }
+
+impl From<io::Error> for ErrorType {
+    fn from(io_err: io::Error) -> Self {
+        ErrorType::Io(io_err)
+    }
+}
+
 
 
 

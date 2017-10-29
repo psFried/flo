@@ -94,6 +94,7 @@ fn app_args() -> App<'static, 'static> {
                     .long("max-io-threads")
                     .takes_value(true)
                     .help("The maximum number of threads to spawn for handling client connections. The actual number of threads used may be less"))
+
             .arg(Arg::with_name("use-new-engine")
                     .long("use-new-engine")
                     .help("use the new engine (breaks everything :D )"))

@@ -86,3 +86,13 @@ impl <D: Debug> From<RequestResponseError<D>> for ConnectClientError {
         }
     }
 }
+
+
+impl From<io::Error> for ConnectClientError {
+    fn from(io_err: io::Error) -> Self {
+        ConnectClientError {
+            message: "IO Error during connection",
+            error_type: io_err.into(),
+        }
+    }
+}
