@@ -2,7 +2,6 @@ use super::EventCodec;
 
 use serde::{Serialize, Deserialize};
 use serde_json::{Serializer as JsonSerializer, Deserializer as JsonDeserializer};
-use serde_json::error::Error as JsonError;
 use std::marker::PhantomData;
 use std::error::Error;
 

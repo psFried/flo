@@ -4,7 +4,6 @@ mod options;
 use std::net::{ToSocketAddrs, TcpStream};
 use std::collections::VecDeque;
 use std::io;
-use std::marker::PhantomData;
 
 use codec::EventCodec;
 use event::{FloEventId, OwnedFloEvent, VersionVector};

@@ -715,7 +715,7 @@ named!{pub parse_any<ProtocolMessage>, alt!(
         parse_client_announce
 )}
 
-fn serialize_new_produce_header(header: &ProduceEvent, mut buf: &mut [u8]) -> usize {
+fn serialize_new_produce_header(header: &ProduceEvent, buf: &mut [u8]) -> usize {
     let (counter, actor) = header.parent_id.map(|id| {
         (id.event_counter, id.actor)
     }).unwrap_or((0, 0));
