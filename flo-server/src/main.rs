@@ -1,5 +1,3 @@
-#![feature(conservative_impl_trait)]
-
 extern crate flo_server;
 extern crate flo_event as event;
 extern crate flo_protocol as protocol;

@@ -43,7 +43,7 @@ impl PartitionImpl {
 
         let segment_files = get_segment_files(&partition_data_dir)?;
         let mut initialized_segments = VecDeque::with_capacity(segment_files.len());
-        let mut reader_refs = SharedReaderRefsMut::with_capacity(segment_files.len());
+        let reader_refs = SharedReaderRefsMut::with_capacity(segment_files.len());
         for segment_file in segment_files {
             let segment = segment_file.init_segment(&mut index)?;
             let reader = segment.iter_from_start();
@@ -216,7 +216,7 @@ impl PartitionImpl {
     }
 
     fn handle_consume(&mut self, connection_id: ConnectionId, consume: ConsumeOperation) -> io::Result<()> {
-        let ConsumeOperation {client_sender, notifier, filter, start_exclusive} = consume;
+        let ConsumeOperation {client_sender, filter, start_exclusive, ..} = consume;
         let reader = self.create_reader(connection_id, filter, start_exclusive);
         let _ = client_sender.complete(reader);
         Ok(())

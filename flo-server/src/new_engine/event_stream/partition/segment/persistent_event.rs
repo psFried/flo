@@ -48,9 +48,7 @@ impl PersistentEvent {
         let len = PersistentEvent::get_repr_length(event);
 
         {
-            let mmap_buf = unsafe {
-                mmap.as_mut_slice()
-            };
+            let mmap_buf = mmap.as_mut_slice();
             write_event_unchecked(&mut mmap_buf[start_offset..], event, len);
         }
 

@@ -193,7 +193,7 @@ impl PartitionRef {
         &self.event_stream_name
     }
 
-    pub fn consume(&mut self, connection_id: ConnectionId, op_id: u32, notifier: Box<ConsumerNotifier>, filter: EventFilter, start: EventCounter) -> AsyncConsumeResult {
+    pub fn consume(&mut self, connection_id: ConnectionId, _op_id: u32, notifier: Box<ConsumerNotifier>, filter: EventFilter, start: EventCounter) -> AsyncConsumeResult {
         let (op, rx) = Operation::consume(connection_id, notifier, filter, start);
         self.send(op).map(|()| rx)
     }

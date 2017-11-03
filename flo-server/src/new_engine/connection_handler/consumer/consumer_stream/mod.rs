@@ -17,7 +17,7 @@ use protocol::{ProtocolMessage, RecvEvent};
 pub use self::notifier::{ConsumerTaskSetter, create_consumer_notifier};
 pub use self::status_check::{ConsumerStatus, ConsumerStatusChecker, ConsumerStatusSetter, create_status_channel};
 
-
+#[derive(Debug)]
 pub struct PendingConsumer {
     pub op_id: u32,
     pub task_setter: ConsumerTaskSetter,
