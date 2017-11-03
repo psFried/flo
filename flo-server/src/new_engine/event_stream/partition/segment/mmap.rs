@@ -35,7 +35,7 @@ impl MmapAppender {
         // While we're at it, we'll initialize the index as well
         let header_len = SegmentHeader::get_repr_length();
         let file_len = mmap.len();
-        let mut appender = MmapAppender {
+        let appender = MmapAppender {
             dirty: false,
             inner: mmap,
             // temporarily set the head to be the same as the file length

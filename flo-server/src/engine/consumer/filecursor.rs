@@ -56,7 +56,7 @@ impl PartialEq for Cursor {
 
 pub fn start<S: Sender<ProtocolMessage> + 'static, R: EventReader + 'static, C: Sender<ConsumerManagerMessage> + 'static>(mut state: ConsumerState,
                                                                            client_sender: S,
-                                                                           mut reader: &mut R,
+                                                                           reader: &mut R,
                                                                            consumer_manager_sender: C) -> io::Result<CursorImpl> {
 
     let connection_id = state.connection_id;

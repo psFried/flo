@@ -1,3 +1,4 @@
+pub mod connection_state;
 mod consumer;
 
 use std::fmt::{self, Debug};
@@ -12,37 +13,17 @@ use channels::Sender;
 use protocol::*;
 use new_engine::{ConnectionId, ClientSender, EngineRef, SYSTEM_STREAM_NAME, system_stream_name};
 use new_engine::event_stream::EventStreamRef;
-use new_engine::event_stream::partition::{PartitionReader,
-                                          EventFilter,
-                                          PartitionSendError,
-                                          Operation,
-                                          ProduceResponseReceiver,
-                                          ConsumeResponseReceiver,
-                                          AsyncConsumeResult,
-                                          ConsumerNotifier};
+use new_engine::event_stream::partition::ProduceResponseReceiver;
 use event::FloEventId;
-use self::consumer::consumer_stream::{Consumer,
-                     ConsumerTaskSetter,
-                     ConsumerStatusChecker,
-                     ConsumerStatusSetter,
-                     PendingConsumer,
-                     prepare_consumer_start,
-                     create_status_channel};
+use self::connection_state::ConnectionState;
+use self::consumer::ConsumerConnectionState;
 
-const DEFAULT_CONSUME_BATCH_SIZE: u32 = 10_000;
 
 
 pub struct ConnectionHandler {
-    reactor: Handle,
-    client_name: Option<String>,
-    connection_id: ConnectionId,
-    consume_batch_size: u32,
-    client_sender: ClientSender,
-    engine: EngineRef,
-    event_stream: EventStreamRef,
+    common_state: ConnectionState,
+    consumer_state: ConsumerConnectionState,
     produce_operation: Option<(u32, ProduceResponseReceiver)>,
-    pending_consume_operation: Option<(PendingConsumer, ConsumeResponseReceiver)>,
-    consumer_ref: Option<ConsumerStatusSetter>,
 }
 
 
@@ -50,177 +31,51 @@ pub type ConnectionHandlerResult = Result<(), String>;
 
 impl ConnectionHandler {
     pub fn new(connection: ConnectionId, client_sender: ClientSender, engine: EngineRef, handle: Handle) -> ConnectionHandler {
-        let event_stream = engine.get_default_stream();
         ConnectionHandler {
-            reactor: handle,
-            client_name: None,
-            consume_batch_size: DEFAULT_CONSUME_BATCH_SIZE,
-            connection_id: connection,
-            client_sender: client_sender,
-            engine: engine,
-            event_stream: event_stream,
+            common_state: ConnectionState::new(connection, client_sender, engine, handle),
+            consumer_state: ConsumerConnectionState::new(),
             produce_operation: None,
-            pending_consume_operation: None,
-            consumer_ref: None,
         }
     }
 
-    pub fn can_process(&self, message: &ProtocolMessage) -> bool {
-        self.produce_operation.is_none() && self.pending_consume_operation.is_none()
+    pub fn can_process(&self, _message: &ProtocolMessage) -> bool {
+        self.produce_operation.is_none() && !self.consumer_state.requires_poll_complete()
     }
 
     pub fn handle_incoming_message(&mut self, message: ProtocolMessage) -> ConnectionHandlerResult {
-
-        trace!("client: '{:?}', connection_id: {}, received message: {:?}", self.client_name, self.connection_id, message);
+        trace!("client: {:?}, received message: {:?}", self.common_state, message);
 
         match message {
-            ProtocolMessage::SetEventStream(SetEventStream{op_id, name}) => self.set_event_stream(op_id, name),
-            ProtocolMessage::Announce(announce) => self.handle_announce(announce),
+            ProtocolMessage::SetEventStream(SetEventStream{op_id, name}) => self.common_state.set_event_stream(op_id, name),
+            ProtocolMessage::Announce(announce) => self.common_state.handle_announce_message(announce),
             ProtocolMessage::ProduceEvent(produce) => self.handle_produce(produce),
             ProtocolMessage::NewStartConsuming(consumer_start) => self.handle_start_consuming(consumer_start),
             _ => unimplemented!()
         }
     }
 
-    fn handle_start_consuming(&mut self, start: NewConsumerStart) -> ConnectionHandlerResult {
-        let NewConsumerStart {op_id, version_vector, namespace, max_events} = start;
-
-        match EventFilter::parse(&namespace) {
-            Ok(filter) => {
-                let start = version_vector.first().map(|id| id.event_counter).unwrap_or(0);
-                let (pending, notifier) = prepare_consumer_start(op_id, Some(max_events));
-
-                let result = self.event_stream.get_partition(1).unwrap().consume(
-                    self.connection_id,
-                    op_id,
-                    notifier,
-                    filter,
-                    start);
-
-                self.handle_consume_send_result(op_id, result, pending)
-            }
-            Err(description) => {
-                self.send_to_client(ProtocolMessage::Error(ErrorMessage {
-                    op_id: op_id,
-                    kind: ErrorKind::InvalidNamespaceGlob,
-                    description: description,
-                }))
-            }
-        }
-    }
-
-
-    fn handle_consume_send_result(&mut self, op_id: u32, result: AsyncConsumeResult, pending: PendingConsumer) -> ConnectionHandlerResult {
-        match result {
-            Ok(recv) => {
-                self.pending_consume_operation = Some((pending, recv));
-                Ok(())
-            }
-            Err(send_err) => {
-                Err(format!("Failed to send operation: {:?}", send_err.0))
-            }
-        }
+    fn handle_start_consuming(&mut self, message: NewConsumerStart) -> ConnectionHandlerResult {
+        let ConnectionHandler {ref mut common_state, ref mut consumer_state, ..} = *self;
+        consumer_state.handle_start_consuming(message, common_state)
     }
 
     fn handle_produce(&mut self, produce: ProduceEvent) -> ConnectionHandlerResult {
         debug_assert!(self.produce_operation.is_none());
         let op_id = produce.op_id;
+        let connection_id = self.common_state.connection_id;
 
-        let partition = self.event_stream.get_partition(1).unwrap();
-        let receiver = partition.produce(self.connection_id, op_id, vec![produce]).map_err(|err| {
-            format!("Failed to send operation: {:?}", err.0)
-        })?;
+        let receiver = {
+            let partition = self.common_state.event_stream.get_partition(1).unwrap();
+            partition.produce(connection_id, op_id, vec![produce]).map_err(|err| {
+                format!("Failed to send operation: {:?}", err.0)
+            })?
+        };
 
         self.produce_operation = Some((op_id, receiver));
 
         Ok(())
     }
 
-    fn handle_announce(&mut self, announce: ClientAnnounce) -> ConnectionHandlerResult {
-        let ClientAnnounce {op_id, client_name, protocol_version} = announce;
-        // todo: return error if client name is already set or if protocol version != 1
-        self.client_name = Some(client_name);
-
-        let status = create_stream_status(op_id, &self.event_stream);
-        self.send_to_client(ProtocolMessage::StreamStatus(status)).map_err(|err| {
-            format!("Error sending message to client: {:?}", err)
-        })
-    }
-
-    fn set_event_stream(&mut self, op_id: u32, name: String) -> ConnectionHandlerResult {
-        use new_engine::ConnectError;
-        trace!("attempting to set event stream for {:?} to '{}'", self, name);
-        match self.engine.get_stream(&name) {
-            Ok(new_stream) => {
-                debug!("Setting event stream to '{}' for {:?}", new_stream.name(), self);
-                let stream_status = create_stream_status(op_id, &new_stream);
-                self.event_stream = new_stream;
-                self.send_to_client(ProtocolMessage::StreamStatus(stream_status))
-            }
-            Err(ConnectError::NoStream) => {
-                let err_message = ErrorMessage {
-                    op_id: op_id,
-                    kind: ErrorKind::NoSuchStream,
-                    description: format!("Event stream: '{}' does not exist", name),
-                };
-                self.send_to_client(ProtocolMessage::Error(err_message))
-            }
-            Err(ConnectError::InitFailed(io_err)) => {
-                let err_message = ErrorMessage {
-                    op_id: op_id,
-                    kind: ErrorKind::StorageEngineError,
-                    description: format!("Failed to create stream: '{}': {:?}", name, io_err)
-                };
-                self.send_to_client(ProtocolMessage::Error(err_message))
-            }
-        }
-    }
-
-    fn poll_consume_complete(&mut self) -> Poll<(), io::Error> {
-        let event_reader = {
-            if let Some((ref pending, ref mut recv)) = self.pending_consume_operation {
-                try_ready!(recv.poll().map_err(|recv_err| {
-                    error!("Failed to poll consume operation for client: op_id: {}: {:?}", pending.op_id, recv_err);
-                    io::Error::new(io::ErrorKind::Other, "failed to poll consume operation")
-                }))
-            } else {
-                unreachable!() // since we've already check to make sure consume_operation is some before calling this
-            }
-        };
-
-        let (pending, _) = self.pending_consume_operation.take().unwrap();
-
-        self.spawn_consumer(event_reader, pending)
-    }
-
-    fn spawn_consumer(&mut self, reader: PartitionReader, pending: PendingConsumer) -> Poll<(), io::Error> {
-        let op_id = pending.op_id;
-        let send_result = self.send_to_client(ProtocolMessage::CursorCreated(CursorInfo {
-            op_id: op_id,
-            batch_size: self.consume_batch_size,
-        }));
-
-        if let Err(desc) = send_result {
-            return Err(io::Error::new(io::ErrorKind::Other, desc));
-        }
-
-        let (status_setter, status_checker) = create_status_channel();
-
-        let connection_id = self.connection_id;
-        let consumer = Consumer::new(connection_id, self.consume_batch_size, status_checker, reader, pending);
-        let future = consumer.forward(self.client_sender.clone()).map_err(move |err| {
-            error!("Consumer failed for connection_id: {}, op_id: {}, err: {:?}", connection_id, op_id, err);
-            ()
-        }).map(move |_| {
-            debug!("Successfully finished consumer for connection_id: {}, op_id: {}", connection_id, op_id);
-            ()
-        });
-
-        self.consumer_ref = Some(status_setter);
-        self.reactor.spawn(future);
-
-        Ok(Async::Ready(()))
-    }
 
     fn poll_produce_complete(&mut self) -> Poll<(), io::Error> {
         let response = match self.produce_operation {
@@ -249,7 +104,7 @@ impl ConnectionHandler {
             None => return Ok(Async::Ready(()))
         };
 
-        self.send_to_client(response).map_err(|e| {
+        self.common_state.send_to_client(response).map_err(|e| {
             io::Error::new(io::ErrorKind::Other, e)
         })?;
         self.produce_operation = None;
@@ -257,34 +112,9 @@ impl ConnectionHandler {
         Ok(Async::Ready(()))
     }
 
-    fn send_to_client(&self, message: ProtocolMessage) -> ConnectionHandlerResult {
-        ClientSender::send(&self.client_sender, message).map_err(|e| {
-            format!("Error sending outgoing message for connection_id: {}, message: {:?}", self.connection_id, e.into_inner())
-        })
-    }
 }
 
-fn create_stream_status(op_id: u32, stream_ref: &EventStreamRef) -> EventStreamStatus {
-    let mut partition_statuses = Vec::with_capacity(stream_ref.get_partition_count() as usize);
 
-    for partition in stream_ref.partitions() {
-        let num = partition.partition_num();
-        let head = partition.get_highest_event_counter();
-        let primary = partition.is_primary();
-        let part_status = PartitionStatus {
-            partition_num: num,
-            head: head,
-            primary: primary,
-        };
-        partition_statuses.push(part_status);
-    }
-
-    EventStreamStatus {
-        op_id: op_id,
-        name: stream_ref.name().to_owned(),
-        partitions: partition_statuses,
-    }
-}
 
 impl Sink for ConnectionHandler {
     type SinkItem = ProtocolMessage;
@@ -305,8 +135,9 @@ impl Sink for ConnectionHandler {
     fn poll_complete(&mut self) -> Poll<(), Self::SinkError> {
         if self.produce_operation.is_some() {
             self.poll_produce_complete()
-        } else if self.pending_consume_operation.is_some() {
-            self.poll_consume_complete()
+        } else if self.consumer_state.requires_poll_complete() {
+            let ConnectionHandler {ref mut common_state, ref mut consumer_state, ..} = *self;
+            consumer_state.poll_consume_complete(common_state)
         } else {
             Ok(Async::Ready(()))
         }
@@ -320,11 +151,11 @@ impl Sink for ConnectionHandler {
 
 impl Debug for ConnectionHandler {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "ConnectionHandler{{connection_id: {}, client_sender: {:p}, engine_ref: {:?}, event_stream: {:?} }}",
-               self.connection_id,
-            &self.client_sender,
-            self.engine,
-            self.event_stream)
+        f.debug_struct("ConnectionHandler")
+                .field("common_state", &self.common_state)
+                .field("consumer_state", &self.consumer_state)
+                .field("pending_produce_op", &self.produce_operation)
+                .finish()
     }
 }
 
@@ -448,14 +279,14 @@ mod test {
         let new_stream_name = "foo".to_owned();
         fixture.add_new_stream(&new_stream_name, 3);
 
-        assert_eq!(SYSTEM_STREAM_NAME, subject.event_stream.name());
+        assert_eq!(SYSTEM_STREAM_NAME, subject.common_state.event_stream.name());
 
         let set_stream = SetEventStream {
             op_id: 435,
             name: new_stream_name.clone()
         };
         subject.handle_incoming_message(ProtocolMessage::SetEventStream(set_stream)).expect("failed to handle message");
-        assert_eq!(&new_stream_name, subject.event_stream.name());
+        assert_eq!(&new_stream_name, subject.common_state.event_stream.name());
 
         let expected = EventStreamStatus {
             op_id: 435,
@@ -491,7 +322,7 @@ mod test {
             name: "foo".to_owned()
         };
         subject.handle_incoming_message(ProtocolMessage::SetEventStream(set_stream)).expect("failed to handle message");
-        assert_eq!(SYSTEM_STREAM_NAME, subject.event_stream.name());
+        assert_eq!(SYSTEM_STREAM_NAME, subject.common_state.event_stream.name());
 
         let expected = ErrorMessage {
             op_id: 657,
