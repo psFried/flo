@@ -21,7 +21,7 @@ use new_engine::event_stream::partition::{PartitionReader,
                                           AsyncConsumeResult,
                                           ConsumerNotifier};
 use event::FloEventId;
-use self::consumer::{Consumer,
+use self::consumer::consumer_stream::{Consumer,
                      ConsumerTaskSetter,
                      ConsumerStatusChecker,
                      ConsumerStatusSetter,
@@ -30,13 +30,6 @@ use self::consumer::{Consumer,
                      create_status_channel};
 
 const DEFAULT_CONSUME_BATCH_SIZE: u32 = 10_000;
-
-pub type ConsumerStartSender = oneshot::Sender<PartitionReader>;
-pub type ConsumerStartReceiver = oneshot::Receiver<PartitionReader>;
-
-pub fn create_consumer_start_oneshot() -> (ConsumerStartSender, ConsumerStartReceiver) {
-    oneshot::channel()
-}
 
 
 pub struct ConnectionHandler {

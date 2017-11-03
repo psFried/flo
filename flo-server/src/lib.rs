@@ -32,5 +32,5 @@ pub mod engine;
 pub mod embedded;
 pub mod new_engine;
 pub mod event_loops;
-mod channels;
-mod atomics;
+pub mod channels;
+pub mod atomics;

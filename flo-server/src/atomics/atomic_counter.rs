@@ -22,16 +22,6 @@ impl AtomicCounterWriter {
         }
     }
 
-    /// Loads the value with relaxed Ordering. Since only this one thread can modify the value, it's normally fine to
-    /// just use relaxed ordering for this
-    pub fn get(&self) -> usize {
-        self.inner.load(Ordering::Relaxed)
-    }
-
-    pub fn load(&self, ordering: Ordering) -> usize {
-        self.inner.load(ordering)
-    }
-
     /// increments the value by the specified amount and returns the _new_ value.
     pub fn increment_and_get_relaxed(&mut self, amount: usize) -> usize {
         let old = self.fetch_add(amount, Ordering::Relaxed);
