@@ -1,19 +1,12 @@
 
 use std::time::Instant;
-use std::net::SocketAddr;
-use std::fmt::{self, Display};
 
 use tic::{
-    Interest,
-    Receiver,
     Sample,
     Clocksource,
     Sender,
 };
 
-use flo_client_lib::sync::connection::Connection;
-use flo_client_lib::codec::RawCodec;
-use flo_client_lib::{FloEventId};
 use ::Metric;
 use super::connect;
 
@@ -39,10 +32,6 @@ impl ProducerBenchmark {
             event_namespaces: Vec::new(),
             data_length: 0,
         }
-    }
-
-    pub fn add_namespace<N: Into<String>>(&mut self, ns: N) {
-        self.event_namespaces.push(ns.into());
     }
 
     pub fn run(mut self) -> Result<(), String> {

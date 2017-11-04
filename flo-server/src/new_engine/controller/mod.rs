@@ -4,8 +4,7 @@ use std::sync::Arc;
 use std::collections::HashMap;
 use std::io;
 
-use new_engine::{EngineRef, SYSTEM_STREAM_NAME, system_stream_name};
-use new_engine::event_stream::partition::{Operation, OpType, ProduceOperation, ConsumeOperation};
+use new_engine::{EngineRef, system_stream_name};
 use new_engine::event_stream::{EventStreamRef,
                                EventStreamOptions,
                                init_existing_event_stream,
@@ -27,9 +26,8 @@ pub struct FloController { // TODO: implement raft lol
 
 
 pub fn start_controller(options: ControllerOptions) -> io::Result<EngineRef> {
-    use std::fs;
     use std::collections::HashMap;
-    use std::sync::{Arc, RwLock, Mutex};
+    use std::sync::{Arc, Mutex};
     use std::sync::atomic::AtomicUsize;
     use atomics::AtomicBoolWriter;
 

@@ -3,7 +3,6 @@ use std::io;
 use std::fmt::{self, Debug};
 use std::time::Instant;
 
-use futures::task::Task;
 use futures::sync::oneshot;
 
 use new_engine::event_stream::partition::{EventFilter, PartitionReader};

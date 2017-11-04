@@ -2,16 +2,11 @@ mod status_check;
 mod notifier;
 
 use std::io;
-use std::sync::{Arc, Weak, Mutex};
 
 use futures::{Stream, Poll, Async};
-use futures::task::{Task, AtomicTask};
-use futures::sync::mpsc::{Sender, Receiver, channel};
 
 use new_engine::ConnectionId;
 use new_engine::event_stream::partition::{PartitionReader, ConsumerNotifier, PersistentEvent};
-use atomics::{AtomicBoolReader, AtomicBoolWriter};
-use event::{OwnedFloEvent, EventCounter};
 use protocol::{ProtocolMessage, RecvEvent};
 
 pub use self::notifier::{ConsumerTaskSetter, create_consumer_notifier};

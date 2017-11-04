@@ -1,6 +1,3 @@
-
-use std::collections::BTreeMap;
-
 use event::{EventCounter, ActorId};
 use super::SegmentNum;
 
@@ -56,10 +53,6 @@ impl PartitionIndex {
     }
 
     pub fn append(&mut self, entry: IndexEntry) {
-        let internal = InternalEntry {
-            segment: entry.segment,
-            file_offset: entry.file_offset,
-        };
         let index = self.get_insert_index(entry.counter);
         if entry.counter > self.highest_counter {
             self.highest_counter = entry.counter;

@@ -5,20 +5,18 @@ mod ops;
 pub mod controller;
 
 use std::fmt::{self, Debug, Display};
-use std::time::{Instant, Duration};
 use std::path::{Path, PathBuf};
 use std::collections::VecDeque;
 use std::sync::{Arc, RwLock};
-use std::thread::{self, JoinHandle};
+use std::thread;
 use std::io;
 
-use futures::sync::oneshot;
 use atomics::{AtomicCounterReader, AtomicBoolReader};
-use new_engine::{ClientSender, ConnectionId};
+use new_engine::ConnectionId;
 use new_engine::event_stream::EventStreamOptions;
 use protocol::{ProduceEvent};
-use event::{FloEventId, EventCounter, ActorId};
-use self::segment::{Segment, SegmentReader};
+use event::{EventCounter, ActorId};
+use self::segment::SegmentReader;
 use self::controller::PartitionImpl;
 
 pub use self::ops::{OpType,
@@ -234,7 +232,10 @@ pub fn run_partition(partition_impl: PartitionImpl) -> io::Result<PartitionRef> 
     let event_stream_name = partition_impl.event_stream_name().to_owned();
     let (tx, rx) = create_partition_channels();
     let thread_name = get_partition_thread_name(partition_impl.event_stream_name(), partition_num);
-    let join_handle = thread::Builder::new().name(thread_name).spawn(move || {
+
+    // drop the join handle and just let the thread go on its own
+    // Failures will be detected by the channels used to communicate with the partition
+    thread::Builder::new().name(thread_name).spawn(move || {
         info!("Starting partition: {} of event stream: '{}'", &partition_impl.event_stream_name(), partition_num);
 
         let mut partition_controller = partition_impl;

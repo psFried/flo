@@ -2,7 +2,7 @@
 //! The value of the counter can only ever increase, and can only be mutated by a singe reference. There can be many readers,
 //! though. Limiting the mutation of the value to a single reference makes certain operations easier and faster.
 
-use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 #[derive(Debug)]

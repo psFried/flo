@@ -5,17 +5,13 @@ mod header;
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
-use std::fmt::{self, Debug};
 
-use memmap::{Mmap, MmapViewSync, Protection};
-use chrono::Duration;
+use memmap::{Mmap, Protection};
 
 use self::mmap::{MmapAppender};
 use new_engine::event_stream::partition::{get_events_file, SegmentNum};
 use new_engine::event_stream::partition::index::PartitionIndex;
-use event::{EventCounter, Timestamp, FloEvent, time};
+use event::{Timestamp, FloEvent, time};
 use self::mmap::{MmapReader};
 
 pub use self::persistent_event::PersistentEvent;

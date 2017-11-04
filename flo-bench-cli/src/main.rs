@@ -9,10 +9,9 @@ mod benches;
 use std::str::{FromStr};
 use std::fmt::{self, Display};
 use std::thread::{self, JoinHandle};
-use std::net::{SocketAddr, ToSocketAddrs};
 use std::time::{Instant, Duration};
-use clap::{App, Arg, SubCommand, ArgMatches, AppSettings};
-use tic::{Receiver, Config, Interest, Meters, Sender, Clocksource};
+use clap::{App, Arg, ArgMatches, AppSettings};
+use tic::{Receiver, Interest, Meters, Sender, Clocksource};
 
 use self::benches::ProducerBenchmark;
 
@@ -43,7 +42,7 @@ impl FromStr for Metric {
         use std::ascii::AsciiExt;
 
         match s.to_ascii_lowercase().as_ref() {
-            "produce" => Ok(Metric::Produce),
+            PRODUCE_COMMAND => Ok(Metric::Produce),
             _ => Err(())
         }
     }
@@ -68,7 +67,7 @@ impl Metric {
         receiver.add_interest(Interest::Waterfall(self.clone(), waterfall_file));
     }
 
-    fn run_benchmark(&self, args: ArgMatches<'static>, address: String, sender: Sender<Metric>, clock: Clocksource, end_time: Instant) {
+    fn run_benchmark(&self, _args: ArgMatches<'static>, address: String, sender: Sender<Metric>, clock: Clocksource, end_time: Instant) {
         match *self {
             Metric::Produce => {
                 ProducerBenchmark::new(address.to_owned(), sender, clock, end_time).run().unwrap()
@@ -97,7 +96,7 @@ fn create_tic_receiver(args: &ArgMatches) -> (Receiver<Metric>, Duration) {
     let windows = args.value_of(WINDOWS).unwrap().parse::<usize>().or_bail();
     let secs_per_window = args.value_of(SECS_PER_WINDOW).unwrap().parse::<usize>().or_bail();
 
-    let mut config = Receiver::configure()
+    let config = Receiver::configure()
             .windows(windows)
             .duration(secs_per_window)
             .batch_size(128);
@@ -163,7 +162,7 @@ fn create_app() -> App<'static, 'static> {
 }
 
 fn main() {
-    let mut app = create_app();
+    let app = create_app();
     let args = app.get_matches();
 
     let (mut receiver, duration) = create_tic_receiver(&args);

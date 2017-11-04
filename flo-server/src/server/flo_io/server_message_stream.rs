@@ -6,10 +6,12 @@ use futures::Async;
 use futures::sync::mpsc::UnboundedReceiver;
 use futures::{Future, Poll};
 
+#[allow(deprecated)]
 use tokio_core::io::WriteHalf;
 use tokio_core::net::TcpStream;
-use std::io::{self, Read};
+use std::io;
 
+#[allow(deprecated)]
 pub type ServerWriteStream = WriteHalf<TcpStream>;
 
 pub struct ServerMessageStream {

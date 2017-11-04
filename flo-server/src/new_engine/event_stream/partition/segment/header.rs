@@ -1,10 +1,10 @@
 
-use std::io::{self, Read, Write};
+use std::io;
 
 use byteorder::{ByteOrder, BigEndian};
 use memmap::Mmap;
 
-use event::{Timestamp, EventCounter, ActorId, time};
+use event::{Timestamp, time};
 
 #[derive(Debug)]
 pub struct SegmentHeader {
