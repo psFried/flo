@@ -6,8 +6,7 @@ use std::io;
 use chrono::Duration;
 
 use event::ActorId;
-use self::partition::{PartitionRef, PartitionSendError, PartitionSendResult, ProduceOperation, Operation};
-use self::partition::controller::PartitionImpl;
+use self::partition::{PartitionRef, initialize_existing_partition, initialize_new_partition};
 use atomics::AtomicBoolReader;
 
 
@@ -37,7 +36,6 @@ impl Default for EventStreamOptions {
 
 
 pub fn init_existing_event_stream(event_stream_storage_dir: PathBuf, options: EventStreamOptions, status_reader: AtomicBoolReader) -> Result<EventStreamRef, io::Error> {
-    use self::partition::{initialize_existing_partition, get_partition_data_dir, run_partition};
 
     debug!("Starting initialization of existing event stream with: {:?}", &options);
     let partition_numbers = determine_existing_partition_dirs(&event_stream_storage_dir)?;
@@ -58,7 +56,6 @@ pub fn init_existing_event_stream(event_stream_storage_dir: PathBuf, options: Ev
 }
 
 pub fn init_new_event_stream(event_stream_storage_dir: PathBuf, options: EventStreamOptions, status_reader: AtomicBoolReader) -> Result<EventStreamRef, io::Error> {
-    use self::partition::initialize_new_partition;
 
     debug!("Starting initialization of new event stream with: {:?}", &options);
     let partition_count = options.num_partitions;

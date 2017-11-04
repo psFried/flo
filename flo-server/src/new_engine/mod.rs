@@ -5,16 +5,11 @@ mod connection_handler;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize};
 
-use futures::{Stream, Sink, Future, Poll, Async, StartSend, AsyncSink, BoxFuture};
-use protocol::{ProtocolMessage, ConsumerStart};
+use protocol::ProtocolMessage;
 
-use event_loops::LoopHandles;
 use self::event_stream::EventStreamRef;
-use self::event_stream::partition::Operation;
-use self::event_stream::partition::PartitionReader;
-
 
 pub use self::controller::{ControllerOptions, start_controller};
 pub use self::connection_handler::{ConnectionHandler, ConnectionHandlerResult};

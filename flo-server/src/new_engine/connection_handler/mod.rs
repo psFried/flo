@@ -4,18 +4,12 @@ mod producer;
 
 use std::fmt::{self, Debug};
 use std::io;
-use std::error::Error;
 
-use futures::sync::oneshot;
 use futures::{Async, Poll, AsyncSink, StartSend, Sink, Stream, Future};
 use tokio_core::reactor::Handle;
 
-use channels::Sender;
 use protocol::*;
-use new_engine::{ConnectionId, ClientSender, EngineRef, SYSTEM_STREAM_NAME, system_stream_name};
-use new_engine::event_stream::EventStreamRef;
-use new_engine::event_stream::partition::ProduceResponseReceiver;
-use event::FloEventId;
+use new_engine::{ConnectionId, ClientSender, EngineRef};
 use self::connection_state::ConnectionState;
 use self::consumer::ConsumerConnectionState;
 use self::producer::ProducerConnectionState;
@@ -123,6 +117,8 @@ mod test {
     use super::*;
     use protocol::*;
     use event::ActorId;
+    use new_engine::{SYSTEM_STREAM_NAME, system_stream_name};
+    use new_engine::event_stream::EventStreamRef;
     use new_engine::event_stream::partition::*;
     use new_engine::{ClientSender, ClientReceiver, create_client_channels};
     use channels::{Sender, MockSender};

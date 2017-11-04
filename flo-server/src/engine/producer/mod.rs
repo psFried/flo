@@ -235,7 +235,7 @@ impl <S: EventWriter> ProducerManager<S> {
         let disconnected_peers = self.cluster_state.attempt_connections(Instant::now());
         if !disconnected_peers.is_empty() {
             for peer_address in disconnected_peers {
-                self.cluster_connect_sender.send(peer_address).map_err(|err| {
+                self.cluster_connect_sender.unbounded_send(peer_address).map_err(|err| {
                     format!("Failed to send message to cluster connect sender: {}", err)
                 })?; // Early return if this fails
             }

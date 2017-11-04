@@ -3,9 +3,8 @@ use tokio_core::reactor::Handle;
 
 use protocol::*;
 
-use new_engine::{ConnectionId, ClientSender, EngineRef, ConnectError};
+use new_engine::{ConnectionId, ClientSender, EngineRef};
 use new_engine::event_stream::EventStreamRef;
-use new_engine::event_stream::partition::PartitionRef;
 
 use super::ConnectionHandlerResult;
 

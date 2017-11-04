@@ -1,11 +1,8 @@
 mod namespace;
 
-use std::sync::atomic::AtomicUsize;
-use std::sync::{Arc, RwLock};
-use std::collections::VecDeque;
 use std::io;
 
-use event::{FloEvent, ActorId, EventCounter};
+use event::{FloEvent, ActorId};
 
 use new_engine::ConnectionId;
 use new_engine::event_stream::partition::SharedReaderRefs;

@@ -1,13 +1,12 @@
 
 use std::io;
-use std::fs::{self, File, OpenOptions};
+use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{Instant, Duration};
+use std::time::Instant;
 
-use new_engine::event_stream::partition::segment::{Segment, SegmentReader};
-use new_engine::event_stream::partition::{SegmentNum, DATA_FILE_EXTENSION, SharedReaderRefsMut};
-use new_engine::event_stream::partition::index::{PartitionIndex, IndexEntry};
-use event::FloEvent;
+use new_engine::event_stream::partition::segment::Segment;
+use new_engine::event_stream::partition::{SegmentNum, DATA_FILE_EXTENSION};
+use new_engine::event_stream::partition::index::PartitionIndex;
 
 #[derive(Debug)]
 pub struct SegmentFile {

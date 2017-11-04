@@ -8,13 +8,13 @@ use chrono::{Duration};
 
 use atomics::{AtomicCounterWriter, AtomicCounterReader, AtomicBoolReader};
 use protocol::ProduceEvent;
-use event::{ActorId, FloEventId, OwnedFloEvent, EventCounter, FloEvent, Timestamp, time};
+use event::{ActorId, FloEventId, EventCounter, FloEvent, Timestamp, time};
 use super::{SharedReaderRefsMut, Operation, OpType, ProduceOperation, ConsumeOperation, PartitionReader, EventFilter, SegmentNum};
-use super::segment::{Segment, SegmentReader, PersistentEvent};
+use super::segment::Segment;
 use super::index::{PartitionIndex, IndexEntry};
 use new_engine::event_stream::EventStreamOptions;
 use new_engine::ConnectionId;
-use self::util::{SegmentFile, get_segment_files};
+use self::util::get_segment_files;
 
 const FIRST_SEGMENT_NUM: SegmentNum = SegmentNum(1);
 
@@ -52,6 +52,16 @@ impl PartitionImpl {
         }
 
         let highest_counter = AtomicCounterWriter::with_value(index.greatest_event_counter() as usize);
+
+        // TODO: factor out a more legit method of timing and logging perf stats
+        let init_time = start_time.elapsed();
+        let time_in_millis = (init_time.as_secs() * 1000) +
+            (init_time.subsec_nanos() as u64 / 1_000_000);
+        info!("Initialized existing partition: {} with directory: {:?}, and options: {:?} in {} milliseconds",
+              partition_num,
+              partition_data_dir,
+              options,
+              time_in_millis);
 
         Ok(PartitionImpl {
             event_stream_name: options.name.clone(),
@@ -104,7 +114,8 @@ impl PartitionImpl {
     pub fn process(&mut self, operation: Operation) -> io::Result<()> {
         trace!("Partition: {}, got operation: {:?}", self.partition_num, operation);
 
-        let Operation{client_message_recv_time, connection_id, op_type} = operation;
+        // TODO: time handling and log it
+        let Operation{connection_id, op_type, ..} = operation;
 
         match op_type {
             OpType::Produce(produce_op) => {
@@ -123,7 +134,9 @@ impl PartitionImpl {
         if let Err(e) = result.as_ref() {
             error!("Failed to handle produce operation for op_id: {}, err: {:?}", op_id, e);
         }
-        client.complete(result);
+        // No biggie if the receiving end has hung up already. The operation will still be considered complete and successful
+        // TODO: Consider logging this if the receiving end has hung up already?
+        let _ = client.send(result);
         Ok(())
     }
 
@@ -218,7 +231,10 @@ impl PartitionImpl {
     fn handle_consume(&mut self, connection_id: ConnectionId, consume: ConsumeOperation) -> io::Result<()> {
         let ConsumeOperation {client_sender, filter, start_exclusive, ..} = consume;
         let reader = self.create_reader(connection_id, filter, start_exclusive);
-        let _ = client_sender.complete(reader);
+
+        // We don't really care if the receiving end has hung up already
+        // In that case, the reader will just be dropped here
+        let _ = client_sender.send(reader);
         Ok(())
     }
 

@@ -28,13 +28,13 @@ pub fn run(options: ServerOptions) -> io::Result<()> {
 }
 
 fn run_new_engine(options: ServerOptions) -> io::Result<()> {
+    #[allow(deprecated)]
     use tokio_core::io::Io;
     use new_engine::{ControllerOptions,
                      start_controller,
                      system_stream_name,
                      create_client_channels,
-                     ConnectionHandler,
-                     ConnectionHandlerResult};
+                     ConnectionHandler};
     use new_engine::event_stream::EventStreamOptions;
     use self::flo_io::{ProtocolMessageStream, ServerMessageStream};
 
@@ -78,13 +78,14 @@ fn run_new_engine(options: ServerOptions) -> io::Result<()> {
             let client_engine_ref = engine_ref.clone();
             let connection_id = client_engine_ref.next_connection_id();
             let remote_handle = event_loop_handles.next_handle();
-            let connection_handler_remote = remote_handle.clone();
 
             let (client_tx, client_rx) = create_client_channels();
 
             info!("Opened connection_id: {} to address: {}", connection_id, client_addr);
 
             remote_handle.spawn(move |client_handle| {
+
+                #[allow(deprecated)]
                 let (tcp_reader, tcp_writer) = tcp_stream.split();
 
                 let server_to_client = ServerMessageStream::new(connection_id, client_rx, tcp_writer);

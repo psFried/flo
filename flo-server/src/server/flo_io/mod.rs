@@ -13,8 +13,9 @@ use server::engine::api::{ConnectionId, ClientMessage};
 
 use tokio_core::reactor::Remote;
 use tokio_core::net::TcpStream;
+
+#[allow(deprecated)]
 use tokio_core::io::Io;
-use tokio_core::io as nio;
 use futures::sync::mpsc::{unbounded, UnboundedSender, UnboundedReceiver};
 use futures::{Future, Stream};
 
@@ -33,6 +34,7 @@ fn connection_closed() -> usize {
 }
 
 
+#[allow(deprecated)]
 pub fn setup_message_streams(connection_id: ConnectionId, tcp_stream: TcpStream, client_addr: SocketAddr, mut engine: ChannelSender, remote_handle: &Remote) {
 
     remote_handle.spawn(move |_handle| {

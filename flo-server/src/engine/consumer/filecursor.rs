@@ -3,7 +3,6 @@ use std::io;
 use std::fmt::Debug;
 use std::thread::{self, JoinHandle};
 use std::sync::mpsc as std_mpsc;
-use std::sync::Arc;
 
 use event::OwnedFloEvent;
 use engine::api::{ConnectionId, ConsumerState, ConsumerManagerMessage};

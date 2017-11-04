@@ -40,7 +40,7 @@ impl ClientMap {
             format!("Client: {} does not exist in producer map", connection_id)
         }).and_then(|client| {
             trace!("Sending to client: {}, message: {:?}", connection_id, message);
-            client.sender.send(message).map_err(|err| {
+            client.sender.unbounded_send(message).map_err(|err| {
                 format!("Failed to send to client: {}, addr: {:?}, err: {:?}", connection_id, client.remote_address, err)
             })
         })

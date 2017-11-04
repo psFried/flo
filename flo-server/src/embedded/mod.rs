@@ -5,13 +5,13 @@
 use std::fmt::Debug;
 use std::io;
 
-use tokio_core::reactor::{Handle, Remote};
+use tokio_core::reactor::Handle;
 use futures::Stream;
 
 use flo_client_lib::async::{AsyncClient, MessageReceiver, MessageSender};
 use flo_client_lib::codec::EventCodec;
 
-use new_engine::{EngineRef, ClientSender, ClientReceiver, create_client_channels, start_controller, ConnectionHandler};
+use new_engine::{EngineRef, create_client_channels, start_controller, ConnectionHandler};
 
 pub use new_engine::ControllerOptions;
 pub use new_engine::event_stream::EventStreamOptions;

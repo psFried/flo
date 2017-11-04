@@ -42,7 +42,7 @@ pub trait Sender<T>: Clone + Send {
 
 impl <T> Sender<T> for fchannels::UnboundedSender<T> where T: Send {
     fn send(&self, message: T) -> Result<(), SendError<T>> {
-        self.send(message).map_err(|err| err.into())
+        self.unbounded_send(message).map_err(|err| err.into())
     }
 }
 

@@ -1,5 +1,5 @@
 
-use std::io::{self, Write, Seek, BufWriter};
+use std::io::{self, Write, Seek};
 use std::fs::{File, OpenOptions};
 use std::path::Path;
 

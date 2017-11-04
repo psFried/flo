@@ -1,13 +1,9 @@
-
-use std::cell::UnsafeCell;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
-use std::io::{self, Write};
+use std::io;
 
 use memmap::MmapViewSync;
 use byteorder::{ByteOrder, BigEndian};
 
-use event::{FloEvent, OwnedFloEvent, FloEventId, EventCounter, ActorId, Timestamp, time};
+use event::{FloEvent, OwnedFloEvent, FloEventId, Timestamp, time};
 
 
 

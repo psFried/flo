@@ -9,14 +9,10 @@ use new_engine::connection_handler::ConnectionHandlerResult;
 use new_engine::connection_handler::connection_state::ConnectionState;
 use new_engine::event_stream::partition::{PartitionReader,
                                           EventFilter,
-                                          PartitionSendError,
                                           ConsumeResponseReceiver,
-                                          AsyncConsumeResult,
-                                          ConsumerNotifier};
+                                          AsyncConsumeResult};
 
 use self::consumer_stream::{Consumer,
-                            ConsumerTaskSetter,
-                            ConsumerStatusChecker,
                             ConsumerStatusSetter,
                             PendingConsumer,
                             prepare_consumer_start,
