@@ -1,7 +1,4 @@
 
-
-use std::fmt::Debug;
-
 use event::{ActorId, EventCounter};
 
 #[derive(Debug, PartialEq, Clone)]

@@ -5,6 +5,7 @@ mod producer;
 use std::fmt::{self, Debug};
 use std::io;
 
+#[allow(unused_imports)]
 use futures::{Async, Poll, AsyncSink, StartSend, Sink, Stream, Future};
 use tokio_core::reactor::Handle;
 
@@ -115,16 +116,15 @@ mod test {
     use tokio_core::reactor::Core;
 
     use super::*;
-    use protocol::*;
     use event::ActorId;
     use new_engine::{SYSTEM_STREAM_NAME, system_stream_name};
     use new_engine::event_stream::EventStreamRef;
     use new_engine::event_stream::partition::*;
-    use new_engine::{ClientSender, ClientReceiver, create_client_channels};
-    use channels::{Sender, MockSender};
-    use atomics::{AtomicCounterWriter, AtomicCounterReader, AtomicBoolReader, AtomicBoolWriter};
+    use new_engine::ClientReceiver;
+    use atomics::{AtomicCounterWriter, AtomicBoolWriter};
 
     struct Fixture {
+        #[allow(dead_code)] // TODO: add more connection handler tests
         partition_receivers: HashMap<(String, ActorId), PartitionReceiver>,
         client_receiver: Option<ClientReceiver>,
         engine: EngineRef,
@@ -164,6 +164,7 @@ mod test {
             (subject, fixture)
         }
 
+        #[allow(dead_code)] // TODO: add more connection handler tests
         fn with_stream(stream_name: &str, partition_count: ActorId) -> (ConnectionHandler, Fixture) {
             let (handler, mut fixutre) = Fixture::create();
             fixutre.add_new_stream(stream_name, partition_count);
@@ -183,6 +184,7 @@ mod test {
                                                  primary.reader(),
                                                  tx);
                 partition_refs.push(part_ref);
+                self.partition_receivers.insert((name.to_owned(), partition_num), rx);
             }
             partition_refs.sort_by_key(|p| p.partition_num());
             let stream_ref = EventStreamRef::new(name.to_owned(), partition_refs);
@@ -191,6 +193,7 @@ mod test {
             }).unwrap();
         }
 
+        #[allow(dead_code)] // TODO: add more connection handler tests
         fn message_sent_to_partition(&self, event_stream: &str, partition_id: ActorId) -> Operation {
             let key = (event_stream.to_owned(), partition_id);
             let partition_receiver = self.partition_receivers.get(&key).expect("no such partition");

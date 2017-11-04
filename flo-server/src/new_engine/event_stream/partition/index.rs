@@ -22,7 +22,7 @@ impl IndexEntry {
 }
 
 pub struct PartitionIndex {
-    partition_num: ActorId,
+    _partition_num: ActorId, // TODO: impl Debug for PartitionIndex
     entries: Vec<InternalEntry>,
     highest_counter: EventCounter,
     lowest_counter: EventCounter,
@@ -44,7 +44,7 @@ impl PartitionIndex {
     fn with_capacity(partition_num: ActorId, capacity: usize) -> PartitionIndex {
         assert!(capacity.is_power_of_two());
         PartitionIndex {
-            partition_num: partition_num,
+            _partition_num: partition_num,
             entries: vec![InternalEntry::default(); capacity],
             highest_counter: 0,
             lowest_counter: 0,
@@ -62,6 +62,7 @@ impl PartitionIndex {
         }
     }
 
+    #[allow(dead_code)] // TODO: implement removing entries
     pub fn remove_through(&mut self, remove_through: EventCounter) {
         match self.get_read_index(remove_through) {
             Some(index) => {
@@ -216,7 +217,7 @@ impl InternalEntry {
 #[cfg(test)]
 mod test {
     use super::*;
-    use event::{EventCounter, ActorId};
+    use event::EventCounter;
 
 
     #[test]

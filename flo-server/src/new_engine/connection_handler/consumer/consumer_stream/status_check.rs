@@ -4,6 +4,7 @@ use std::cell::RefCell;
 
 use futures::task::{self, Task};
 
+#[allow(dead_code)] //TODO: implement consumer stop
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum ConsumerStatus {
     NoChange,
@@ -11,8 +12,11 @@ pub enum ConsumerStatus {
     NextBatch,
 }
 
+#[allow(dead_code)] //TODO: implement consumer stop
 const NO_CHANGE: usize = 0;
+#[allow(dead_code)] //TODO: implement consumer stop
 const STOP: usize = 1;
+#[allow(dead_code)] //TODO: implement consumer stop
 const NEXT_BATCH: usize = 2;
 
 #[derive(Debug)]
@@ -53,6 +57,7 @@ impl ConsumerStatusChecker {
 pub struct ConsumerStatusSetter(Rc<RefCell<Inner>>);
 
 impl ConsumerStatusSetter {
+    #[allow(dead_code)] // TODO: implement stop consumer
     pub fn set(&mut self, status: ConsumerStatus) {
         let mut inner = self.0.borrow_mut();
         inner.state = status;

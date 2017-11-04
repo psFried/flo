@@ -3,10 +3,9 @@ use std::fmt::{self, Debug};
 use std::io;
 
 use futures::{Future, Async, Poll, Stream};
-use futures::sink::SendAll;
 
-use event::{OwnedFloEvent, VersionVector};
-use protocol::{ProtocolMessage, NewConsumerStart, ErrorMessage, RecvEvent};
+use event::VersionVector;
+use protocol::{ProtocolMessage, NewConsumerStart, RecvEvent};
 use async::{AsyncClient, ErrorType};
 use async::ops::{SendMessage, SendError, AwaitResponse, AwaitResponseError};
 use ::Event;

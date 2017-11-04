@@ -353,6 +353,7 @@ impl <'a, T: Transport, C: EventCodec> Context<C::EventData> for ConsumerContext
 
 pub struct EventIter<'a, T: Transport + 'static, C: EventCodec + 'static> {
     connection: &'a mut SyncConnection<T, C>,
+    #[allow(dead_code)] // here for debugging purposes
     events_consumed: u64,
     await_new_events: bool,
 }

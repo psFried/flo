@@ -7,20 +7,16 @@ extern crate futures;
 extern crate tokio_core;
 extern crate chrono;
 
-#[macro_use]
 extern crate log;
 
 use std::fmt::Debug;
 
 use tokio_core::reactor::Core;
 use futures::{Stream, Future};
-use chrono::Duration;
 
 use flo_server::embedded::{EmbeddedFloServer, ControllerOptions, EventStreamOptions, run_embedded_server};
-use flo_server::event_loops::{LoopHandles, spawn_event_loop_threads};
 
-use flo_client_lib::{Event, VersionVector, FloEventId};
-use flo_client_lib::async::AsyncClient;
+use flo_client_lib::{VersionVector, FloEventId};
 use flo_client_lib::codec::{EventCodec, StringCodec};
 
 fn default_test_options() -> EventStreamOptions {

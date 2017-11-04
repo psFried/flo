@@ -1,10 +1,9 @@
 use std::io::{self, Read};
 use std::fmt::{self, Debug};
 
-use futures::{Future, Async, Poll, Sink, Stream};
+use futures::{Async, Poll, Stream};
 
 use protocol::{self, ProtocolMessage};
-use codec::EventCodec;
 
 pub trait MessageStream: Stream<Item=ProtocolMessage, Error=io::Error> + Debug {
 }

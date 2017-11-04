@@ -36,11 +36,6 @@ impl ServerMessageStream {
     }
 }
 
-fn not_ready() -> io::Error {
-    static NOT_READY_MSG: &'static str = "Waiting for another message from the server";
-    io::Error::new(io::ErrorKind::WouldBlock, NOT_READY_MSG)
-}
-
 impl Future for ServerMessageStream {
     type Item = ();
     type Error = io::Error;

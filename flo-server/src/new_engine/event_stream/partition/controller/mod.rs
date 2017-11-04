@@ -305,12 +305,11 @@ mod test {
     use futures::sync::oneshot;
 
     use super::*;
-    use event::{FloEventId, ActorId};
     use protocol::ProduceEvent;
-    use new_engine::event_stream::partition::{SharedReaderRefsMut, Operation, OpType, ProduceOperation, ConsumeOperation, EventFilter, PartitionReader};
+    use new_engine::event_stream::partition::{ProduceOperation, EventFilter, PartitionReader};
     use new_engine::event_stream::EventStreamOptions;
-    use new_engine::{ConnectionId, create_client_channels};
-    use atomics::{AtomicBoolReader, AtomicBoolWriter};
+    use new_engine::ConnectionId;
+    use atomics::AtomicBoolWriter;
 
     const PARTITION_NUM: ActorId = 1;
     const CONNECTION: ConnectionId = 55;
@@ -336,7 +335,7 @@ mod test {
                                                         &options,
                                                         status.reader()).unwrap();
 
-            let (client_tx, client_rx) = oneshot::channel();
+            let (client_tx, _client_rx) = oneshot::channel();
 
             let produce = ProduceOperation {
                 client: client_tx,
@@ -366,7 +365,7 @@ mod test {
             assert_eq!(b"brown fox", event2.data());
             assert!(reader.next().is_none());
 
-            let moar_events = (0..100).map(|i| {
+            let moar_events = (0..100).map(|_| {
                 ProduceEvent {
                     op_id: 4,
                     namespace: "/boo/hoo".to_owned(),
@@ -375,7 +374,7 @@ mod test {
                 }
             }).collect::<Vec<_>>();
 
-            let (client_tx, client_rx) = oneshot::channel();
+            let (client_tx, _client_rx) = oneshot::channel();
 
             partition.handle_produce(ProduceOperation {
                 client: client_tx,

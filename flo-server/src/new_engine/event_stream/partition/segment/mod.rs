@@ -27,6 +27,7 @@ pub enum AppendResult {
 }
 
 impl AppendResult {
+    #[cfg(test)]
     pub fn is_success(&self) -> bool {
         match *self {
             AppendResult::Success(_) => true,
@@ -35,13 +36,14 @@ impl AppendResult {
     }
 }
 
+#[allow(dead_code)]
 pub struct Segment {
     pub segment_num: SegmentNum,
     appender: MmapAppender,
     segment_file: File,
     current_length_bytes: usize,
-    last_flush_range_end: usize,
-    max_length_bytes: usize,
+    last_flush_range_end: usize, // TODO: implement flush to disk for durable writes
+    max_length_bytes: usize, // TODO: start a new segment after max length in bytes is reached
     segment_end_time: Timestamp,
 }
 
@@ -58,6 +60,7 @@ impl Segment {
         }
     }
 
+    #[allow(dead_code)] // TODO: delete partitions after they expire
     pub fn get_end_time(&self) -> Timestamp {
         self.segment_end_time
     }
@@ -168,8 +171,6 @@ impl Iterator for SegmentReader {
 
 #[cfg(test)]
 mod test {
-    use std::path::Path;
-
     use chrono::Duration;
     use tempdir::TempDir;
 
@@ -206,7 +207,7 @@ mod test {
         let mut index = PartitionIndex::new(1);
 
         let segment_file = tmpdir.path().join("1.events");
-        let mut subject = Segment::init_from_existing_file(&segment_file, segment_num, &mut index)
+        let subject = Segment::init_from_existing_file(&segment_file, segment_num, &mut index)
                 .expect("failed to init segment from existing file");
 
         let mut iter = subject.iter_from_start();
@@ -229,7 +230,7 @@ mod test {
             assert!(write_result.is_success());
         }
 
-        let mut read_results: Vec<io::Result<PersistentEvent>> = subject.iter_from_start().collect();
+        let read_results: Vec<io::Result<PersistentEvent>> = subject.iter_from_start().collect();
 
         for (expected, actual) in input_events.iter().zip(read_results.iter()) {
             assert_events_eq(expected, actual.as_ref().expect("failed to read event"));

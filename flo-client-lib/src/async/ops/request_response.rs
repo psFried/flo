@@ -4,7 +4,7 @@ use std::fmt::Debug;
 
 use futures::{Future, Async, Poll};
 
-use protocol::{ProtocolMessage, ErrorMessage};
+use protocol::{ProtocolMessage};
 use async::{AsyncClient};
 use async::ops::{SendMessage, SendError, AwaitResponse, AwaitResponseError};
 
@@ -30,26 +30,22 @@ impl <D: Debug> Future for RequestResponse<D> {
     type Error = RequestResponseError<D>;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        let mut new_state: Option<State<D>> = None;
 
-        match self.state {
+        let new_state = match self.state {
             State::Request(ref mut req) => {
-                let client = try_ready!(req.poll());
+                let client = try_ready!(req.poll()); // early return if sending is not ready
                 let await_response = AwaitResponse::new(client, self.op_id);
-                new_state = Some(State::Response(await_response));
+                State::Response(await_response)
             }
             State::Response(ref mut resp) => {
-                let (resp, client) = try_ready!(resp.poll());
-                return Ok(Async::Ready((resp, client)));
+                let (resp, client) = try_ready!(resp.poll()); // early return if reading response is not ready
+                return Ok(Async::Ready((resp, client)));     // early return if reading response _is_ ready :)
             }
-        }
+        };
 
-        if let Some(state) = new_state {
-            self.state = state;
-            self.poll()
-        } else {
-            Ok(Async::NotReady)
-        }
+        // we only make it here if we were previously in the Request state and it has just completed successfully
+        self.state = new_state;
+        self.poll()  // make sure to poll the response future to make sure we get polled when it's actually ready
     }
 }
 
