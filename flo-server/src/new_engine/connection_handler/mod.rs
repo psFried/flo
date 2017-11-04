@@ -1,5 +1,6 @@
 pub mod connection_state;
 mod consumer;
+mod producer;
 
 use std::fmt::{self, Debug};
 use std::io;
@@ -17,13 +18,13 @@ use new_engine::event_stream::partition::ProduceResponseReceiver;
 use event::FloEventId;
 use self::connection_state::ConnectionState;
 use self::consumer::ConsumerConnectionState;
-
+use self::producer::ProducerConnectionState;
 
 
 pub struct ConnectionHandler {
     common_state: ConnectionState,
     consumer_state: ConsumerConnectionState,
-    produce_operation: Option<(u32, ProduceResponseReceiver)>,
+    producer_state: ProducerConnectionState,
 }
 
 
@@ -34,82 +35,34 @@ impl ConnectionHandler {
         ConnectionHandler {
             common_state: ConnectionState::new(connection, client_sender, engine, handle),
             consumer_state: ConsumerConnectionState::new(),
-            produce_operation: None,
+            producer_state: ProducerConnectionState::new(),
         }
     }
 
     pub fn can_process(&self, _message: &ProtocolMessage) -> bool {
-        self.produce_operation.is_none() && !self.consumer_state.requires_poll_complete()
+        !self.producer_state.requires_poll_complete() && !self.consumer_state.requires_poll_complete()
     }
 
     pub fn handle_incoming_message(&mut self, message: ProtocolMessage) -> ConnectionHandlerResult {
         trace!("client: {:?}, received message: {:?}", self.common_state, message);
 
+        let ConnectionHandler{ref mut common_state, ref mut consumer_state, ref mut producer_state } = *self;
+
         match message {
-            ProtocolMessage::SetEventStream(SetEventStream{op_id, name}) => self.common_state.set_event_stream(op_id, name),
-            ProtocolMessage::Announce(announce) => self.common_state.handle_announce_message(announce),
-            ProtocolMessage::ProduceEvent(produce) => self.handle_produce(produce),
-            ProtocolMessage::NewStartConsuming(consumer_start) => self.handle_start_consuming(consumer_start),
+            ProtocolMessage::SetEventStream(SetEventStream{op_id, name}) => {
+                common_state.set_event_stream(op_id, name)
+            },
+            ProtocolMessage::Announce(announce) => {
+                common_state.handle_announce_message(announce)
+            },
+            ProtocolMessage::ProduceEvent(produce) => {
+                producer_state.handle_produce(produce, common_state)
+            },
+            ProtocolMessage::NewStartConsuming(consumer_start) => {
+                consumer_state.handle_start_consuming(consumer_start, common_state)
+            },
             _ => unimplemented!()
         }
-    }
-
-    fn handle_start_consuming(&mut self, message: NewConsumerStart) -> ConnectionHandlerResult {
-        let ConnectionHandler {ref mut common_state, ref mut consumer_state, ..} = *self;
-        consumer_state.handle_start_consuming(message, common_state)
-    }
-
-    fn handle_produce(&mut self, produce: ProduceEvent) -> ConnectionHandlerResult {
-        debug_assert!(self.produce_operation.is_none());
-        let op_id = produce.op_id;
-        let connection_id = self.common_state.connection_id;
-
-        let receiver = {
-            let partition = self.common_state.event_stream.get_partition(1).unwrap();
-            partition.produce(connection_id, op_id, vec![produce]).map_err(|err| {
-                format!("Failed to send operation: {:?}", err.0)
-            })?
-        };
-
-        self.produce_operation = Some((op_id, receiver));
-
-        Ok(())
-    }
-
-
-    fn poll_produce_complete(&mut self) -> Poll<(), io::Error> {
-        let response = match self.produce_operation {
-            Some((op_id, ref mut pending)) => {
-                let result = try_ready!(pending.poll().map_err(|recv_err| {
-                    error!("Failed to poll produce operation for client: op_id: {}: {:?}", op_id, recv_err);
-                    io::Error::new(io::ErrorKind::Other, "failed to poll produce operation")
-                }));
-
-                match result {
-                    Ok(id) => {
-                        ProtocolMessage::AckEvent(EventAck{
-                            op_id: op_id,
-                            event_id: id,
-                        })
-                    }
-                    Err(io_err) => {
-                        ProtocolMessage::Error(ErrorMessage {
-                            op_id: op_id,
-                            kind: ErrorKind::StorageEngineError,
-                            description: format!("Persistence Error: {}", io_err.description()),
-                        })
-                    }
-                }
-            },
-            None => return Ok(Async::Ready(()))
-        };
-
-        self.common_state.send_to_client(response).map_err(|e| {
-            io::Error::new(io::ErrorKind::Other, e)
-        })?;
-        self.produce_operation = None;
-
-        Ok(Async::Ready(()))
     }
 
 }
@@ -133,10 +86,11 @@ impl Sink for ConnectionHandler {
     }
 
     fn poll_complete(&mut self) -> Poll<(), Self::SinkError> {
-        if self.produce_operation.is_some() {
-            self.poll_produce_complete()
-        } else if self.consumer_state.requires_poll_complete() {
-            let ConnectionHandler {ref mut common_state, ref mut consumer_state, ..} = *self;
+        let ConnectionHandler {ref mut common_state, ref mut consumer_state, ref mut producer_state} = *self;
+
+        if producer_state.requires_poll_complete() {
+            producer_state.poll_produce_complete(common_state)
+        } else if consumer_state.requires_poll_complete() {
             consumer_state.poll_consume_complete(common_state)
         } else {
             Ok(Async::Ready(()))
@@ -154,7 +108,7 @@ impl Debug for ConnectionHandler {
         f.debug_struct("ConnectionHandler")
                 .field("common_state", &self.common_state)
                 .field("consumer_state", &self.consumer_state)
-                .field("pending_produce_op", &self.produce_operation)
+                .field("producer_state", &self.producer_state)
                 .finish()
     }
 }
