@@ -6,22 +6,21 @@ mod current_stream_state;
 mod tcp_connect;
 
 use std::error::Error;
-use std::time::Duration;
 use std::collections::VecDeque;
 use std::io;
 use std::fmt::{self, Debug};
-use std::net::{SocketAddr, ToSocketAddrs};
 
 use tokio_core::net::TcpStream;
-use tokio_core::io::{ReadHalf, WriteHalf, Io};
-use futures::{Future, Async, Poll, Stream, Sink, AsyncSink, StartSend};
+#[allow(deprecated)]
+use tokio_core::io::Io;
+use futures::{Stream, Sink};
 
 use protocol::{ProtocolMessage, ErrorMessage};
 use event::{FloEventId, VersionVector};
 use codec::EventCodec;
-use self::recv::{MessageStream, MessageRecvStream};
-use self::send::{MessageSink, MessageSendSink};
-use self::ops::{SendMessage, AwaitResponse, ProduceOne, Consume, RequestResponse, ConnectAsyncClient};
+use self::recv::MessageRecvStream;
+use self::send::MessageSendSink;
+use self::ops::{ProduceOne, Consume, ConnectAsyncClient};
 
 
 pub use self::tcp_connect::{tcp_connect, AsyncTcpClientConnect};
@@ -64,6 +63,7 @@ impl <D: Debug> AsyncClient<D> {
     /// function, but using `from_tcp_stream` is available for when extra control is needed in how the tcp stream is
     /// configured.
     pub fn from_tcp_stream(name: String, tcp_stream: TcpStream, codec: Box<EventCodec<EventData=D>>) -> AsyncClient<D> {
+        #[allow(deprecated)] // TODO: maybe migrate to tokio-io crate? but that'll be deprecated soon anyway
         let (tcp_read, tcp_write) = tcp_stream.split();
         let send_sink = MessageSendSink::new(tcp_write);
         let read_stream = MessageRecvStream::new(tcp_read);
@@ -150,15 +150,14 @@ impl From<io::Error> for ErrorType {
 mod test {
     use super::*;
 
-    use std::time::Duration;
     use std::io;
     use std::sync::{Arc, Mutex};
 
-    use futures::{Stream, Async, Poll, AsyncSink};
+    use futures::{Stream, Async, Poll, AsyncSink, StartSend, Future};
 
     use protocol::*;
-    use event::*;
     use codec::{EventCodec, StringCodec};
+    use super::ops::*;
 
 
     #[derive(Copy, Clone, PartialEq)]
@@ -195,9 +194,7 @@ mod test {
             let mut vec = self.0.lock().unwrap();
 
 
-            let result = ::std::mem::replace(vec.as_mut(), Vec::new());
-            let mut result = result;
-            result
+            ::std::mem::replace(vec.as_mut(), Vec::new())
         }
     }
 
@@ -289,14 +286,7 @@ mod test {
     }
 
     fn run_future<T, E, F>(mut future: F) -> Result<T, E> where F: Future<Item=T, Error=E> {
-        use tokio_core::reactor::{Core};
-        use std::time::Instant;
-
-        let start = Instant::now();
-        let timeout = Duration::from_millis(100);
-
         let mut poll_countdown = 20;
-
         while poll_countdown > 0 {
             poll_countdown -= 1;
             let result = future.poll();
@@ -350,8 +340,8 @@ mod test {
             ],
         })];
         let recv = MockReceiveStream::will_produce(to_recv);
-        let (send, mut send_verify) = MockSendStream::new();
-        let mut client = create_client(recv, send);
+        let (send, _send_verify) = MockSendStream::new();
+        let client = create_client(recv, send);
 
         let connect = client.connect();
         let client = run_future(connect).expect("failed to execute connect");
@@ -378,12 +368,11 @@ mod test {
     fn send_sends_all_messages() {
         let recv = MockReceiveStream::empty();
         let (send, mut send_verify) = MockSendStream::new();
-        let mut client = create_client(recv, send);
+        let client = create_client(recv, send);
 
         let send = SendMessage::new(client, ProtocolMessage::NextBatch);
 
-        let result = run_future(send).expect("failed to run send");
-
+        let _ = run_future(send).expect("failed to run send");
         assert_eq!(vec![ProtocolMessage::NextBatch], send_verify.get_received());
     }
 
@@ -396,7 +385,7 @@ mod test {
         ];
 
         let recv = MockReceiveStream::will_produce(messages.clone());
-        let (send, mut send_verify) = MockSendStream::new();
+        let (send, _send_verify) = MockSendStream::new();
         let client = create_client(recv, send);
 
         let await = AwaitResponse::new(client, 7);

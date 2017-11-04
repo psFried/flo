@@ -1,4 +1,3 @@
-
 extern crate flo_server;
 extern crate flo_client_lib;
 extern crate url;
@@ -9,10 +8,10 @@ extern crate futures;
 
 mod test_utils;
 
-use std::net::{SocketAddr, SocketAddrV4};
+use std::net::SocketAddr;
 
-use tokio_core::reactor::{Core, Handle};
-use futures::{Future, Stream};
+use tokio_core::reactor::Core;
+use futures::Stream;
 use tempdir::TempDir;
 
 use flo_client_lib::async::{AsyncClient, tcp_connect};
@@ -31,7 +30,7 @@ fn run_test<F>(desc: &'static str, test_fun: F) where F: Fn(u16) + std::panic::R
     let server_stuff = if proc_type == ServerProcessType::Child {
         let temp_dir = TempDir::new(desc).unwrap();
         let args = vec!["--use-new-engine".to_string()];
-        let mut server_proc = FloServerProcess::with_args(port, temp_dir, args);
+        let server_proc = FloServerProcess::with_args(port, temp_dir, args);
         Some(server_proc)
     } else {
         None

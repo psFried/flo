@@ -62,7 +62,7 @@ impl Buffer {
     pub fn fill<R: Read>(&mut self, reader: &mut R) -> io::Result<&[u8]> {
         if self.pos >= self.len {
             let nread = {
-                let mut buf = &mut self.bytes[..];
+                let buf = &mut self.bytes[..];
                 read(buf, reader)?
             };
             if nread == 0 {
@@ -86,7 +86,7 @@ impl Buffer {
         }
 
         let nread = {
-            let mut buf = &mut self.bytes[self.len..];
+            let buf = &mut self.bytes[self.len..];
             read(buf, reader)?
         };
         if nread == 0 {

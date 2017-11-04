@@ -210,16 +210,15 @@ impl <S: Sender<ProtocolMessage> + 'static> ClientConnection<S> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use event::{FloEventId, OwnedFloEvent, VersionVector, Timestamp};
+    use event::{FloEventId, OwnedFloEvent, VersionVector};
     use event::time::from_millis_since_epoch;
     use engine::consumer::client::context::{ConnectionContext, CursorType};
     use engine::consumer::client::connection_state::{IdleState, ConnectionState};
     use engine::consumer::filecursor::{Cursor, CursorMessage};
-    use engine::api::{ConnectionId, NamespaceGlob, ConsumerFilter, ConsumerState, ClientConnect};
+    use engine::api::{ConnectionId, NamespaceGlob, ConsumerFilter, ConsumerState};
     use protocol::{ProtocolMessage, RecvEvent, ConsumerStart};
 
     use channels::{Sender, MockSender};
-    use futures::sync::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
     use std::net::{SocketAddr, SocketAddrV4, Ipv4Addr};
 
     #[test]
@@ -329,7 +328,7 @@ mod test {
     fn update_marker_sets_id_in_version_vec_when_connection_is_not_consuming() {
         let mut subject = subject_with_state(ConnectionState::init(999));
         let id = FloEventId::new(8, 9);
-        subject.message_received(ProtocolMessage::UpdateMarker(id), &mut MockContext::returning_file_cursor());
+        subject.message_received(ProtocolMessage::UpdateMarker(id), &mut MockContext::returning_file_cursor()).unwrap();
 
         expect_not_consuming_state(&subject, |idle_state| {
             assert_eq!(9, idle_state.version_vector.get(8));
@@ -340,7 +339,7 @@ mod test {
     fn set_batch_size_updates_batch_size_when_connection_is_not_consuming() {
         let mut subject = subject_with_state(ConnectionState::init(999));
 
-        subject.message_received(ProtocolMessage::SetBatchSize(888), &mut MockContext::returning_file_cursor());
+        subject.message_received(ProtocolMessage::SetBatchSize(888), &mut MockContext::returning_file_cursor()).unwrap();
 
         expect_not_consuming_state(&subject, |idle_state| {
             assert_eq!(888, idle_state.batch_size);
@@ -357,7 +356,6 @@ mod test {
     }
 
     const CONNECTION_ID: ConnectionId = 123;
-    const BATCH_SIZE: u64 = 3;
     fn address() -> SocketAddr {
         SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(1, 2, 3, 4), 6789))
     }
@@ -374,23 +372,13 @@ mod test {
         }
     }
 
-
-    fn assert_events_sent_in_order(subject: &TestConnection, expected: Vec<Arc<OwnedFloEvent>>) {
-        let mut count = 0;
-        let expected_count = expected.len();
-
-        for expected_event in expected {
-
-        }
-    }
-
     struct MockContext {
         start_consuming_return_val: Option<Result<CursorType, String>>,
         start_consuming_args: Option<ConsumerState>,
     }
 
     impl ConnectionContext for MockContext {
-        fn start_consuming<S: Sender<ProtocolMessage>>(&mut self, consumer_state: ConsumerState, client_sender: &S) -> Result<CursorType, String> {
+        fn start_consuming<S: Sender<ProtocolMessage>>(&mut self, consumer_state: ConsumerState, _client_sender: &S) -> Result<CursorType, String> {
             let ret_val = self.start_consuming_return_val.take().unwrap();
             self.start_consuming_args = Some(consumer_state);
             ret_val
@@ -404,10 +392,6 @@ mod test {
                 start_consuming_args: None
             }
         }
-
-        fn assert_argument_received(&self, expected: ConsumerState) {
-            assert_eq!(Some(expected), self.start_consuming_args)
-        }
     }
 
     struct InMemoryMockContext {
@@ -415,7 +399,7 @@ mod test {
     }
 
     impl ConnectionContext for InMemoryMockContext {
-        fn start_consuming<S: Sender<ProtocolMessage> + 'static>(&mut self, consumer_state: ConsumerState, client_sender: &S) -> Result<CursorType, String> {
+        fn start_consuming<S: Sender<ProtocolMessage> + 'static>(&mut self, consumer_state: ConsumerState, _: &S) -> Result<CursorType, String> {
             assert!(self.arg.is_none(), "start_consuming has already been called");
             self.arg = Some(consumer_state.clone());
             Ok(CursorType::InMemory(consumer_state))
@@ -428,6 +412,7 @@ mod test {
                 arg: None
             }
         }
+        #[allow(dead_code)] // getting bogus lint warnings about this being unused for some reason
         fn assert_argument_received(&self, expected: ConsumerState) {
             assert_eq!(Some(expected), self.arg);
         }

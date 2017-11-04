@@ -215,11 +215,8 @@ fn write_event_unchecked<E: FloEvent>(buffer: &mut [u8], event: &E, total_size: 
 #[cfg(test)]
 mod test {
     use super::*;
-    use std::cell::UnsafeCell;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Arc;
     use memmap::{Mmap, Protection};
-    use event::{OwnedFloEvent, FloEvent, FloEventId, EventCounter, ActorId, Timestamp, time};
+    use event::{OwnedFloEvent, FloEvent, FloEventId, time};
 
     #[test]
     fn write_and_read_an_event_with_zero_lengh_namespace_and_data() {
@@ -286,12 +283,11 @@ mod test {
             assert_events_eq(&input, &persisted);
         }
 
-        unsafe {
-            let len = PersistentEvent::get_repr_length(&input);
-            let result = PersistentEvent::read(&mmap, 0);
-            let persisted = result.expect("failed to read event");
-            assert_events_eq(&input, &persisted);
-        }
+        let len = PersistentEvent::get_repr_length(&input);
+        let result = PersistentEvent::read(&mmap, 0);
+        let persisted = result.expect("failed to read event");
+        assert_events_eq(&input, &persisted);
+        assert_eq!(len, PersistentEvent::get_repr_length(&persisted));
     }
 
     fn assert_events_eq<L: FloEvent, R: FloEvent>(lhs: &L, rhs: &R) {

@@ -1,8 +1,7 @@
 use std::fmt::{self, Debug};
-use std::error::Error;
 use std::io;
 
-use futures::{Sink, Stream, AsyncSink, Future, Async, Poll};
+use futures::{Sink, Future, Async, Poll};
 use futures::sink::Send;
 
 use protocol::ProtocolMessage;

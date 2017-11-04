@@ -1,13 +1,12 @@
 
 use std::collections::VecDeque;
-use std::fmt::{self, Debug};
-use std::error::Error;
+use std::fmt::Debug;
 use std::io;
 
 use futures::{Future, Async, Poll};
 
 use protocol::ProtocolMessage;
-use async::{AsyncClient, ErrorType};
+use async::{AsyncClient};
 
 
 #[derive(Debug)]
@@ -24,7 +23,7 @@ impl <D: Debug> AwaitResponse<D> {
         // first check to see if we happen to have the response already buffered.
         let buffered: Option<ProtocolMessage> = {
             let buf: &mut VecDeque<ProtocolMessage> = &mut client.received_message_buffer;
-            let index = buf.iter().enumerate().find(|&(idx, ref message)| {
+            let index = buf.iter().enumerate().find(|&(_, ref message)| {
                 message.get_op_id() == op_id
             }).map(|(idx, _)| idx);
             index.and_then(|idx| {

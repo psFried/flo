@@ -149,12 +149,9 @@ fn determine_existing_partitions(storage_dir: &Path) -> Result<Vec<u64>, io::Err
 
 #[cfg(test)]
 mod test {
-    use std::sync::{Arc, RwLock};
     use super::*;
     use engine::event_store::{EventReader, EventWriter, StorageEngineOptions};
-    use engine::event_store::index::EventIndex;
     use event::{time, FloEventId, ActorId, EventCounter, OwnedFloEvent, Timestamp};
-    use std::io::Cursor;
     use chrono::Duration;
 
     use tempdir::TempDir;
@@ -372,7 +369,6 @@ mod test {
         let event3 = OwnedFloEvent::new(FloEventId::new(1, 3), None, event_time(), "/smalls/yourekillinme".to_owned(), "third event data".as_bytes().to_owned());
 
         let storage_dir = TempDir::new("events_are_stored_and_read_with_fresh_directory").unwrap();
-        let index = Arc::new(RwLock::new(EventIndex::new()));
         let storage_opts = StorageEngineOptions {
             storage_dir: storage_dir.path().to_owned(),
             event_retention_duration: Duration::days(30),

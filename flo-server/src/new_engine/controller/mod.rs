@@ -19,7 +19,8 @@ pub struct ControllerOptions {
 
 /// A specialized event stream that always has exactly one partition and manages the cluster state and consensus
 /// Of course there is no cluster state and thus no consensus at the moment, but we'll just leave this here...
-pub struct FloController { // TODO: implement raft lol
+#[allow(dead_code)] // TODO: implement raft lol
+pub struct FloController {
     engine_ref: Arc<EngineRef>,
     event_streams: HashMap<String, EventStreamRef>,
 }

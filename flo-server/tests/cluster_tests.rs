@@ -7,13 +7,12 @@ mod test_utils;
 
 use test_utils::*;
 use flo_client_lib::sync::connection::{Connection, ConsumerOptions};
-use flo_client_lib::sync::{Consumer, Context, ConsumerAction, ClientError};
-use flo_client_lib::{FloEventId, ActorId, Event, ErrorKind};
+use flo_client_lib::{FloEventId, ActorId};
 use flo_client_lib::codec::StringCodec;
 use std::thread;
 use std::time::Duration;
 use std::sync::atomic::Ordering;
-use std::net::{TcpStream, SocketAddr, SocketAddrV4, Ipv4Addr};
+use std::net::{SocketAddr, SocketAddrV4, Ipv4Addr};
 use tempdir::TempDir;
 
 fn localhost(port: u16) -> SocketAddr {
@@ -101,7 +100,7 @@ fn start_3_member_cluster() -> (ClusterMember, ClusterMember, ClusterMember) {
 
 #[test]
 fn basic_replication_test() {
-    let (mut server_one, mut server_two, mut server_three) = start_3_member_cluster();
+    let (server_one, server_two, server_three) = start_3_member_cluster();
 
     let mut client_one = server_one.new_connection();
     let mut client_two = server_two.new_connection();
@@ -129,7 +128,7 @@ fn assert_server_events_equal(connection: &mut Connection<StringCodec>, expected
 
     let mut actual_events = get_all_event_ids(connection);
 
-    while (start_time.elapsed() < timeout) {
+    while start_time.elapsed() < timeout {
         if actual_events.len() >= expected_event_ids.len() {
             assert_eq!(expected_event_ids, &actual_events);
             return;

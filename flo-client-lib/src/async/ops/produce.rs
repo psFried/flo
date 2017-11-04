@@ -1,16 +1,15 @@
-use std::fmt::{self, Debug};
-use std::error::Error;
+use std::fmt::Debug;
 use std::io;
 
-use futures::{Future, Poll, Async, AsyncSink};
+use futures::{Future, Poll, Async};
 
 use event::FloEventId;
-use codec::EventCodec;
 use protocol::{ProtocolMessage, ProduceEvent};
-use async::{AsyncClient, ErrorType, MessageSender, MessageReceiver};
+use async::{AsyncClient, ErrorType};
 use async::ops::{RequestResponse, RequestResponseError};
 
 pub struct ProduceOne<D: Debug> {
+    #[allow(dead_code)]
     op_id: u32,
     inner: Inner<D>,
 }

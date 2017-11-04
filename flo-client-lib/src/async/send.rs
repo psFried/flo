@@ -21,13 +21,6 @@ impl <W: Write> MessageSendSink<W> {
             writer: writer
         }
     }
-
-    fn needs_next_message(&self) -> bool {
-        match self.message_buffer.first() {
-            Some(ref message) => message.is_done(),
-            None => true
-        }
-    }
 }
 
 impl <W: Write> MessageSink for MessageSendSink<W> { }
@@ -72,6 +65,10 @@ impl <W: Write> Sink for MessageSendSink<W> {
         }
         // Once the message buffer is empty, return an Ok
         Ok(Async::Ready(()))
+    }
+
+    fn close(&mut self) -> Poll<(), Self::SinkError> {
+        self.poll_complete()
     }
 }
 

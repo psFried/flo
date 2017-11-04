@@ -7,7 +7,7 @@ extern crate tempdir;
 mod test_utils;
 
 use test_utils::*;
-use flo_client_lib::sync::connection::{SyncConnection, Connection, ConsumerOptions};
+use flo_client_lib::sync::connection::{SyncConnection, ConsumerOptions};
 use flo_client_lib::sync::{Consumer, Context, ConsumerAction, ClientError};
 use flo_client_lib::{FloEventId, Event, ErrorKind, VersionVector};
 use flo_client_lib::codec::StringCodec;
@@ -104,7 +104,7 @@ fn consumer_transitions_from_reading_events_from_disk_to_reading_from_memory() {
 
     let mut producer_connection = SyncConnection::connect(localhost(port), StringCodec).expect("failed to connect");
     let mut consumer_connection = SyncConnection::connect(localhost(port), StringCodec).expect("failed to connect");
-    for i in 0..10 {
+    for _ in 0..10 {
         // events should each be big enough that only a portion of them can be cached, 256KB should do it
         let event_data = ::std::iter::repeat('d').take(1024 * 256).collect::<String>();
         producer_connection.produce("/the/namespace", event_data).expect("Failed to produce event");
@@ -316,7 +316,7 @@ impl <T> Consumer<T> for BatchTestConsumer {
         "BatchTestConsumer"
     }
 
-    fn on_event<C>(&mut self, event: Event<T>, context: &mut C) -> ConsumerAction where C: Context<T> {
+    fn on_event<C>(&mut self, _: Event<T>, context: &mut C) -> ConsumerAction where C: Context<T> {
         self.current_count += 1;
 
         let remaining = context.batch_remaining();

@@ -50,6 +50,7 @@ pub struct ConsumerTaskSetter {
 
 impl ConsumerTaskSetter {
 
+    #[allow(dead_code)] //TODO: implement stopping consumer
     pub fn cancel(&mut self) {
         self.active.set(false);
     }

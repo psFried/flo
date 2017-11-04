@@ -1,3 +1,6 @@
+#![allow(dead_code)] // will generate a ton of bogus warnings otherwise
+
+
 extern crate url;
 extern crate env_logger;
 extern crate tempdir;

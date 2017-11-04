@@ -439,7 +439,7 @@ mod test {
                                subject_versions: VersionVector,
                                subject: &mut ProducerManager<MockEventWriter>,
                                client: &mut UnboundedReceiver<ProtocolMessage>,
-                               consumer_manager: &mut Receiver<ConsumerManagerMessage>) {
+                               _consumer_manager: &mut Receiver<ConsumerManagerMessage>) {
 
         let peer_state = protocol::ClusterState {
             actor_id: peer_actor_id,

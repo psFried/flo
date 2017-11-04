@@ -1,15 +1,12 @@
 
 use std::fmt::Debug;
 use std::io;
-use std::net::ToSocketAddrs;
 
 use futures::{Future, Async, Poll};
-use tokio_core::net::{TcpStream, TcpStreamNew};
 
-use protocol::{ProtocolMessage, ErrorMessage, ClientAnnounce, EventStreamStatus};
-use async::{AsyncClient, MessageSender, MessageReceiver, ErrorType};
+use protocol::{ProtocolMessage, ClientAnnounce};
+use async::{AsyncClient, ErrorType};
 use async::ops::{RequestResponse, RequestResponseError};
-use codec::EventCodec;
 
 const PROTOCOL_VERSION: u32 = 1;
 
