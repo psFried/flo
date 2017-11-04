@@ -16,7 +16,7 @@ use futures::{Stream, Future};
 
 use flo_server::embedded::{EmbeddedFloServer, ControllerOptions, EventStreamOptions, run_embedded_server};
 
-use flo_client_lib::{VersionVector, FloEventId};
+use flo_client_lib::{VersionVector, FloEventId, Event, EventCounter};
 use flo_client_lib::codec::{EventCodec, StringCodec};
 
 fn default_test_options() -> EventStreamOptions {
@@ -60,6 +60,33 @@ fn run_future<T: Debug, E: Debug, F: Future<Item=T, Error=E> + Debug>(reactor: &
         Err(Either::A(_)) => panic!("Error in timeout"),
         Err(Either::B((err, _))) => panic!("Error executing future: {:?}", err),
     }
+}
+
+
+#[test]
+fn produce_many_events_then_consume() {
+    integration_test("produce many events", default_test_options(), |server, mut reactor| {
+        let mut client = server.connect_client::<String>("testy mctesterson".to_owned(), codec(), reactor.handle());
+        client = reactor.run(client.connect()).expect("failed to connect client");
+
+        let produce_count = 20usize;
+        for i in 0..produce_count {
+            let produce = client.produce("/foo", None, format!("event data {}", i));
+            let (id, client_again) = reactor.run(produce).expect("failed to produce event");
+            client = client_again;
+            assert_eq!(i as u64 + 1, id.event_counter);
+        }
+
+        let mut vv = VersionVector::new();
+        vv.set(FloEventId::new(1, 0));
+
+        let consume_stream = client.consume("/foo", &vv, Some(produce_count as u64));
+        let mut results: Vec<Event<String>> = run_future(&mut reactor, consume_stream.collect());
+        assert_eq!(produce_count, results.len());
+
+        let last_event = results.pop().unwrap();
+        assert_eq!(FloEventId::new(1, produce_count as EventCounter), last_event.id);
+    });
 }
 
 #[test]
