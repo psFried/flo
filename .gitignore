@@ -17,5 +17,9 @@ events.json
 
 .vscode
 
+.idea
+*.iml
+*.ipr
+
 CMakeLists.txt
 cmake-build-debug
