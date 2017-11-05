@@ -33,9 +33,11 @@ pub type ConsumeResponseReceiver = oneshot::Receiver<PartitionReader>;
 pub trait ConsumerNotifier: Send {
     /// Notify the consumer that an event is ready to be read.
     /// The impl just calls `notify()` on the `futures::task::Task` associated with the consumer
-    fn notify(&mut self);
+    fn notify(&self);
     /// returns `false` if the consumer is finished and will never again want to be notified about future events. Otherwise, `true`
     fn is_active(&self) -> bool;
+    /// returns the `ConnectionId` of this consumer
+    fn connection_id(&self) -> ConnectionId;
 }
 
 pub struct ConsumeOperation {
@@ -55,6 +57,7 @@ impl Debug for ConsumeOperation {
 pub enum OpType {
     Produce(ProduceOperation),
     Consume(ConsumeOperation),
+    StopConsumer,
 }
 
 
@@ -80,6 +83,14 @@ impl Operation {
             op_type: OpType::Consume(consume)
         };
         (op, rx)
+    }
+
+    pub fn stop_consumer(connection_id: ConnectionId) -> Operation {
+        Operation {
+            connection_id: connection_id,
+            client_message_recv_time: Instant::now(),
+            op_type: OpType::StopConsumer
+        }
     }
 
     pub fn produce(connection_id: ConnectionId, op_id: u32, events: Vec<ProduceEvent>) -> (Operation, ProduceResponseReceiver) {

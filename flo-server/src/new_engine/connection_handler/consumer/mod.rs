@@ -4,6 +4,7 @@ use std::io;
 
 use futures::{Stream, Future, Async, Poll};
 
+use event::ActorId;
 use protocol::*;
 use new_engine::connection_handler::ConnectionHandlerResult;
 use new_engine::connection_handler::connection_state::ConnectionState;
@@ -13,21 +14,26 @@ use new_engine::event_stream::partition::{PartitionReader,
                                           AsyncConsumeResult};
 
 use self::consumer_stream::{Consumer,
+                            ConsumerStatus,
                             ConsumerStatusSetter,
                             PendingConsumer,
                             prepare_consumer_start,
                             create_status_channel};
 
 
-
 const DEFAULT_CONSUME_BATCH_SIZE: u32 = 10_000;
 
+#[derive(Debug)]
+struct ActiveConsumer {
+    status_setter: ConsumerStatusSetter,
+    partition: ActorId,
+}
 
 #[derive(Debug)]
 pub struct ConsumerConnectionState {
     consume_batch_size: u32,
     pending_consume_operation: Option<(PendingConsumer, ConsumeResponseReceiver)>,
-    consumer_ref: Option<ConsumerStatusSetter>,
+    consumer_ref: Option<ActiveConsumer>,
 }
 
 
@@ -40,6 +46,19 @@ impl ConsumerConnectionState {
         }
     }
 
+    pub fn shutdown(&mut self, connection: &mut ConnectionState) {
+        if let Some(ref mut consumer) = self.consumer_ref {
+            // tell the active consumer to stop sending events
+            consumer.status_setter.set(ConsumerStatus::Stop);
+
+            // tell the partitions to remove their consumer notifiers
+            let connection_id = connection.connection_id;
+            if let Some(partition_ref) = connection.event_stream.get_partition(consumer.partition) {
+                partition_ref.stop_consuming(connection_id)
+            }
+        }
+    }
+
     pub fn requires_poll_complete(&self) -> bool {
         self.pending_consume_operation.is_some()
     }
@@ -49,8 +68,10 @@ impl ConsumerConnectionState {
 
         match EventFilter::parse(&namespace) {
             Ok(filter) => {
+                // TODO: handle multiple partitions in the version vector
                 let start = version_vector.first().map(|id| id.event_counter).unwrap_or(0);
-                let (pending, notifier) = prepare_consumer_start(op_id, Some(max_events));
+                let partition = version_vector.first().map(|id| id.actor).unwrap_or(1);
+                let (pending, notifier) = prepare_consumer_start(op_id, Some(max_events), connection.connection_id, partition);
 
                 let result = connection.event_stream.get_partition(1).unwrap().consume(
                     connection.connection_id,
@@ -115,6 +136,7 @@ impl ConsumerConnectionState {
 
         let (status_setter, status_checker) = create_status_channel();
 
+        let partition_num = pending.partition;
         let connection_id = connection.connection_id;
         let consumer = Consumer::new(connection_id, self.consume_batch_size, status_checker, reader, pending);
         let future = consumer.forward(connection.client_sender.clone()).map_err(move |err| {
@@ -125,7 +147,11 @@ impl ConsumerConnectionState {
             ()
         });
 
-        self.consumer_ref = Some(status_setter);
+        let active_consumer = ActiveConsumer {
+            status_setter: status_setter,
+            partition: partition_num,
+        };
+        self.consumer_ref = Some(active_consumer);
         connection.reactor.spawn(future);
 
         Ok(Async::Ready(()))

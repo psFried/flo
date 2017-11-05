@@ -5,7 +5,7 @@ use std::io;
 use event::{FloEvent, ActorId};
 
 use new_engine::ConnectionId;
-use new_engine::event_stream::partition::SharedReaderRefs;
+use new_engine::event_stream::partition::{SharedReaderRefs, SegmentNum};
 use new_engine::event_stream::partition::segment::{SegmentReader, PersistentEvent};
 
 pub use self::namespace::NamespaceGlob;
@@ -33,13 +33,12 @@ impl EventFilter {
     }
 }
 
-//TODO: fill in event reader to iterate events in a partition
 #[derive(Debug)]
 pub struct PartitionReader {
     connection_id: ConnectionId,
     partition_num: ActorId,
     filter: EventFilter,
-    current_segment_reader: SegmentReader,
+    current_segment_reader: Option<SegmentReader>,
     segment_readers_ref: SharedReaderRefs,
     returned_error: bool,
 }
@@ -47,7 +46,7 @@ pub struct PartitionReader {
 
 impl PartitionReader {
 
-    pub fn new(connection_id: ConnectionId, partition_num: ActorId, filter: EventFilter, current_reader: SegmentReader, segment_refs: SharedReaderRefs) -> PartitionReader {
+    pub fn new(connection_id: ConnectionId, partition_num: ActorId, filter: EventFilter, current_reader: Option<SegmentReader>, segment_refs: SharedReaderRefs) -> PartitionReader {
         PartitionReader {
             connection_id: connection_id,
             partition_num: partition_num,
@@ -74,26 +73,38 @@ impl PartitionReader {
         }
     }
 
+    fn current_reader_is_exhausted(&self) -> bool {
+        self.current_segment_reader.as_ref().map(|reader| {
+            reader.is_exhausted()
+        }).unwrap_or(true)
+    }
+
+    fn current_reader_segment_id(&self) -> u64 {
+        self.current_segment_reader.as_ref().map(|r| r.segment_id.0).unwrap_or(0)
+    }
+
     fn read_next(&mut self) -> Option<io::Result<PersistentEvent>> {
         if self.returned_error {
             return None;
         }
 
-        if self.current_segment_reader.is_exhausted() {
-            if let Some(mut next_segment) = self.segment_readers_ref.get_next_segment(self.current_segment_reader.segment_id) {
-                if next_segment.segment_id.0 - self.current_segment_reader.segment_id.0 > 1 {
-                    warn!("Consumer for connection_id: {} skipped from {} to {}", self.connection_id, self.current_segment_reader.segment_id, next_segment.segment_id);
+        if self.current_reader_is_exhausted() {
+            let current_segment_id = self.current_reader_segment_id();
+            if let Some(next_segment) = self.segment_readers_ref.get_next_segment(SegmentNum(current_segment_id)) {
+                if next_segment.segment_id.0 - current_segment_id > 1 {
+                    warn!("Consumer for connection_id: {} skipped from {} to {}", self.connection_id, current_segment_id, next_segment.segment_id);
                 } else {
                     debug!("Advanced segment for connection_id: {} to {}", self.connection_id, next_segment.segment_id);
-
                 }
-                ::std::mem::swap(&mut self.current_segment_reader, &mut next_segment);
+                self.current_segment_reader = Some(next_segment);
             } else {
                 return None;
             }
         }
 
-        let next = self.current_segment_reader.read_next();
+        let next = self.current_segment_reader.as_mut().and_then(|reader| {
+            reader.read_next()
+        });
         if next.as_ref().map(|r| r.is_err()).unwrap_or(false) {
             self.returned_error = true;
         }

@@ -5,6 +5,7 @@ use std::io;
 
 use futures::{Stream, Poll, Async};
 
+use event::ActorId;
 use new_engine::ConnectionId;
 use new_engine::event_stream::partition::{PartitionReader, ConsumerNotifier, PersistentEvent};
 use protocol::{ProtocolMessage, RecvEvent};
@@ -15,14 +16,16 @@ pub use self::status_check::{ConsumerStatus, ConsumerStatusChecker, ConsumerStat
 #[derive(Debug)]
 pub struct PendingConsumer {
     pub op_id: u32,
+    pub partition: ActorId,
     pub task_setter: ConsumerTaskSetter,
     pub max_events: Option<u64>,
 }
 
-pub fn prepare_consumer_start(op_id: u32, max_events: Option<u64>) -> (PendingConsumer, Box<ConsumerNotifier>) {
-    let (task_setter, notifier) = create_consumer_notifier();
+pub fn prepare_consumer_start(op_id: u32, max_events: Option<u64>, connection_id: ConnectionId, partition: ActorId) -> (PendingConsumer, Box<ConsumerNotifier>) {
+    let (task_setter, notifier) = create_consumer_notifier(connection_id);
     let pending = PendingConsumer {
         op_id: op_id,
+        partition: partition,
         task_setter: task_setter,
         max_events: max_events,
     };
@@ -54,7 +57,7 @@ impl Consumer {
                reader: PartitionReader,
                pending: PendingConsumer) -> Consumer {
 
-        let PendingConsumer {task_setter, max_events, op_id} = pending;
+        let PendingConsumer {task_setter, max_events, op_id, ..} = pending;
 
         Consumer {
             connection_id: connection_id,
@@ -73,6 +76,7 @@ impl Consumer {
     }
 
     fn await_more_events(&mut self) -> Poll<Option<ProtocolMessage>, ConsumerError> {
+        trace!("Awaiting more events for connection_id: {}", self.connection_id);
         self.task_setter.await_more_events();
         Ok(Async::NotReady)
     }
@@ -86,14 +90,19 @@ impl Consumer {
         }
         self.batch_remaining -= 1;
 
+        trace!("Sending event: {} to connection_id: {}", event.id(), self.connection_id);
+
         if self.batch_remaining == 0 {
+            trace!("Batch is now exhausted for connection_id: {}", self.connection_id);
             // if we're at the end of the batch, then we need to register to be notified when the status changes
+            // This call does not actually block, but just registers to be notified at a later point
             self.status_checker.await_status_change();
         }
 
         // TODO: Allow ProtocolMessage to work with PersistentEvents to get rid of this copy
         let message = ProtocolMessage::ReceiveEvent(RecvEvent::Owned(event.to_owned()));
 
+        // return the event, which will get forwarded to the client Sink
         Ok(Async::Ready(Some(message)))
     }
 

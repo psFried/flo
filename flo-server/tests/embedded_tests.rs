@@ -10,6 +10,8 @@ extern crate chrono;
 extern crate log;
 
 use std::fmt::Debug;
+use std::thread;
+use std::time::Duration;
 
 use tokio_core::reactor::Core;
 use futures::{Stream, Future};
@@ -49,7 +51,7 @@ fn run_future<T: Debug, E: Debug, F: Future<Item=T, Error=E> + Debug>(reactor: &
     use tokio_core::reactor::Timeout;
     use futures::future::Either;
 
-    let timeout_millis = 250000;
+    let timeout_millis = 500;
 
     let timeout = Timeout::new(::std::time::Duration::from_millis(timeout_millis), &reactor.handle()).unwrap();
     let either_future = timeout.select2(future);
@@ -62,6 +64,45 @@ fn run_future<T: Debug, E: Debug, F: Future<Item=T, Error=E> + Debug>(reactor: &
     }
 }
 
+#[test]
+fn consumer_receives_event_as_it_is_produced() {
+    integration_test("consumer receives event as it is produced", default_test_options(), |server, mut reactor| {
+
+        let mut producer_client = server.connect_client::<String>("producer".to_owned(), codec(), reactor.handle());
+        producer_client = reactor.run(producer_client.connect()).expect("failed to connect producer");
+
+        let join_handle = thread::spawn(move || {
+            let mut consumer_core = Core::new().unwrap();
+
+            let mut consumer_client = server.connect_client::<String>("consumer".to_owned(),
+                                                                      codec(),
+                                                                      consumer_core.handle());
+            consumer_client = consumer_core.run(consumer_client.connect()).expect("failed to connect consumer");
+
+            let mut vv = VersionVector::new();
+            vv.set(FloEventId::new(1, 0));
+            let stream = consumer_client.consume("/foo", &vv, Some(1));
+            println!("About to run consumer");
+            let result = run_future(&mut consumer_core, stream.collect());
+            println!("Finished consumer thread");
+            result
+        });
+
+        println!("started consumer thread");
+        thread::sleep(Duration::from_millis(50));
+
+        let produce = producer_client.produce("/foo", None, "some data".to_owned());
+        println!("about to run produce future");
+        let (id, _) = reactor.run(produce).expect("failed to produce event");
+        println!("finished produce future");
+
+        let mut consumed_events = join_handle.join().expect("failed to run consumer");
+        assert_eq!(1, consumed_events.len());
+
+        let result_event = consumed_events.pop().unwrap();
+        assert_eq!(id, result_event.id);
+    });
+}
 
 #[test]
 fn produce_many_events_then_consume() {

@@ -140,7 +140,7 @@ impl SharedReaderRefs {
     }
 
     pub fn get_segment(&self, segment: SegmentNum) -> Option<SegmentReader> {
-        if let Some(seg) =  self.get_next_segment(SegmentNum(segment.0 - 1)) {
+        if let Some(seg) =  self.get_next_segment(SegmentNum(segment.0.saturating_sub(1))) {
             if seg.segment_id == segment {
                 Some(seg)
             } else {
@@ -196,6 +196,10 @@ impl PartitionRef {
         self.send(op).map(|()| rx)
     }
 
+    pub fn stop_consuming(&mut self, connection_id: ConnectionId) {
+        let op = Operation::stop_consumer(connection_id);
+        let _ = self.send(op);
+    }
 
     pub fn produce(&mut self, connection_id: ConnectionId, op_id: u32, events: Vec<ProduceEvent>) -> AsyncProduceResult {
         let (op, rx) = Operation::produce(connection_id, op_id, events);

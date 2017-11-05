@@ -1,4 +1,5 @@
 mod util;
+mod consumer_manager;
 
 use std::io;
 use std::collections::VecDeque;
@@ -15,6 +16,7 @@ use super::index::{PartitionIndex, IndexEntry};
 use new_engine::event_stream::EventStreamOptions;
 use new_engine::ConnectionId;
 use self::util::get_segment_files;
+use self::consumer_manager::ConsumerManager;
 
 const FIRST_SEGMENT_NUM: SegmentNum = SegmentNum(1);
 
@@ -31,6 +33,9 @@ pub struct PartitionImpl {
 
     /// new segments each have a reader added here. The readers are then accessed as needed by the EventReader
     reader_refs: SharedReaderRefsMut,
+
+    /// consumers each have a notifier added here
+    consumer_manager: ConsumerManager,
 }
 
 impl PartitionImpl {
@@ -74,6 +79,7 @@ impl PartitionImpl {
             greatest_event_id: highest_counter,
             primary: status_reader,
             reader_refs: reader_refs,
+            consumer_manager: ConsumerManager::new(),
         })
     }
 
@@ -92,6 +98,7 @@ impl PartitionImpl {
             greatest_event_id: AtomicCounterWriter::zero(),
             primary: status_reader,
             reader_refs: SharedReaderRefsMut::new(),
+            consumer_manager: ConsumerManager::new(),
         })
     }
 
@@ -124,6 +131,10 @@ impl PartitionImpl {
             OpType::Consume(consume_op) => {
                 self.handle_consume(connection_id, consume_op)
             }
+            OpType::StopConsumer => {
+                self.consumer_manager.remove(connection_id);
+                Ok(())
+            }
         }
     }
 
@@ -155,6 +166,7 @@ impl PartitionImpl {
             self.append(&event)?;
         }
         debug!("partition: {} finished appending {} events ending with counter: {}", self.partition_num, event_count, event_counter);
+        self.consumer_manager.notify_uncommitted();
         Ok(FloEventId::new(self.partition_num, event_counter))
     }
 
@@ -229,12 +241,15 @@ impl PartitionImpl {
     }
 
     fn handle_consume(&mut self, connection_id: ConnectionId, consume: ConsumeOperation) -> io::Result<()> {
-        let ConsumeOperation {client_sender, filter, start_exclusive, ..} = consume;
+        let ConsumeOperation {client_sender, filter, start_exclusive, notifier} = consume;
         let reader = self.create_reader(connection_id, filter, start_exclusive);
 
         // We don't really care if the receiving end has hung up already
-        // In that case, the reader will just be dropped here
-        let _ = client_sender.send(reader);
+        // but we don't want to actually add the notifier to the consumer manager in that case
+        let result = client_sender.send(reader);
+        if let Ok(_) = result {
+            self.consumer_manager.add_uncommitted(notifier);
+        }
         Ok(())
     }
 
@@ -248,12 +263,12 @@ impl PartitionImpl {
                 readers.get_next_segment(entry.segment.previous()).map(|mut segment| {
                     segment.set_offset(entry.file_offset);
                     segment
-                }).unwrap()
+                })
             }
             None => {
                 // The requested event counter comes after the end of the stream, so just return the current segment
-                let mut reader = readers.get_segment(current_segment_num).unwrap(); // safe unwrap since it's the current segment
-                reader.set_offset_to_end();
+                let mut reader = readers.get_segment(current_segment_num);
+                reader.as_mut().map(|r| r.set_offset_to_end());
                 reader
             }
         };
