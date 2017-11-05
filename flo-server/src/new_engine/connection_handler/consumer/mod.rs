@@ -21,7 +21,6 @@ use self::consumer_stream::{Consumer,
                             create_status_channel};
 
 
-const DEFAULT_CONSUME_BATCH_SIZE: u32 = 10_000;
 
 #[derive(Debug)]
 struct ActiveConsumer {
@@ -31,7 +30,6 @@ struct ActiveConsumer {
 
 #[derive(Debug)]
 pub struct ConsumerConnectionState {
-    consume_batch_size: u32,
     pending_consume_operation: Option<(PendingConsumer, ConsumeResponseReceiver)>,
     consumer_ref: Option<ActiveConsumer>,
 }
@@ -40,7 +38,6 @@ pub struct ConsumerConnectionState {
 impl ConsumerConnectionState {
     pub fn new() -> ConsumerConnectionState {
         ConsumerConnectionState {
-            consume_batch_size: DEFAULT_CONSUME_BATCH_SIZE,
             pending_consume_operation: None,
             consumer_ref: None,
         }
@@ -61,6 +58,16 @@ impl ConsumerConnectionState {
 
     pub fn requires_poll_complete(&self) -> bool {
         self.pending_consume_operation.is_some()
+    }
+
+    pub fn handle_next_batch(&mut self, connection: &mut ConnectionState) -> ConnectionHandlerResult {
+        if let Some(ref mut active_consumer) = self.consumer_ref {
+            debug!("Setting NextBatch status for consumer for connection_id: {}", connection.connection_id);
+            active_consumer.status_setter.set(ConsumerStatus::NextBatch);
+        } else {
+            warn!("Ignoring NextBatch message for connection_id: {} since no active consumer is in progress", connection.connection_id);
+        }
+        Ok(())
     }
 
     pub fn handle_start_consuming(&mut self, start: NewConsumerStart, connection: &mut ConnectionState) -> ConnectionHandlerResult {
@@ -125,9 +132,10 @@ impl ConsumerConnectionState {
 
     fn spawn_consumer(&mut self, reader: PartitionReader, pending: PendingConsumer, connection: &mut ConnectionState) -> Poll<(), io::Error> {
         let op_id = pending.op_id;
+        let batch_size = connection.consume_batch_size;
         let send_result = connection.send_to_client(ProtocolMessage::CursorCreated(CursorInfo {
             op_id: op_id,
-            batch_size: self.consume_batch_size,
+            batch_size: batch_size,
         }));
 
         if let Err(desc) = send_result {
@@ -138,7 +146,7 @@ impl ConsumerConnectionState {
 
         let partition_num = pending.partition;
         let connection_id = connection.connection_id;
-        let consumer = Consumer::new(connection_id, self.consume_batch_size, status_checker, reader, pending);
+        let consumer = Consumer::new(connection_id, batch_size, status_checker, reader, pending);
         let future = consumer.forward(connection.client_sender.clone()).map_err(move |err| {
             error!("Consumer failed for connection_id: {}, op_id: {}, err: {:?}", connection_id, op_id, err);
             ()

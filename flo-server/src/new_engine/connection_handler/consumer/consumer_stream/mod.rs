@@ -40,6 +40,9 @@ pub struct Consumer {
     batch_size: u32,
     batch_remaining: u32,
 
+    /// whether the EndOfBatch message was sent already or not
+    end_of_batch_sent: bool,
+
     /// actually reads events from a partition
     reader: PartitionReader,
 
@@ -68,6 +71,7 @@ impl Consumer {
             reader: reader,
             task_setter: task_setter,
             status_checker: status_checker,
+            end_of_batch_sent: false,
         }
     }
 
@@ -116,7 +120,7 @@ impl Consumer {
     }
 
 
-    fn check_status(&mut self) -> Poll<Option<()>, ConsumerError> {
+    fn check_status(&mut self) -> Poll<Option<StreamStatus>, ConsumerError> {
         if self.is_done() {
             return Ok(Async::Ready(None));
         }
@@ -126,12 +130,19 @@ impl Consumer {
         match self.status_checker.get() {
             ConsumerStatus::NoChange => {
                 if batch_remaining > 0 {
-                    Ok(Async::Ready(Some(())))
+                    Ok(Async::Ready(Some(StreamStatus::Continue)))
                 } else {
                     // We're at the end of a batch, so we need to wait for the status to change
                     self.status_checker.await_status_change();
-                    debug!("Consumer at end of batch, awaiting status change: connection_id: {}, op_id: {}", self.connection_id, self.op_id);
-                    Ok(Async::NotReady)
+
+                    if self.end_of_batch_sent {
+                        debug!("consumer for connection_id: {} still awaiting next batch", self.connection_id);
+                        Ok(Async::NotReady)
+                    } else {
+                        debug!("consumer for connection_id: {} sending end of batch", self.connection_id);
+                        self.end_of_batch_sent = true;
+                        Ok(Async::Ready(Some(StreamStatus::EndOfBatch)))
+                    }
                 }
             },
             ConsumerStatus::Stop => {
@@ -144,10 +155,26 @@ impl Consumer {
                         self.connection_id, self.op_id, self.batch_size, self.batch_remaining);
 
                 self.batch_remaining = self.batch_size;
-                Ok(Async::Ready(Some(())))
+                self.end_of_batch_sent = false;
+                Ok(Async::Ready(Some(StreamStatus::Continue)))
             },
         }
     }
+
+    fn next_matching_result(&mut self) -> Poll<Option<ProtocolMessage>, ConsumerError> {
+        let result = self.reader.next_matching();
+        match result {
+            None => self.await_more_events(),
+            Some(Ok(event)) => self.send_event(event),
+            Some(Err(io_err)) => self.read_err(io_err),
+        }
+    }
+}
+
+#[derive(Debug)]
+enum StreamStatus {
+    EndOfBatch,
+    Continue
 }
 
 
@@ -156,17 +183,18 @@ impl Stream for Consumer {
     type Error = ConsumerError;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        let maybe_done = try_ready!(self.check_status());
+        let stream_status = try_ready!(self.check_status());
 
-        if maybe_done.is_none() {
-            return Ok(Async::Ready(None));
-        }
-
-        let next_matching_result = self.reader.next_matching();
-        match next_matching_result {
-            None => self.await_more_events(),
-            Some(Ok(event)) => self.send_event(event),
-            Some(Err(io_err)) => self.read_err(io_err),
+        match stream_status {
+            None => {
+                Ok(Async::Ready(None))
+            }
+            Some(StreamStatus::EndOfBatch) => {
+                Ok(Async::Ready(Some(ProtocolMessage::EndOfBatch)))
+            }
+            Some(StreamStatus::Continue) => {
+                self.next_matching_result()
+            }
         }
     }
 }

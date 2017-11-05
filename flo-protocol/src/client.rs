@@ -299,6 +299,7 @@ pub struct ClientAnnounce {
     pub protocol_version: u32,
     pub op_id: u32,
     pub client_name: String,
+    pub consume_batch_size: Option<u32>,
 }
 
 
@@ -683,12 +684,16 @@ named!{parse_client_announce<ProtocolMessage>, chain!(
     _tag: tag!(&[CLIENT_ANNOUNCE]) ~
     protocol_version: be_u32 ~
     op_id: be_u32 ~
-    client_name: parse_str,
+    client_name: parse_str ~
+    batch_size: be_u32,
     || {
+        let batch = if batch_size > 0 { Some(batch_size) } else { None };
+
         ProtocolMessage::Announce(ClientAnnounce{
             protocol_version: protocol_version,
             op_id: op_id,
             client_name: client_name,
+            consume_batch_size: batch
         })
     }
 )}
@@ -978,7 +983,8 @@ mod test {
         let announce = ClientAnnounce {
             protocol_version: 1,
             op_id: 765,
-            client_name: "nathan".to_owned()
+            client_name: "nathan".to_owned(),
+            consume_batch_size: Some(456),
         };
         test_serialize_then_deserialize(&ProtocolMessage::Announce(announce));
     }

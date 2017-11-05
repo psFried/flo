@@ -56,6 +56,9 @@ impl ConnectionHandler {
             ProtocolMessage::NewStartConsuming(consumer_start) => {
                 consumer_state.handle_start_consuming(consumer_start, common_state)
             },
+            ProtocolMessage::NextBatch => {
+                consumer_state.handle_next_batch(common_state)
+            }
             _ => unimplemented!()
         }
     }

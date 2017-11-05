@@ -8,6 +8,8 @@ use new_engine::event_stream::EventStreamRef;
 
 use super::ConnectionHandlerResult;
 
+const DEFAULT_CONSUME_BATCH_SIZE: u32 = 10_000;
+
 #[derive(Debug)]
 pub struct ConnectionState {
     pub client_name: Option<String>,
@@ -16,6 +18,7 @@ pub struct ConnectionState {
     pub engine: EngineRef,
     pub event_stream: EventStreamRef,
     pub reactor: Handle,
+    pub consume_batch_size: u32,
 }
 
 
@@ -28,14 +31,20 @@ impl ConnectionState {
             client_sender,
             engine,
             reactor,
-            event_stream
+            event_stream,
+            consume_batch_size: DEFAULT_CONSUME_BATCH_SIZE,
         }
     }
 
     pub fn handle_announce_message(&mut self, announce: ClientAnnounce) -> ConnectionHandlerResult {
-        let ClientAnnounce {op_id, client_name, ..} = announce;
+        let ClientAnnounce {op_id, client_name, consume_batch_size, ..} = announce;
         // todo: return error if client name is already set or if protocol version != 1
         self.client_name = Some(client_name);
+
+        if let Some(batch_size) = consume_batch_size {
+            debug!("Using consume batch size of {} for connection_id: {}", batch_size, self.connection_id);
+            self.consume_batch_size = batch_size;
+        }
 
         let status = create_stream_status(op_id, &self.event_stream);
         self.send_to_client(ProtocolMessage::StreamStatus(status)).map_err(|err| {

@@ -28,7 +28,7 @@ pub use self::current_stream_state::{CurrentStreamState, PartitionState};
 pub type MessageSender = Box<Sink<SinkItem=ProtocolMessage, SinkError=io::Error>>;
 pub type MessageReceiver = Box<Stream<Item=ProtocolMessage, Error=io::Error>>;
 
-pub const DEFAULT_RECV_BATCH_SIZE: usize = 1000;
+pub const DEFAULT_RECV_BATCH_SIZE: u32 = 1000;
 
 
 /// Represents a single connection to a flo server.
@@ -41,7 +41,7 @@ pub const DEFAULT_RECV_BATCH_SIZE: usize = 1000;
 ///
 pub struct AsyncClient<D: Debug> {
     client_name: String,
-    recv_batch_size: Option<usize>,
+    recv_batch_size: Option<u32>,
     send: Option<MessageSender>,
     recv: Option<MessageReceiver>,
     codec: Box<EventCodec<EventData=D>>,
@@ -110,13 +110,18 @@ impl <D: Debug> AsyncClient<D> {
     /// Initiates the handshake with the server. The returned `Future` resolves the this client, which will then be guaranteed
     /// to have the `current_stream()` return `Some`.
     pub fn connect(self) -> ConnectAsyncClient<D> {
+        self.connect_with(None)
+    }
+
+    pub fn connect_with(mut self, consume_batch_size: Option<u32>) -> ConnectAsyncClient<D> {
+        self.recv_batch_size = consume_batch_size;
         ConnectAsyncClient::new(self)
     }
 
 
     fn can_buffer_received(&self) -> bool {
         let max_buffered = self.recv_batch_size.unwrap_or(DEFAULT_RECV_BATCH_SIZE);
-        self.received_message_buffer.len() < max_buffered
+        self.received_message_buffer.len() < max_buffered as usize
     }
 
     fn buffer_received(&mut self, message: ProtocolMessage) {

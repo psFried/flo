@@ -65,6 +65,27 @@ fn run_future<T: Debug, E: Debug, F: Future<Item=T, Error=E> + Debug>(reactor: &
 }
 
 #[test]
+fn consumer_reads_events_in_batches() {
+    integration_test("consumer reads events in batches", default_test_options(), |server, mut reactor| {
+        let mut client = server.connect_client::<String>("batch client".to_owned(), codec(), reactor.handle());
+        client = reactor.run(client.connect_with(Some(10))).expect("failed to connect batch client");
+
+
+        let event_count = 100usize;
+        for _ in 0..event_count {
+            let produce = client.produce("/test", None, "event data".to_owned());
+            let (_, c) = run_future(&mut reactor, produce);
+            client = c;
+        }
+        let mut vv = VersionVector::new();
+        vv.set(FloEventId::new(1, 0));
+        let consume = client.consume("/test", &vv, Some(event_count as u64));
+        let events = run_future(&mut reactor, consume.collect());
+        assert_eq!(event_count, events.len());
+    });
+}
+
+#[test]
 fn consumer_receives_only_events_matching_glob() {
     integration_test("consumer receives events matching glob", default_test_options(), |server, mut reactor| {
         let mut client = server.connect_client::<String>("globProducer".to_owned(), codec(), reactor.handle());

@@ -17,10 +17,12 @@ pub struct ConnectAsyncClient<D: Debug> {
 impl <D: Debug> ConnectAsyncClient<D> {
     pub fn new(mut client: AsyncClient<D>) -> ConnectAsyncClient<D> {
         let op_id = client.next_op_id();
+        let batch_size = client.recv_batch_size;
         let request = ProtocolMessage::Announce(ClientAnnounce{
             protocol_version: PROTOCOL_VERSION,
             op_id: op_id,
             client_name: client.client_name.clone(),
+            consume_batch_size: batch_size,
         });
         let inner = RequestResponse::new(client, request);
 
