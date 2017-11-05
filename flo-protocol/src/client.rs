@@ -814,6 +814,7 @@ impl ProtocolMessage {
                         .write_u32(announce.protocol_version)
                         .write_u32(announce.op_id)
                         .write_string(&announce.client_name)
+                        .write_u32(announce.consume_batch_size.unwrap_or(0))
                         .finish()
             }
             ProtocolMessage::StreamStatus(ref status) => {
