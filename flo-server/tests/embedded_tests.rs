@@ -65,6 +65,37 @@ fn run_future<T: Debug, E: Debug, F: Future<Item=T, Error=E> + Debug>(reactor: &
 }
 
 #[test]
+fn consumer_receives_only_events_matching_glob() {
+    integration_test("consumer receives events matching glob", default_test_options(), |server, mut reactor| {
+        let mut client = server.connect_client::<String>("globProducer".to_owned(), codec(), reactor.handle());
+        client = reactor.run(client.connect()).expect("failed to connect producer");
+
+        let event_namespaces = vec![
+            "/foo",
+            "/bar",
+            "/foo/bar/baz",
+            "/foo/bar",
+            "/who/bar/qux"
+        ];
+
+        for ns in event_namespaces {
+            let produce = client.produce(ns, None, "event data".to_owned());
+            let (_, client_to_reuse) = run_future(&mut reactor, produce);
+            client = client_to_reuse;
+        }
+
+        let mut vv = VersionVector::new();
+        vv.set(FloEventId::new(1, 0));
+        let consumer = client.consume("/**/bar/*", &vv, Some(2));
+        let events = run_future(&mut reactor, consumer.collect());
+
+        let actual_namespaces = events.iter().map(|event| event.namespace.to_string()).collect::<Vec<String>>();
+        let expected_namespaces = vec!["/foo/bar/baz", "/who/bar/qux"];
+        assert_eq!(expected_namespaces, actual_namespaces);
+    });
+}
+
+#[test]
 fn consumer_receives_event_as_it_is_produced() {
     integration_test("consumer receives event as it is produced", default_test_options(), |server, mut reactor| {
 
