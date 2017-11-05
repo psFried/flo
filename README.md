@@ -11,8 +11,7 @@ This is a slightly different take on pub/sub. For one, all events are persistent
 Installation
 ------------
 
-- You'll need a nightly version of the Rust compiler. I recommend installing rustup and just running `rustup install nightly`.
-- Inside the root of the repository, run `rustup override set nightly` to make sure it builds using the nightly version of the rust compiler.
+- You'll need Rust (version >= 1.21). Can be istalled easily using [rustup](https://www.rustup.rs/).
 - To install the flo server, run `cargo install --path flo-server` from the root of the repository. 
 - To install the flo CLI client run `cargo install --path flo-client-cli`
 
@@ -79,7 +78,7 @@ When a producer receives acknowledgement that an event was persisted successfull
 
 #### Consistency
 
-In terms of [CAP Theorem](https://en.wikipedia.org/wiki/CAP_theorem), Flo is **AP**. That is, it chooses to be  _available_ and _partitionable_. It is _eventually consistent_, meaning that all the Flo servers in a cluster will eventually all contain the same sequence of events, but this is not guaranteed to happen immediately.
+In terms of [CAP Theorem](https://en.wikipedia.org/wiki/CAP_theorem), Flo is aiming to be **AP**. That is, it chooses to be  _available_ and _partitionable_. The goal is to make it _eventually consistent_, meaning that all the Flo servers in a cluster will eventually all contain the same sequence of events, but this is not guaranteed to happen immediately.
 
 #### Ordering of events
 
@@ -108,5 +107,5 @@ Flo is an attempt (albeit an amateurish one) to be better. The server should be 
 - [ ] clustering (basic POC is working, but there's still a lot of work to be done)
 - [ ] Consumer groups
 - [X] automatic serialization/deserialization in a higher-level consumer
-- [ ] Run either as a standalone server or embedded within the application
+- [X] Run either as a standalone server or embedded within the application
 - [ ] Other language clients (Java, Ruby, NodeJS, C#)
