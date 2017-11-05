@@ -8,12 +8,14 @@ use protocol::{ProtocolMessage, ProduceEvent};
 use async::{AsyncClient, ErrorType};
 use async::ops::{RequestResponse, RequestResponseError};
 
+#[derive(Debug)]
 pub struct ProduceOne<D: Debug> {
     #[allow(dead_code)]
     op_id: u32,
     inner: Inner<D>,
 }
 
+#[derive(Debug)]
 enum Inner<D: Debug> {
     CodecErr(Option<ProduceErr<D>>),
     RequestResp(RequestResponse<D>)

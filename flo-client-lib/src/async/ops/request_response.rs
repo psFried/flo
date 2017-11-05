@@ -8,7 +8,7 @@ use protocol::{ProtocolMessage};
 use async::{AsyncClient};
 use async::ops::{SendMessage, SendError, AwaitResponse, AwaitResponseError};
 
-
+#[derive(Debug)]
 pub struct RequestResponse<D: Debug> {
     op_id: u32,
     state: State<D>,
@@ -76,6 +76,7 @@ impl <D: Debug> From<SendError<D>> for RequestResponseError<D> {
 }
 
 
+#[derive(Debug)]
 enum State<D: Debug> {
     Request(SendMessage<D>),
     Response(AwaitResponse<D>)
