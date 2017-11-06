@@ -16,7 +16,7 @@ use tokio_core::io::Io;
 use futures::{Stream, Sink};
 
 use protocol::{ProtocolMessage, ErrorMessage};
-use event::{FloEventId, VersionVector};
+use event::{FloEventId, ActorId, VersionVector};
 use codec::EventCodec;
 use self::recv::MessageRecvStream;
 use self::send::MessageSendSink;
@@ -96,7 +96,12 @@ impl <D: Debug> AsyncClient<D> {
     /// Produce a single event on the stream and await acknowledgement that it was persisted. Returns a future that resolves
     /// to a tuple of the `FloEventId` of the produced event and this `AsyncClient`.
     pub fn produce<N: Into<String>>(self, namespace: N, parent_id: Option<FloEventId>, data: D) -> ProduceOne<D> {
-        ProduceOne::new(self, namespace.into(), parent_id, data)
+        let partition = parent_id.map(|id| id.actor).unwrap_or(1);
+        self.produce_to(partition, namespace, parent_id, data)
+    }
+
+    pub fn produce_to<N: Into<String>>(self, partition: ActorId, namespace: N, parent_id: Option<FloEventId>, data: D) -> ProduceOne<D> {
+        ProduceOne::new(self, partition, namespace.into(), parent_id, data)
     }
 
     /// Start consuming events from the server. Returns a `Stream` that yields events continuously until the `event_limit` is reached.

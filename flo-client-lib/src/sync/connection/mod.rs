@@ -79,6 +79,7 @@ impl <T: Transport, C: EventCodec> SyncConnection<T, C> {
                 namespace: namespace_string,
                 parent_id: parent_id,
                 op_id: self.op_id,
+                partition: 1, // default partition to 1 when used with old engine
                 data: binary_data  //TODO: Make protocolMessage enum generic so the message can just hold a slice
             });
 

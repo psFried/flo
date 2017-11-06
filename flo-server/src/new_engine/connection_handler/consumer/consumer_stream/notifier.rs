@@ -15,25 +15,6 @@ pub struct ConsumerNotifierImpl {
     connection_id: ConnectionId,
 }
 
-/// Creates a pending consumer and a notifier pair
-pub fn create_consumer_notifier(connection_id: ConnectionId) -> (ConsumerTaskSetter, Box<ConsumerNotifier>) {
-    let task = Arc::new(AtomicTask::new());
-    let active_writer = AtomicBoolWriter::with_value(true);
-
-    let notifier = ConsumerNotifierImpl {
-        task_ref: task.clone(),
-        active: active_writer.reader(),
-        connection_id: connection_id,
-    };
-    let task_setter = ConsumerTaskSetter {
-        task_ref: task,
-        active: active_writer,
-    };
-
-    (task_setter, Box::new(notifier) as Box<ConsumerNotifier>)
-}
-
-
 impl ConsumerNotifier for ConsumerNotifierImpl {
     fn notify(&self) {
         self.task_ref.notify();
@@ -56,6 +37,24 @@ pub struct ConsumerTaskSetter {
 }
 
 impl ConsumerTaskSetter {
+
+    pub fn create() -> ConsumerTaskSetter {
+        ConsumerTaskSetter {
+            task_ref: Arc::new(AtomicTask::new()),
+            active: AtomicBoolWriter::with_value(true),
+        }
+    }
+
+    pub fn create_notifier(&self, connection_id: ConnectionId) -> Box<ConsumerNotifier> {
+        let task_ref = self.task_ref.clone();
+        let active = self.active.reader();
+
+        Box::new(ConsumerNotifierImpl {
+            task_ref,
+            active,
+            connection_id,
+        })
+    }
 
     #[allow(dead_code)] //TODO: implement stopping consumer
     pub fn cancel(&mut self) {

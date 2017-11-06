@@ -315,7 +315,7 @@ impl <S: EventWriter> ProducerManager<S> {
         })
     }
 
-    fn new_produce_event(&mut self, connection_id: ConnectionId, ProduceEvent {op_id, namespace, parent_id, data}: ProduceEvent) -> Result<(), String> {
+    fn new_produce_event(&mut self, connection_id: ConnectionId, ProduceEvent {op_id, namespace, parent_id, data, ..}: ProduceEvent) -> Result<(), String> {
 
         let event_id = FloEventId::new(self.actor_id, self.highest_event_id + 1);
         let owned_event = OwnedFloEvent {
@@ -481,6 +481,7 @@ mod test {
         let op_id = 1234;
         let event = ProtocolMessage::ProduceEvent(ProduceEvent {
             op_id: op_id,
+            partition: 1, // just use hard coded partition when used with old engine
             parent_id: parent_id,
             namespace: namespace.to_owned(),
             data: event_data.clone(),
