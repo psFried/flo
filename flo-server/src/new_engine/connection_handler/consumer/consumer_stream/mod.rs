@@ -1,37 +1,19 @@
 mod status_check;
 mod notifier;
+mod multi_partition_reader;
 
 use std::io;
 
 use futures::{Stream, Poll, Async};
 
-use event::ActorId;
 use new_engine::ConnectionId;
-use new_engine::event_stream::partition::{PartitionReader, ConsumerNotifier, PersistentEvent};
+use new_engine::event_stream::partition::{PartitionReader, PersistentEvent};
 use protocol::{ProtocolMessage, RecvEvent};
 
-pub use self::notifier::{ConsumerTaskSetter, create_consumer_notifier};
+pub use self::notifier::{ConsumerTaskSetter};
 pub use self::status_check::{ConsumerStatus, ConsumerStatusChecker, ConsumerStatusSetter, create_status_channel};
 
-#[derive(Debug)]
-pub struct PendingConsumer {
-    pub op_id: u32,
-    pub partition: ActorId,
-    pub task_setter: ConsumerTaskSetter,
-    pub max_events: Option<u64>,
-}
-
-pub fn prepare_consumer_start(op_id: u32, max_events: Option<u64>, connection_id: ConnectionId, partition: ActorId) -> (PendingConsumer, Box<ConsumerNotifier>) {
-    let (task_setter, notifier) = create_consumer_notifier(connection_id);
-    let pending = PendingConsumer {
-        op_id: op_id,
-        partition: partition,
-        task_setter: task_setter,
-        max_events: max_events,
-    };
-    (pending, notifier)
-}
-
+use self::multi_partition_reader::MultiPartitionEventReader;
 
 pub struct Consumer {
     connection_id: ConnectionId,
@@ -43,8 +25,8 @@ pub struct Consumer {
     /// whether the EndOfBatch message was sent already or not
     end_of_batch_sent: bool,
 
-    /// actually reads events from a partition
-    reader: PartitionReader,
+    /// actually reads events from the partitions
+    readers: MultiPartitionEventReader,
 
     /// used to communicate task status back to the engine
     task_setter: ConsumerTaskSetter,
@@ -57,10 +39,11 @@ impl Consumer {
     pub fn new(connection_id: ConnectionId,
                batch_size: u32,
                status_checker: ConsumerStatusChecker,
-               reader: PartitionReader,
-               pending: PendingConsumer) -> Consumer {
+               task_setter: ConsumerTaskSetter,
+               readers: Vec<PartitionReader>,
+               op_id: u32,
+               max_events: Option<u64>) -> Consumer {
 
-        let PendingConsumer {task_setter, max_events, op_id, ..} = pending;
 
         Consumer {
             connection_id: connection_id,
@@ -68,7 +51,7 @@ impl Consumer {
             total_events_remaining: max_events,
             batch_size: batch_size,
             batch_remaining: batch_size,
-            reader: reader,
+            readers: MultiPartitionEventReader::new(readers),
             task_setter: task_setter,
             status_checker: status_checker,
             end_of_batch_sent: false,
@@ -162,7 +145,7 @@ impl Consumer {
     }
 
     fn next_matching_result(&mut self) -> Poll<Option<ProtocolMessage>, ConsumerError> {
-        let result = self.reader.next_matching();
+        let result = self.readers.next_matching();
         match result {
             None => self.await_more_events(),
             Some(Ok(event)) => self.send_event(event),

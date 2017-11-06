@@ -3,7 +3,7 @@ use std::io;
 
 use futures::{Future, Poll, Async};
 
-use event::FloEventId;
+use event::{FloEventId, ActorId};
 use protocol::{ProtocolMessage, ProduceEvent};
 use async::{AsyncClient, ErrorType};
 use async::ops::{RequestResponse, RequestResponseError};
@@ -23,14 +23,15 @@ enum Inner<D: Debug> {
 
 
 impl <D: Debug> ProduceOne<D> {
-    pub fn new(mut client: AsyncClient<D>, namespace: String, parent_id: Option<FloEventId>, data: D) -> ProduceOne<D> {
+    pub fn new(mut client: AsyncClient<D>, partition: ActorId, namespace: String, parent_id: Option<FloEventId>, data: D) -> ProduceOne<D> {
         let op_id = client.next_op_id();
         let inner: Inner<D> = match client.codec.convert_produced(&namespace, data) {
             Ok(converted) => {
                 let proto_msg = ProduceEvent{
-                    op_id: op_id,
-                    namespace: namespace,
-                    parent_id: parent_id,
+                    op_id,
+                    partition,
+                    namespace,
+                    parent_id,
                     data: converted,
                 };
                 Inner::RequestResp(RequestResponse::new(client, ProtocolMessage::ProduceEvent(proto_msg)))

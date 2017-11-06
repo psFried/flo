@@ -40,6 +40,7 @@ pub fn create_partition_channels() -> (PartitionSender, PartitionReceiver) {
     ::std::sync::mpsc::channel()
 }
 
+#[derive(Debug)]
 pub struct PartitionSendError(pub Operation);
 
 pub type PartitionSendResult = Result<(), PartitionSendError>;

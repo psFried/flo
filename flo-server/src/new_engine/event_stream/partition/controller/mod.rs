@@ -358,12 +358,14 @@ mod test {
                 events: vec![
                     ProduceEvent {
                         op_id: 3,
+                        partition: PARTITION_NUM,
                         namespace: "/foo/bar".to_owned(),
                         parent_id: None,
                         data: "the quick".to_owned().into_bytes(),
                     },
                     ProduceEvent {
                         op_id: 3,
+                        partition: PARTITION_NUM,
                         namespace: "/foo/bar".to_owned(),
                         parent_id: None,
                         data: "brown fox".to_owned().into_bytes(),
@@ -383,6 +385,7 @@ mod test {
             let moar_events = (0..100).map(|_| {
                 ProduceEvent {
                     op_id: 4,
+                    partition: PARTITION_NUM,
                     namespace: "/boo/hoo".to_owned(),
                     parent_id: None,
                     data: "stew".to_owned().into_bytes()

@@ -133,7 +133,7 @@ mod test {
             b.extend_from_slice(&[0, 8]);
             b.extend_from_slice(b"/foo/bar");
             b.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, 9, 0, 5]);
-            b.extend_from_slice(&[0, 0, 0, 4, 0, 0, 0, 7]);
+            b.extend_from_slice(&[0, 0, 0, 4, 0, 1, 0, 0, 0, 7]);
             b.extend_from_slice(b"evt_one");
             b.push(headers::CLIENT_AUTH);
             b.extend_from_slice(&[0, 13]);
@@ -146,7 +146,7 @@ mod test {
             b.extend_from_slice(&[0, 4]);
             b.extend_from_slice(b"/baz");
             b.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, 9, 0, 5]);
-            b.extend_from_slice(&[0, 0, 0, 5, 0, 0, 0, 7]);
+            b.extend_from_slice(&[0, 0, 0, 5, 0, 1, 0, 0, 0, 7]);
             b.extend_from_slice(b"evt_two");
             Cursor::new(b)
         };

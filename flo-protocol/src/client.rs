@@ -110,6 +110,8 @@ pub struct ProduceEvent {
     /// This is an arbritrary number, assigned by the client, to aid in correlation of requests and responses. Clients may
     /// choose to just set it to the same value for every operation if they wish.
     pub op_id: u32,
+    /// The partition to produce the event onto
+    pub partition: ActorId,
     /// The namespace to produce the event to. See the `namespace` documentation on `FloEvent` for more information on
     /// namespaces in general. As far as the protocol is concerned, it's just serialized as a utf-8 string.
     pub namespace: String,
@@ -458,12 +460,14 @@ named!{pub parse_new_producer_event<ProtocolMessage>,
         namespace: parse_str ~
         parent_id: parse_event_id ~
         op_id: be_u32 ~
+        partition: be_u16 ~
         data_len: be_u32,
         || {
             ProtocolMessage::ProduceEvent(ProduceEvent{
                 namespace: namespace.to_owned(),
                 parent_id: parent_id,
                 op_id: op_id,
+                partition: partition,
                 data: Vec::with_capacity(data_len as usize),
             })
         }
@@ -730,6 +734,7 @@ fn serialize_new_produce_header(header: &ProduceEvent, buf: &mut [u8]) -> usize 
                         .write_u64(counter)
                         .write_u16(actor)
                         .write_u32(header.op_id)
+                        .write_u16(header.partition)
                         .write_u32(header.data.len() as u32)
                         .finish()
 }
@@ -1199,6 +1204,7 @@ mod test {
             namespace: "/the/namespace".to_owned(),
             parent_id: Some(FloEventId::new(123, 456)),
             op_id: 9,
+            partition: 7,
             data: vec![9; 5]
         };
         let mut message_input = ProtocolMessage::ProduceEvent(input.clone());
@@ -1208,6 +1214,7 @@ mod test {
             assert_eq!(input.namespace, result.namespace);
             assert_eq!(input.parent_id, result.parent_id);
             assert_eq!(input.op_id, result.op_id);
+            assert_eq!(input.partition, result.partition);
 
             // The vector must be allocated with the correct capacity, but we haven't actually read all the data
             assert_eq!(input.data.len(), result.data.capacity());

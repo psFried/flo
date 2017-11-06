@@ -18,7 +18,7 @@ use futures::{Stream, Future};
 
 use flo_server::embedded::{EmbeddedFloServer, ControllerOptions, EventStreamOptions, run_embedded_server};
 
-use flo_client_lib::{VersionVector, FloEventId, Event, EventCounter};
+use flo_client_lib::{VersionVector, FloEventId, Event, EventCounter, ActorId};
 use flo_client_lib::codec::{EventCodec, StringCodec};
 
 fn default_test_options() -> EventStreamOptions {
@@ -65,11 +65,44 @@ fn run_future<T: Debug, E: Debug, F: Future<Item=T, Error=E> + Debug>(reactor: &
 }
 
 #[test]
+fn consumer_can_read_events_from_multiple_partitions() {
+    let partition_count = 3;
+    let options = EventStreamOptions {
+        num_partitions: partition_count,
+        ..Default::default()
+    };
+    integration_test("multiple partitions", options, |server, mut reactor| {
+        let mut client = server.connect_client::<String>("batch client".to_owned(), codec(), reactor.handle());
+        client = reactor.run(client.connect()).expect("failed to connect batch client");
+
+        let mut expected_ids = Vec::with_capacity(50);
+
+        for i in 0..50 {
+            let partition = (i % partition_count) as ActorId + 1;
+            let prod = client.produce_to(partition, "/test", None, "some data".to_owned());
+            let (id, c) = run_future(&mut reactor, prod);
+            assert_eq!(partition, id.actor);
+            expected_ids.push(id);
+            client = c;
+        }
+
+        let mut vv = VersionVector::new();
+        for i in 0..partition_count {
+            vv.set(FloEventId::new(i + 1, 0));
+        }
+
+        let consume = client.consume("/test", &vv, Some(50));
+        let events = run_future(&mut reactor, consume.collect());
+        let actual_ids = events.iter().map(|e| e.id).collect::<Vec<FloEventId>>();
+        assert_eq!(expected_ids, actual_ids);
+    });
+}
+
+#[test]
 fn consumer_reads_events_in_batches() {
     integration_test("consumer reads events in batches", default_test_options(), |server, mut reactor| {
         let mut client = server.connect_client::<String>("batch client".to_owned(), codec(), reactor.handle());
         client = reactor.run(client.connect_with(Some(10))).expect("failed to connect batch client");
-
 
         let event_count = 100usize;
         for _ in 0..event_count {
