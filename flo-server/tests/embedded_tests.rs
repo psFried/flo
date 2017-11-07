@@ -51,7 +51,7 @@ fn run_future<T: Debug, E: Debug, F: Future<Item=T, Error=E> + Debug>(reactor: &
     use tokio_core::reactor::Timeout;
     use futures::future::Either;
 
-    let timeout_millis = 500;
+    let timeout_millis = 1000;
 
     let timeout = Timeout::new(::std::time::Duration::from_millis(timeout_millis), &reactor.handle()).unwrap();
     let either_future = timeout.select2(future);

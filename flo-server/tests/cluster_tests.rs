@@ -111,7 +111,6 @@ fn basic_replication_test() {
     let event_two_id = client_two.produce("/foo/bar", "some event data").expect("failed to produce event for actor 2");
     let event_three_id = client_three.produce("/foo/bar", "some event data").expect("failed to produce event for actor 3");
 
-    thread::sleep(Duration::from_millis(250));
     let mut expected_ids = vec![event_one_id, event_two_id, event_three_id];
     expected_ids.sort();
 
@@ -123,7 +122,7 @@ fn basic_replication_test() {
 fn assert_server_events_equal(connection: &mut Connection<StringCodec>, expected_event_ids: &Vec<FloEventId>) {
     use std::time::Instant;
 
-    let timeout = Duration::from_millis(1000);
+    let timeout = Duration::from_millis(1500);
     let start_time = Instant::now();
 
     let mut actual_events = get_all_event_ids(connection);
