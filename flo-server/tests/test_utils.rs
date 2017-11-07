@@ -23,7 +23,7 @@ static ON_START: Once = ONCE_INIT;
 
 pub fn init_logger() {
     ON_START.call_once(|| {
-        env_logger::init().unwrap();
+        let _ = env_logger::init();
     });
 }
 
@@ -141,7 +141,7 @@ impl FloServerProcess {
 
         // hack to prevent test from starting until the server is actually started
         // TODO: wait for log output that indicates server is ready
-        thread::sleep(Duration::from_millis(500));
+        thread::sleep(Duration::from_millis(1000));
     }
 
     pub fn kill(&mut self) {
