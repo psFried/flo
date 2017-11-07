@@ -28,6 +28,14 @@ impl AtomicCounterWriter {
         old + amount
     }
 
+    /// sets the new value, only if it is greater than the current value
+    pub fn set_if_greater(&mut self, new_value: usize) {
+        let current = self.inner.load(Ordering::SeqCst);
+        if new_value > current {
+            self.inner.store(new_value, Ordering::SeqCst);
+        }
+    }
+
     pub fn fetch_add(&mut self, amount: usize, ordering: Ordering) -> usize {
         self.inner.fetch_add(amount, ordering)
     }
