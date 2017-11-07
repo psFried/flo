@@ -13,7 +13,7 @@ use std::io;
 
 use atomics::{AtomicCounterReader, AtomicBoolReader};
 use new_engine::ConnectionId;
-use new_engine::event_stream::EventStreamOptions;
+use new_engine::event_stream::{EventStreamOptions, HighestCounter};
 use protocol::{ProduceEvent};
 use event::{EventCounter, ActorId};
 use self::segment::SegmentReader;
@@ -216,17 +216,25 @@ impl PartitionRef {
 
 
 
-pub fn initialize_existing_partition(partition_num: ActorId, event_stream_data_dir: &Path, event_stream_options: &EventStreamOptions, status_reader: AtomicBoolReader) -> io::Result<PartitionRef> {
+pub fn initialize_existing_partition(partition_num: ActorId,
+                                     event_stream_data_dir: &Path,
+                                     event_stream_options: &EventStreamOptions,
+                                     status_reader: AtomicBoolReader,
+                                     highest_counter: HighestCounter) -> io::Result<PartitionRef> {
 
     let partition_data_dir = get_partition_data_dir(event_stream_data_dir, partition_num);
-    let partition_impl = PartitionImpl::init_existing(partition_num, partition_data_dir, event_stream_options, status_reader)?;
+    let partition_impl = PartitionImpl::init_existing(partition_num, partition_data_dir, event_stream_options, status_reader, highest_counter)?;
     run_partition(partition_impl)
 }
 
-pub fn initialize_new_partition(partition_num: ActorId, event_stream_data_dir: &Path, event_stream_options: &EventStreamOptions, status_reader: AtomicBoolReader) -> io::Result<PartitionRef> {
+pub fn initialize_new_partition(partition_num: ActorId,
+                                event_stream_data_dir: &Path,
+                                event_stream_options: &EventStreamOptions,
+                                status_reader: AtomicBoolReader,
+                                highest_counter: HighestCounter) -> io::Result<PartitionRef> {
 
     let partition_data_dir = get_partition_data_dir(event_stream_data_dir, partition_num);
-    let partition_impl = PartitionImpl::init_new(partition_num, partition_data_dir, &event_stream_options, status_reader)?;
+    let partition_impl = PartitionImpl::init_new(partition_num, partition_data_dir, &event_stream_options, status_reader, highest_counter)?;
     run_partition(partition_impl)
 }
 

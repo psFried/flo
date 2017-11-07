@@ -1,4 +1,5 @@
 pub mod partition;
+mod highest_counter;
 
 use std::path::{PathBuf, Path};
 use std::io;
@@ -9,6 +10,7 @@ use event::ActorId;
 use self::partition::{PartitionRef, initialize_existing_partition, initialize_new_partition};
 use atomics::AtomicBoolReader;
 
+pub use self::highest_counter::HighestCounter;
 
 #[derive(Debug, PartialEq)]
 pub struct EventStreamOptions {
@@ -41,9 +43,11 @@ pub fn init_existing_event_stream(event_stream_storage_dir: PathBuf, options: Ev
     let partition_numbers = determine_existing_partition_dirs(&event_stream_storage_dir)?;
     debug!("Initializing {} partition(s)", partition_numbers.len());
 
+    let highest_counter = HighestCounter::zero();
+
     let mut partition_refs = Vec::with_capacity(partition_numbers.len());
     for partition_num in partition_numbers {
-        let partition_ref = initialize_existing_partition(partition_num, &event_stream_storage_dir, &options, status_reader.clone())?;
+        let partition_ref = initialize_existing_partition(partition_num, &event_stream_storage_dir, &options, status_reader.clone(), highest_counter.clone())?;
         partition_refs.push(partition_ref);
     }
 
@@ -62,10 +66,10 @@ pub fn init_new_event_stream(event_stream_storage_dir: PathBuf, options: EventSt
     ::std::fs::create_dir_all(&event_stream_storage_dir)?;
 
     let mut partition_refs: Vec<PartitionRef> = Vec::with_capacity(partition_count as usize);
-
+    let highest_counter = HighestCounter::zero();
     for i in 0..partition_count {
         let partition_num: ActorId = i + 1;
-        let partition_ref = initialize_new_partition(partition_num, &event_stream_storage_dir, &options, status_reader.clone())?;
+        let partition_ref = initialize_new_partition(partition_num, &event_stream_storage_dir, &options, status_reader.clone(), highest_counter.clone())?;
 
         // We're appending these in order so that they can be indexed up by partition number later
         partition_refs.push(partition_ref);
