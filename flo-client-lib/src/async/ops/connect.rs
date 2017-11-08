@@ -42,6 +42,12 @@ impl <D: Debug> Future for ConnectAsyncClient<D> {
     }
 }
 
+impl <D: Debug> Into<AsyncClient<D>> for ConnectAsyncClient<D> {
+    fn into(self) -> AsyncClient<D> {
+        self.request_response.into()
+    }
+}
+
 fn result_from_response<D: Debug>(response: ProtocolMessage, mut client: AsyncClient<D>) -> Poll<AsyncClient<D>, ConnectClientError> {
     debug!("Received Response: {:?}", response);
 

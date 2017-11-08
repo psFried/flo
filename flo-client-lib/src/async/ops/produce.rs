@@ -92,6 +92,17 @@ impl <D: Debug> Future for ProduceOne<D> {
     }
 }
 
+impl <D: Debug> Into<AsyncClient<D>> for ProduceOne<D> {
+    fn into(self) -> AsyncClient<D> {
+        match self.inner {
+            Inner::RequestResp(rr) => rr.into(),
+            Inner::CodecErr(mut err) => {
+                err.take().expect("ProduceOne already completed").client
+            }
+        }
+    }
+}
+
 
 #[derive(Debug)]
 pub struct ProduceErr<D: Debug> {

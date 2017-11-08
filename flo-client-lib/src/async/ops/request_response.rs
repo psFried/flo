@@ -49,6 +49,15 @@ impl <D: Debug> Future for RequestResponse<D> {
     }
 }
 
+impl <D: Debug> Into<AsyncClient<D>> for RequestResponse<D> {
+    fn into(self) -> AsyncClient<D> {
+        match self.state {
+            State::Request(send) => send.into(),
+            State::Response(response) => response.into()
+        }
+    }
+}
+
 
 #[derive(Debug)]
 pub struct RequestResponseError<D: Debug> {

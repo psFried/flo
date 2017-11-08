@@ -4,8 +4,13 @@ env:
     - RUST_BACKTRACE=1
     - RUST_LOG=flo=debug
 rust:
-  - nightly-2017-04-07
+  - stable
+  - beta
+  - nightly
 os:
   - linux
   - osx
+matrix:
+  allow_failures:
+    - rust: nightly
 script: cargo test --all --no-fail-fast

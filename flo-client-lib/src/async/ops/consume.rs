@@ -90,6 +90,16 @@ fn consume_error<D: Debug>(client: AsyncClient<D>, message: ProtocolMessage) -> 
     }
 }
 
+impl <D: Debug> Into<AsyncClient<D>> for Consume<D> {
+    fn into(self) -> AsyncClient<D> {
+        match self.state {
+            State::RequestStart(send) => send.into(),
+            State::ReceiveStart(recv) => recv.into(),
+            State::ReceiveEvents(recve) => recve.into(),
+            State::SendNextBatch(next) => next.into(),
+        }
+    }
+}
 
 impl <D: Debug> Stream for Consume<D> {
     type Item = Event<D>;
@@ -270,5 +280,11 @@ impl <D: Debug> EventReceiver<D> {
             }
         }
 
+    }
+}
+
+impl <D: Debug> Into<AsyncClient<D>> for EventReceiver<D> {
+    fn into(mut self) -> AsyncClient<D> {
+        self.0.take().expect("EventReceiver has already been completed")
     }
 }
