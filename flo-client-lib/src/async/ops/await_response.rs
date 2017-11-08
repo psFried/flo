@@ -101,6 +101,12 @@ impl <D: Debug> Future for AwaitResponse<D> {
     }
 }
 
+impl <D: Debug> Into<AsyncClient<D>> for AwaitResponse<D> {
+    fn into(mut self) -> AsyncClient<D> {
+        self.client.take().expect("AwaitResponse has already been completed")
+    }
+}
+
 
 #[derive(Debug)]
 pub struct AwaitResponseError<D: Debug> {

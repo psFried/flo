@@ -52,6 +52,12 @@ impl <D: Debug> Future for SendMessage<D> {
     }
 }
 
+impl <D: Debug> Into<AsyncClient<D>> for SendMessage<D> {
+    fn into(mut self) -> AsyncClient<D> {
+        self.client.take().expect("SendMessage has already been completed")
+    }
+}
+
 
 #[derive(Debug)]
 pub struct SendError<D: Debug> {
