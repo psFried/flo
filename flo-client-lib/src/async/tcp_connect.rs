@@ -27,11 +27,11 @@ pub fn tcp_connect<N: Into<String>, D: Debug + 'static, C: EventCodec<EventData=
             .map_err(|io_err| {
 
                 HandshakeError {
-                    message: "Failed to create client from TCP stream",
+                    message: "Failed to create connection from TCP stream",
                     error_type: io_err.into(),
                 }
-            }).and_then(|client| {
-        client.connect()
+            }).and_then(|connection| {
+        connection.connect()
     });
 
     AsyncTcpClientConnect(Box::new(unboxed_future))

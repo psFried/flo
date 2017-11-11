@@ -34,32 +34,25 @@ pub const DEFAULT_RECV_BATCH_SIZE: u32 = 1000;
 /// Represents a single connection to a flo server.
 /// All operations return a `Future` representing the result of the operation. The actual operation will not be performed
 /// until the `Future` is driven to completion by an `Executor`. Most of these futures will yield a result containing both
-/// the desired result and the client itself.
+/// the desired result and the connection itself.
 ///
 /// An `AsyncConnection` uses an `EventCodec` to convert between an application's event data type and the binary data used by flo.
-/// The transport layer is abstracted, allowing the client to work over TCP or use in memory channels (for an embedded server).
+/// The transport layer is abstracted, allowing the connection to work over TCP or use in memory channels (for an embedded server).
 ///
 pub struct AsyncConnection<D: Debug> {
-    client_name: String,
-    recv_batch_size: Option<u32>,
-    send: Option<MessageSender>,
-    recv: Option<MessageReceiver>,
-    codec: Box<EventCodec<EventData=D>>,
-    current_stream: Option<CurrentStreamState>,
-    current_op_id: u32,
-    received_message_buffer: VecDeque<ProtocolMessage>,
+    inner: Box<AsyncConnectionInner<D>>,
 }
 
 impl <D: Debug> Debug for AsyncConnection<D> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "AsyncConnection{{  current_op_id: {}  }}", self.current_op_id)
+        write!(f, "AsyncConnection{{  current_op_id: {}  }}", self.inner.current_op_id)
     }
 }
 
 
 impl <D: Debug> AsyncConnection<D> {
 
-    /// Creates a new client from an already connected `TCPStream`. Generally, you should prefer to just use the `tcp_connect`
+    /// Creates a new connection from an already connected `TCPStream`. Generally, you should prefer to just use the `tcp_connect`
     /// function, but using `from_tcp_stream` is available for when extra control is needed in how the tcp stream is
     /// configured.
     pub fn from_tcp_stream(name: String, tcp_stream: TcpStream, codec: Box<EventCodec<EventData=D>>) -> AsyncConnection<D> {
@@ -73,7 +66,7 @@ impl <D: Debug> AsyncConnection<D> {
 
     /// Creates a new AsyncConnection from raw parts
     pub fn new(name: String, send: MessageSender, recv: MessageReceiver, codec: Box<EventCodec<EventData=D>>) -> AsyncConnection<D> {
-        AsyncConnection {
+        let inner = AsyncConnectionInner {
             client_name: name,
             recv_batch_size: None,
             send: Some(send),
@@ -82,6 +75,9 @@ impl <D: Debug> AsyncConnection<D> {
             current_stream: None,
             current_op_id: 0,
             received_message_buffer: VecDeque::with_capacity(8),
+        };
+        AsyncConnection {
+            inner: Box::new(inner)
         }
     }
 
@@ -90,7 +86,7 @@ impl <D: Debug> AsyncConnection<D> {
     /// Note that the `CurrentStreamState` may not necessarily be up to date with the most recent state of the server, as
     /// this function does not actually query the state, but just returns the result from the last query or handshake.
     pub fn current_stream(&self) -> Option<&CurrentStreamState> {
-        self.current_stream.as_ref()
+        self.inner.current_stream.as_ref()
     }
 
     /// Produce a single event on the stream and await acknowledgement that it was persisted. Returns a future that resolves
@@ -112,30 +108,37 @@ impl <D: Debug> AsyncConnection<D> {
         Consume::new(self, namespace.into(), version_vector, event_limit)
     }
 
-    /// Initiates the handshake with the server. The returned `Future` resolves the this client, which will then be guaranteed
+    /// Initiates the handshake with the server. The returned `Future` resolves the this connection, which will then be guaranteed
     /// to have the `current_stream()` return `Some`.
     pub fn connect(self) -> Handshake<D> {
         self.connect_with(None)
     }
 
     pub fn connect_with(mut self, consume_batch_size: Option<u32>) -> Handshake<D> {
-        self.recv_batch_size = consume_batch_size;
+        self.inner.recv_batch_size = consume_batch_size;
         Handshake::new(self)
     }
 
+    fn take_sender(&mut self) -> MessageSender {
+        self.inner.send.take().unwrap()
+    }
+
+    fn return_sender(&mut self, send: MessageSender) {
+        self.inner.send = Some(send);
+    }
 
     fn can_buffer_received(&self) -> bool {
-        let max_buffered = self.recv_batch_size.unwrap_or(DEFAULT_RECV_BATCH_SIZE);
-        self.received_message_buffer.len() < max_buffered as usize
+        let max_buffered = self.inner.recv_batch_size.unwrap_or(DEFAULT_RECV_BATCH_SIZE);
+        self.inner.received_message_buffer.len() < max_buffered as usize
     }
 
     fn buffer_received(&mut self, message: ProtocolMessage) {
-        self.received_message_buffer.push_back(message);
+        self.inner.received_message_buffer.push_back(message);
     }
 
     fn next_op_id(&mut self) -> u32 {
-        self.current_op_id += 1;
-        self.current_op_id
+        self.inner.current_op_id += 1;
+        self.inner.current_op_id
     }
 }
 
@@ -153,6 +156,20 @@ impl From<io::Error> for ErrorType {
     }
 }
 
+/// a connection is a fairly large struct with a lot of state. `AsyncConnectionInner` is allocated on the heap
+/// so that moves on a connection object become very cheap (the `AsyncConnection` itself is just a pointer).
+/// This also makes it easy to allow various ops to have access to internal connection state while preventing users
+/// from accessing it.
+struct AsyncConnectionInner<D: Debug> {
+    client_name: String,
+    recv_batch_size: Option<u32>,
+    send: Option<MessageSender>,
+    recv: Option<MessageReceiver>,
+    codec: Box<EventCodec<EventData=D>>,
+    current_stream: Option<CurrentStreamState>,
+    current_op_id: u32,
+    received_message_buffer: VecDeque<ProtocolMessage>,
+}
 
 
 
@@ -351,10 +368,10 @@ mod test {
         })];
         let recv = MockReceiveStream::will_produce(to_recv);
         let (send, _send_verify) = MockSendStream::new();
-        let client = create_client(recv, send);
+        let connection = create_client(recv, send);
 
-        let connect = client.connect();
-        let client = run_future(connect).expect("failed to execute connect");
+        let connect = connection.connect();
+        let connection = run_future(connect).expect("failed to execute connect");
 
         let expected_stream = CurrentStreamState {
             name: "foo".to_owned(),
@@ -371,16 +388,16 @@ mod test {
                 }
             ]
         };
-        assert_eq!(Some(&expected_stream), client.current_stream());
+        assert_eq!(Some(&expected_stream), connection.current_stream());
     }
 
     #[test]
     fn send_sends_all_messages() {
         let recv = MockReceiveStream::empty();
         let (send, mut send_verify) = MockSendStream::new();
-        let client = create_client(recv, send);
+        let connection = create_client(recv, send);
 
-        let send = SendMessage::new(client, ProtocolMessage::NextBatch);
+        let send = SendMessage::new(connection, ProtocolMessage::NextBatch);
 
         let _ = run_future(send).expect("failed to run send");
         assert_eq!(vec![ProtocolMessage::NextBatch], send_verify.get_received());
@@ -396,17 +413,17 @@ mod test {
 
         let recv = MockReceiveStream::will_produce(messages.clone());
         let (send, _send_verify) = MockSendStream::new();
-        let client = create_client(recv, send);
+        let connection = create_client(recv, send);
 
-        let await = AwaitResponse::new(client, 7);
-        let (response, client): (ProtocolMessage, AsyncConnection<String>) = run_future(await).expect("await response returned error");
+        let await = AwaitResponse::new(connection, 7);
+        let (response, connection): (ProtocolMessage, AsyncConnection<String>) = run_future(await).expect("await response returned error");
         assert_eq!(ProtocolMessage::AckEvent(EventAck { op_id: 7, event_id: FloEventId::new(8, 9) }), response);
 
         let expected_buffer = vec![
             ProtocolMessage::EndOfBatch,
             ProtocolMessage::NextBatch,
         ];
-        let actual_buffer: Vec<ProtocolMessage> = client.received_message_buffer.iter().cloned().collect();
+        let actual_buffer: Vec<ProtocolMessage> = connection.inner.received_message_buffer.iter().cloned().collect();
         assert_eq!(expected_buffer, actual_buffer);
     }
 
@@ -439,17 +456,17 @@ mod test {
         ];
         let receiver = MockReceiveStream::will_produce(to_receive);
         let (sender, mut send_verify) = MockSendStream::new();
-        let mut client = create_client(receiver, sender);
+        let mut connection = create_client(receiver, sender);
 
-        // setup the client so that the next op_id will be `consume_op_id`
-        client.current_op_id = consume_op_id - 1;
+        // setup the connection so that the next op_id will be `consume_op_id`
+        connection.inner.current_op_id = consume_op_id - 1;
 
         let mut version_vec = VersionVector::new();
         version_vec.set(FloEventId::new(1, 2));
         version_vec.set(FloEventId::new(2, 8));
         version_vec.set(FloEventId::new(3, 4));
 
-        let consume_stream = client.consume("/foo/*", &version_vec, Some(2));
+        let consume_stream = connection.consume("/foo/*", &version_vec, Some(2));
         let results = get_stream_results(consume_stream);
 
         let sent = send_verify.get_received();

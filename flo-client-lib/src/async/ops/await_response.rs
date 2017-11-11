@@ -12,17 +12,17 @@ use async::{AsyncConnection};
 #[derive(Debug)]
 pub struct AwaitResponse<D: Debug> {
     op_id: u32,
-    client: Option<AsyncConnection<D>>,
+    connection: Option<AsyncConnection<D>>,
     buffered_message: Option<ProtocolMessage>,
 }
 
 
 impl <D: Debug> AwaitResponse<D> {
 
-    pub fn new(mut client: AsyncConnection<D>, op_id: u32) -> AwaitResponse<D> {
+    pub fn new(mut connection: AsyncConnection<D>, op_id: u32) -> AwaitResponse<D> {
         // first check to see if we happen to have the response already buffered.
         let buffered: Option<ProtocolMessage> = {
-            let buf: &mut VecDeque<ProtocolMessage> = &mut client.received_message_buffer;
+            let buf: &mut VecDeque<ProtocolMessage> = &mut connection.inner.received_message_buffer;
             let index = buf.iter().enumerate().find(|&(_, ref message)| {
                 message.get_op_id() == op_id
             }).map(|(idx, _)| idx);
@@ -34,18 +34,18 @@ impl <D: Debug> AwaitResponse<D> {
 
         AwaitResponse {
             op_id: op_id,
-            client: Some(client),
+            connection: Some(connection),
             buffered_message: buffered,
         }
     }
 
     fn can_buffer_received(&self) -> bool {
-        self.client.as_ref().map(|client| client.can_buffer_received()).unwrap_or(false)
+        self.connection.as_ref().map(|connection| connection.can_buffer_received()).unwrap_or(false)
     }
 
     fn buffer_received(&mut self, message: ProtocolMessage) {
-        let client = self.client.as_mut().unwrap();
-        client.buffer_received(message);
+        let connection = self.connection.as_mut().unwrap();
+        connection.buffer_received(message);
     }
 }
 
@@ -57,18 +57,18 @@ impl <D: Debug> Future for AwaitResponse<D> {
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         if let Some(message) = self.buffered_message.take() {
-            let client = self.client.take().unwrap();
-            return Ok(Async::Ready((message, client)));
+            let connection = self.connection.take().unwrap();
+            return Ok(Async::Ready((message, connection)));
         }
 
         loop {
-            let msg_result = self.client.as_mut().expect("Attempt to poll AwaitResponse after completion").recv.as_mut().unwrap().poll();
+            let msg_result = self.connection.as_mut().expect("Attempt to poll AwaitResponse after completion").inner.recv.as_mut().unwrap().poll();
             let message: ProtocolMessage = match msg_result {
                 Ok(Async::Ready(Some(msg))) => msg,
                 Ok(Async::Ready(None)) => {
                     let err = io::Error::new(io::ErrorKind::UnexpectedEof, format!("Got EOF before response to op_id: {}", self.op_id));
                     return Err(AwaitResponseError{
-                        client: self.client.take().unwrap(),
+                        connection: self.connection.take().unwrap(),
                         err: err,
                     });
                 }
@@ -76,14 +76,14 @@ impl <D: Debug> Future for AwaitResponse<D> {
                 Err(io_err) => {
                     trace!("Error receiving next message awaiting repsonse for op_id: {}", self.op_id);
                     return Err(AwaitResponseError{
-                        client: self.client.take().unwrap(),
+                        connection: self.connection.take().unwrap(),
                         err: io_err,
                     });
                 }
             };
 
             if message.get_op_id() == self.op_id {
-                return Ok(Async::Ready((message, self.client.take().unwrap())));
+                return Ok(Async::Ready((message, self.connection.take().unwrap())));
             } else if self.can_buffer_received() {
                 // loop around for another try
                 trace!("Buffering message because await_response_op_id: {} did not match message: {:?}", self.op_id, message);
@@ -91,9 +91,9 @@ impl <D: Debug> Future for AwaitResponse<D> {
             } else {
                 let err_message = format!("Filled receive buffer before getting response for op_id: {}", self.op_id);
                 let err = io::Error::new(io::ErrorKind::Other, err_message);
-                let client = self.client.take().unwrap();
+                let connection = self.connection.take().unwrap();
                 return Err(AwaitResponseError{
-                    client: client,
+                    connection: connection,
                     err: err,
                 });
             }
@@ -103,13 +103,13 @@ impl <D: Debug> Future for AwaitResponse<D> {
 
 impl <D: Debug> Into<AsyncConnection<D>> for AwaitResponse<D> {
     fn into(mut self) -> AsyncConnection<D> {
-        self.client.take().expect("AwaitResponse has already been completed")
+        self.connection.take().expect("AwaitResponse has already been completed")
     }
 }
 
 
 #[derive(Debug)]
 pub struct AwaitResponseError<D: Debug> {
-    pub client: AsyncConnection<D>,
+    pub connection: AsyncConnection<D>,
     pub err: io::Error,
 }

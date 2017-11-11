@@ -23,8 +23,8 @@ type PollState<D> = Poll<PollSuccess<D>, ConsumeError<D>>;
 
 impl <D: Debug> Consume<D> {
 
-    pub fn new(mut client: AsyncConnection<D>, namespace: String, version_vec: &VersionVector, event_limit: Option<u64>) -> Consume<D> {
-        let op_id = client.next_op_id();
+    pub fn new(mut connection: AsyncConnection<D>, namespace: String, version_vec: &VersionVector, event_limit: Option<u64>) -> Consume<D> {
+        let op_id = connection.next_op_id();
         let consumer_start = NewConsumerStart {
             op_id: op_id,
             version_vector: version_vec.snapshot(),
@@ -32,7 +32,7 @@ impl <D: Debug> Consume<D> {
             namespace: namespace.clone(),
         };
         let message = ProtocolMessage::NewStartConsuming(consumer_start);
-        let initial_state = State::RequestStart(SendMessage::new(client, message));
+        let initial_state = State::RequestStart(SendMessage::new(connection, message));
 
         Consume {
             op_id: op_id,
@@ -54,16 +54,16 @@ impl <D: Debug> Consume<D> {
     }
 }
 
-fn response_received<D: Debug>(op_id: u32, response: ProtocolMessage, client: AsyncConnection<D>) -> Result<Async<(u32, State<D>)>, ConsumeError<D>> {
+fn response_received<D: Debug>(op_id: u32, response: ProtocolMessage, connection: AsyncConnection<D>) -> Result<Async<(u32, State<D>)>, ConsumeError<D>> {
     match response {
         ProtocolMessage::CursorCreated(info) => {
             debug!("Consumer with op_id: {} received CursorCreated: {:?}", op_id, info);
-            let new_state = State::ReceiveEvents(EventReceiver(Some(client)));
+            let new_state = State::ReceiveEvents(EventReceiver(Some(connection)));
             Ok(Async::Ready((info.batch_size, new_state)))
         }
         other @ _ => {
             warn!("consumer with op_id: {} received error response: {:?}", op_id, other);
-            Err(consume_error(client, other))
+            Err(consume_error(connection, other))
         }
     }
 }
@@ -72,18 +72,18 @@ fn new_state<D: Debug>(state: State<D>) -> PollState<D> {
     Ok(Async::Ready(PollSuccess::NewState(state)))
 }
 
-fn consume_error<D: Debug>(client: AsyncConnection<D>, message: ProtocolMessage) -> ConsumeError<D> {
+fn consume_error<D: Debug>(connection: AsyncConnection<D>, message: ProtocolMessage) -> ConsumeError<D> {
     match message {
         ProtocolMessage::Error(error_message) => {
             ConsumeError {
-                client: client,
+                connection: connection,
                 error: ErrorType::Server(error_message)
             }
         }
         other @ _ => {
             let err_msg = format!("Unexpected message {:?}", other);
             ConsumeError {
-                client: client,
+                connection: connection,
                 error: ErrorType::Io(io::Error::new(io::ErrorKind::InvalidData, err_msg))
             }
         }
@@ -112,13 +112,13 @@ impl <D: Debug> Stream for Consume<D> {
 
         let poll_state = match self.state {
             State::RequestStart(ref mut send) => {
-                let client = try_ready!(send.poll());
-                let await_response = AwaitResponse::new(client, self.op_id);
+                let connection = try_ready!(send.poll());
+                let await_response = AwaitResponse::new(connection, self.op_id);
                 new_state(State::ReceiveStart(await_response))
             }
             State::ReceiveStart(ref mut recv) => {
-                let (response, client) = try_ready!(recv.poll());
-                let (batch_size, new_state) = try_ready!(response_received(self.op_id, response, client));
+                let (response, connection) = try_ready!(recv.poll());
+                let (batch_size, new_state) = try_ready!(response_received(self.op_id, response, connection));
                 self.batch_size = batch_size;
                 Ok(Async::Ready(PollSuccess::NewState(new_state)))
             }
@@ -126,8 +126,8 @@ impl <D: Debug> Stream for Consume<D> {
                 receiver.poll(self.op_id)
             }
             State::SendNextBatch(ref mut sender) => {
-                let client = try_ready!(sender.poll());
-                let receiver = EventReceiver(Some(client));
+                let connection = try_ready!(sender.poll());
+                let receiver = EventReceiver(Some(connection));
                 Ok(Async::Ready(PollSuccess::NewState(State::ReceiveEvents(receiver))))
             }
         };
@@ -181,15 +181,15 @@ impl <D: Debug> Debug for State<D> {
 
 #[derive(Debug)]
 pub struct ConsumeError<D: Debug> {
-    client: AsyncConnection<D>,
+    connection: AsyncConnection<D>,
     error: ErrorType,
 }
 
 impl <D: Debug> From<AwaitResponseError<D>> for ConsumeError<D> {
     fn from(send_err: AwaitResponseError<D>) -> Self {
-        let AwaitResponseError{client, err} = send_err;
+        let AwaitResponseError{connection, err} = send_err;
         ConsumeError {
-            client: client,
+            connection: connection,
             error: ErrorType::Io(err),
         }
     }
@@ -198,9 +198,9 @@ impl <D: Debug> From<AwaitResponseError<D>> for ConsumeError<D> {
 
 impl <D: Debug> From<SendError<D>> for ConsumeError<D> {
     fn from(send_err: SendError<D>) -> Self {
-        let SendError{client, err} = send_err;
+        let SendError{connection, err} = send_err;
         ConsumeError {
-            client: client,
+            connection: connection,
             error: ErrorType::Io(err),
         }
     }
@@ -213,8 +213,8 @@ impl <D: Debug> EventReceiver<D> {
 
     fn poll(&mut self, op_id: u32) -> PollState<D> {
         let recv_poll = {
-            let client = self.0.as_mut().expect("Attempted to poll Consume after completion");
-            let recv = client.recv.as_mut().expect("Client is missing receiver");
+            let connection = self.0.as_mut().expect("Attempted to poll Consume after completion");
+            let recv = connection.inner.recv.as_mut().expect("Client is missing receiver");
             recv.poll()
         };
 
@@ -225,7 +225,7 @@ impl <D: Debug> EventReceiver<D> {
             }
             Err(io_err) => {
                 return Err(ConsumeError {
-                    client: self.0.take().unwrap(),
+                    connection: self.0.take().unwrap(),
                     error: ErrorType::Io(io_err)
                 });
             }
@@ -248,7 +248,7 @@ impl <D: Debug> EventReceiver<D> {
             }
             None => {
                 Err(ConsumeError {
-                    client: self.0.take().unwrap(),
+                    connection: self.0.take().unwrap(),
                     error: ErrorType::Io(io::Error::new(io::ErrorKind::UnexpectedEof, "Connection Closed"))
                 })
             }
@@ -256,9 +256,9 @@ impl <D: Debug> EventReceiver<D> {
     }
 
     fn start_requesting_new_batch(&mut self) -> PollState<D> {
-        let client = self.0.take().unwrap();
+        let connection = self.0.take().unwrap();
         let message = ProtocolMessage::NextBatch;
-        let new_state = State::SendNextBatch(SendMessage::new(client, message));
+        let new_state = State::SendNextBatch(SendMessage::new(connection, message));
         Ok(Async::Ready(PollSuccess::NewState(new_state)))
     }
 
@@ -266,7 +266,7 @@ impl <D: Debug> EventReceiver<D> {
         let event = event.into_owned();
         let event_id = event.id;
         let converted = {
-            self.0.as_ref().unwrap().codec.convert_from_message(event)
+            self.0.as_ref().unwrap().inner.codec.convert_from_message(event)
         };
 
         match converted {
@@ -274,7 +274,7 @@ impl <D: Debug> EventReceiver<D> {
             Err(codec_err) => {
                 warn!("Consumer with op_id: {} error converting event {}: {:?}", op_id, event_id, codec_err);
                 Err(ConsumeError{
-                    client: self.0.take().unwrap(),
+                    connection: self.0.take().unwrap(),
                     error: ErrorType::Codec(codec_err),
                 })
             }

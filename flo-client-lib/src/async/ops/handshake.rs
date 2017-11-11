@@ -15,16 +15,16 @@ pub struct Handshake<D: Debug> {
 }
 
 impl <D: Debug> Handshake<D> {
-    pub fn new(mut client: AsyncConnection<D>) -> Handshake<D> {
-        let op_id = client.next_op_id();
-        let batch_size = client.recv_batch_size;
+    pub fn new(mut connection: AsyncConnection<D>) -> Handshake<D> {
+        let op_id = connection.next_op_id();
+        let batch_size = connection.inner.recv_batch_size;
         let request = ProtocolMessage::Announce(ClientAnnounce{
             protocol_version: PROTOCOL_VERSION,
             op_id: op_id,
-            client_name: client.client_name.clone(),
+            client_name: connection.inner.client_name.clone(),
             consume_batch_size: batch_size,
         });
-        let inner = RequestResponse::new(client, request);
+        let inner = RequestResponse::new(connection, request);
 
         Handshake {
             request_response: inner
@@ -37,8 +37,8 @@ impl <D: Debug> Future for Handshake<D> {
     type Error = HandshakeError;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        let (response, client) = try_ready!(self.request_response.poll());
-        result_from_response(response, client)
+        let (response, connection) = try_ready!(self.request_response.poll());
+        result_from_response(response, connection)
     }
 }
 
@@ -48,15 +48,15 @@ impl <D: Debug> Into<AsyncConnection<D>> for Handshake<D> {
     }
 }
 
-fn result_from_response<D: Debug>(response: ProtocolMessage, mut client: AsyncConnection<D>) -> Poll<AsyncConnection<D>, HandshakeError> {
+fn result_from_response<D: Debug>(response: ProtocolMessage, mut connection: AsyncConnection<D>) -> Poll<AsyncConnection<D>, HandshakeError> {
     debug!("Received Response: {:?}", response);
 
     match response {
         ProtocolMessage::StreamStatus(status) => {
             // this is the response we are expecting
             let our_status = status.into();
-            client.current_stream = Some(our_status);
-            Ok(Async::Ready(client))
+            connection.inner.current_stream = Some(our_status);
+            Ok(Async::Ready(connection))
         }
         ProtocolMessage::Error(err_msg) => {
             Err(HandshakeError {
