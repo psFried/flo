@@ -5,10 +5,10 @@ use futures::{Sink, Future, Async, Poll};
 use futures::sink::Send;
 
 use protocol::ProtocolMessage;
-use async::{AsyncClient, MessageSender};
+use async::{AsyncConnection, MessageSender};
 
 pub struct SendMessage<D: Debug> {
-    client: Option<AsyncClient<D>>,
+    client: Option<AsyncConnection<D>>,
     sender: Send<MessageSender>
 }
 
@@ -19,7 +19,7 @@ impl <D: Debug> Debug for SendMessage<D> {
 }
 
 impl <D: Debug> SendMessage<D> {
-    pub fn new(mut client: AsyncClient<D>, message: ProtocolMessage) -> SendMessage<D> {
+    pub fn new(mut client: AsyncConnection<D>, message: ProtocolMessage) -> SendMessage<D> {
         let sender = client.send.take().expect("Client.send is missing");
 
         let send = sender.send(message);
@@ -33,7 +33,7 @@ impl <D: Debug> SendMessage<D> {
 
 
 impl <D: Debug> Future for SendMessage<D> {
-    type Item = AsyncClient<D>;
+    type Item = AsyncConnection<D>;
     type Error = SendError<D>;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
@@ -52,8 +52,8 @@ impl <D: Debug> Future for SendMessage<D> {
     }
 }
 
-impl <D: Debug> Into<AsyncClient<D>> for SendMessage<D> {
-    fn into(mut self) -> AsyncClient<D> {
+impl <D: Debug> Into<AsyncConnection<D>> for SendMessage<D> {
+    fn into(mut self) -> AsyncConnection<D> {
         self.client.take().expect("SendMessage has already been completed")
     }
 }
@@ -61,6 +61,6 @@ impl <D: Debug> Into<AsyncClient<D>> for SendMessage<D> {
 
 #[derive(Debug)]
 pub struct SendError<D: Debug> {
-    pub client: AsyncClient<D>,
+    pub client: AsyncConnection<D>,
     pub err: io::Error,
 }

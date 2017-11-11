@@ -6,7 +6,7 @@ use futures::{Future, Async, Poll, Stream};
 
 use event::VersionVector;
 use protocol::{ProtocolMessage, NewConsumerStart, RecvEvent};
-use async::{AsyncClient, ErrorType};
+use async::{AsyncConnection, ErrorType};
 use async::ops::{SendMessage, SendError, AwaitResponse, AwaitResponseError};
 use ::Event;
 
@@ -23,7 +23,7 @@ type PollState<D> = Poll<PollSuccess<D>, ConsumeError<D>>;
 
 impl <D: Debug> Consume<D> {
 
-    pub fn new(mut client: AsyncClient<D>, namespace: String, version_vec: &VersionVector, event_limit: Option<u64>) -> Consume<D> {
+    pub fn new(mut client: AsyncConnection<D>, namespace: String, version_vec: &VersionVector, event_limit: Option<u64>) -> Consume<D> {
         let op_id = client.next_op_id();
         let consumer_start = NewConsumerStart {
             op_id: op_id,
@@ -54,7 +54,7 @@ impl <D: Debug> Consume<D> {
     }
 }
 
-fn response_received<D: Debug>(op_id: u32, response: ProtocolMessage, client: AsyncClient<D>) -> Result<Async<(u32, State<D>)>, ConsumeError<D>> {
+fn response_received<D: Debug>(op_id: u32, response: ProtocolMessage, client: AsyncConnection<D>) -> Result<Async<(u32, State<D>)>, ConsumeError<D>> {
     match response {
         ProtocolMessage::CursorCreated(info) => {
             debug!("Consumer with op_id: {} received CursorCreated: {:?}", op_id, info);
@@ -72,7 +72,7 @@ fn new_state<D: Debug>(state: State<D>) -> PollState<D> {
     Ok(Async::Ready(PollSuccess::NewState(state)))
 }
 
-fn consume_error<D: Debug>(client: AsyncClient<D>, message: ProtocolMessage) -> ConsumeError<D> {
+fn consume_error<D: Debug>(client: AsyncConnection<D>, message: ProtocolMessage) -> ConsumeError<D> {
     match message {
         ProtocolMessage::Error(error_message) => {
             ConsumeError {
@@ -90,8 +90,8 @@ fn consume_error<D: Debug>(client: AsyncClient<D>, message: ProtocolMessage) -> 
     }
 }
 
-impl <D: Debug> Into<AsyncClient<D>> for Consume<D> {
-    fn into(self) -> AsyncClient<D> {
+impl <D: Debug> Into<AsyncConnection<D>> for Consume<D> {
+    fn into(self) -> AsyncConnection<D> {
         match self.state {
             State::RequestStart(send) => send.into(),
             State::ReceiveStart(recv) => recv.into(),
@@ -181,7 +181,7 @@ impl <D: Debug> Debug for State<D> {
 
 #[derive(Debug)]
 pub struct ConsumeError<D: Debug> {
-    client: AsyncClient<D>,
+    client: AsyncConnection<D>,
     error: ErrorType,
 }
 
@@ -207,7 +207,7 @@ impl <D: Debug> From<SendError<D>> for ConsumeError<D> {
 }
 
 
-struct EventReceiver<D: Debug>(Option<AsyncClient<D>>);
+struct EventReceiver<D: Debug>(Option<AsyncConnection<D>>);
 
 impl <D: Debug> EventReceiver<D> {
 
@@ -283,8 +283,8 @@ impl <D: Debug> EventReceiver<D> {
     }
 }
 
-impl <D: Debug> Into<AsyncClient<D>> for EventReceiver<D> {
-    fn into(mut self) -> AsyncClient<D> {
+impl <D: Debug> Into<AsyncConnection<D>> for EventReceiver<D> {
+    fn into(mut self) -> AsyncConnection<D> {
         self.0.take().expect("EventReceiver has already been completed")
     }
 }

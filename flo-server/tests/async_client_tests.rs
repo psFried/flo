@@ -14,7 +14,7 @@ use tokio_core::reactor::Core;
 use futures::Stream;
 use tempdir::TempDir;
 
-use flo_client_lib::async::{AsyncClient, tcp_connect};
+use flo_client_lib::async::{AsyncConnection, tcp_connect};
 use flo_client_lib::codec::StringCodec;
 use flo_client_lib::{FloEventId, VersionVector};
 use test_utils::*;
@@ -52,7 +52,7 @@ fn produce_one_event_and_read_it_back() {
     run_test(desc, |port| {
         let mut core = Core::new().unwrap();
         let connect = tcp_connect(desc, &localhost(port), StringCodec, &core.handle());
-        let client: AsyncClient<String> = core.run(connect).expect("failed to connect client");
+        let client: AsyncConnection<String> = core.run(connect).expect("failed to connect client");
 
         let produce = client.produce("/foo/bar", None, "some event data".to_owned());
         let (id, client) = core.run(produce).expect("failed to produce event");

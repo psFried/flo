@@ -20,7 +20,7 @@ use event::{FloEventId, ActorId, VersionVector};
 use codec::EventCodec;
 use self::recv::MessageRecvStream;
 use self::send::MessageSendSink;
-use self::ops::{ProduceOne, Consume, ConnectAsyncClient};
+use self::ops::{ProduceOne, Consume, Handshake};
 
 
 pub use self::tcp_connect::{tcp_connect, AsyncTcpClientConnect};
@@ -36,10 +36,10 @@ pub const DEFAULT_RECV_BATCH_SIZE: u32 = 1000;
 /// until the `Future` is driven to completion by an `Executor`. Most of these futures will yield a result containing both
 /// the desired result and the client itself.
 ///
-/// An `AsyncClient` uses an `EventCodec` to convert between an application's event data type and the binary data used by flo.
+/// An `AsyncConnection` uses an `EventCodec` to convert between an application's event data type and the binary data used by flo.
 /// The transport layer is abstracted, allowing the client to work over TCP or use in memory channels (for an embedded server).
 ///
-pub struct AsyncClient<D: Debug> {
+pub struct AsyncConnection<D: Debug> {
     client_name: String,
     recv_batch_size: Option<u32>,
     send: Option<MessageSender>,
@@ -50,30 +50,30 @@ pub struct AsyncClient<D: Debug> {
     received_message_buffer: VecDeque<ProtocolMessage>,
 }
 
-impl <D: Debug> Debug for AsyncClient<D> {
+impl <D: Debug> Debug for AsyncConnection<D> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "AsyncClient{{  current_op_id: {}  }}", self.current_op_id)
+        write!(f, "AsyncConnection{{  current_op_id: {}  }}", self.current_op_id)
     }
 }
 
 
-impl <D: Debug> AsyncClient<D> {
+impl <D: Debug> AsyncConnection<D> {
 
     /// Creates a new client from an already connected `TCPStream`. Generally, you should prefer to just use the `tcp_connect`
     /// function, but using `from_tcp_stream` is available for when extra control is needed in how the tcp stream is
     /// configured.
-    pub fn from_tcp_stream(name: String, tcp_stream: TcpStream, codec: Box<EventCodec<EventData=D>>) -> AsyncClient<D> {
+    pub fn from_tcp_stream(name: String, tcp_stream: TcpStream, codec: Box<EventCodec<EventData=D>>) -> AsyncConnection<D> {
         #[allow(deprecated)] // TODO: maybe migrate to tokio-io crate? but that'll be deprecated soon anyway
         let (tcp_read, tcp_write) = tcp_stream.split();
         let send_sink = MessageSendSink::new(tcp_write);
         let read_stream = MessageRecvStream::new(tcp_read);
 
-        AsyncClient::new(name, Box::new(send_sink) as MessageSender, Box::new(read_stream) as MessageReceiver, codec)
+        AsyncConnection::new(name, Box::new(send_sink) as MessageSender, Box::new(read_stream) as MessageReceiver, codec)
     }
 
-    /// Creates a new AsyncClient from raw parts
-    pub fn new(name: String, send: MessageSender, recv: MessageReceiver, codec: Box<EventCodec<EventData=D>>) -> AsyncClient<D> {
-        AsyncClient {
+    /// Creates a new AsyncConnection from raw parts
+    pub fn new(name: String, send: MessageSender, recv: MessageReceiver, codec: Box<EventCodec<EventData=D>>) -> AsyncConnection<D> {
+        AsyncConnection {
             client_name: name,
             recv_batch_size: None,
             send: Some(send),
@@ -94,7 +94,7 @@ impl <D: Debug> AsyncClient<D> {
     }
 
     /// Produce a single event on the stream and await acknowledgement that it was persisted. Returns a future that resolves
-    /// to a tuple of the `FloEventId` of the produced event and this `AsyncClient`.
+    /// to a tuple of the `FloEventId` of the produced event and this `AsyncConnection`.
     pub fn produce<N: Into<String>>(self, namespace: N, parent_id: Option<FloEventId>, data: D) -> ProduceOne<D> {
         let partition = parent_id.map(|id| id.actor).unwrap_or(1);
         self.produce_to(partition, namespace, parent_id, data)
@@ -114,13 +114,13 @@ impl <D: Debug> AsyncClient<D> {
 
     /// Initiates the handshake with the server. The returned `Future` resolves the this client, which will then be guaranteed
     /// to have the `current_stream()` return `Some`.
-    pub fn connect(self) -> ConnectAsyncClient<D> {
+    pub fn connect(self) -> Handshake<D> {
         self.connect_with(None)
     }
 
-    pub fn connect_with(mut self, consume_batch_size: Option<u32>) -> ConnectAsyncClient<D> {
+    pub fn connect_with(mut self, consume_batch_size: Option<u32>) -> Handshake<D> {
         self.recv_batch_size = consume_batch_size;
-        ConnectAsyncClient::new(self)
+        Handshake::new(self)
     }
 
 
@@ -291,8 +291,8 @@ mod test {
         }
     }
 
-    fn create_client(recv: MessageReceiver, send: MessageSender) -> AsyncClient<String> {
-        AsyncClient::new("testClient".to_owned(), send, recv, Box::new(StringCodec) as Box<EventCodec<EventData=String>>)
+    fn create_client(recv: MessageReceiver, send: MessageSender) -> AsyncConnection<String> {
+        AsyncConnection::new("testClient".to_owned(), send, recv, Box::new(StringCodec) as Box<EventCodec<EventData=String>>)
     }
 
     fn run_future<T, E, F>(mut future: F) -> Result<T, E> where F: Future<Item=T, Error=E> {
@@ -399,7 +399,7 @@ mod test {
         let client = create_client(recv, send);
 
         let await = AwaitResponse::new(client, 7);
-        let (response, client): (ProtocolMessage, AsyncClient<String>) = run_future(await).expect("await response returned error");
+        let (response, client): (ProtocolMessage, AsyncConnection<String>) = run_future(await).expect("await response returned error");
         assert_eq!(ProtocolMessage::AckEvent(EventAck { op_id: 7, event_id: FloEventId::new(8, 9) }), response);
 
         let expected_buffer = vec![

@@ -8,7 +8,7 @@ use std::io;
 use tokio_core::reactor::Handle;
 use futures::Stream;
 
-use flo_client_lib::async::{AsyncClient, MessageReceiver, MessageSender};
+use flo_client_lib::async::{AsyncConnection, MessageReceiver, MessageSender};
 use flo_client_lib::codec::EventCodec;
 
 use new_engine::{EngineRef, create_client_channels, start_controller, ConnectionHandler};
@@ -24,7 +24,7 @@ pub struct EmbeddedFloServer {
 
 impl EmbeddedFloServer {
 
-    pub fn connect_client<D: Debug>(&self, name: String, codec: Box<EventCodec<EventData=D>>, handle: Handle) -> AsyncClient<D> {
+    pub fn connect_client<D: Debug>(&self, name: String, codec: Box<EventCodec<EventData=D>>, handle: Handle) -> AsyncConnection<D> {
         let engine_ref = self.engine_ref.clone();
         let connection_id = engine_ref.next_connection_id();
         let (client_sender, client_receiver) = create_client_channels();
@@ -40,7 +40,7 @@ impl EmbeddedFloServer {
         let recv = Box::new(receiver) as MessageReceiver;
         let send = Box::new(connection_handler) as MessageSender;
 
-        AsyncClient::new(name, send, recv, codec)
+        AsyncConnection::new(name, send, recv, codec)
     }
 }
 
