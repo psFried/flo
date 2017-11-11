@@ -5,7 +5,7 @@ use futures::{Future, Poll, Async};
 
 use event::{FloEventId, ActorId};
 use protocol::{ProtocolMessage, ProduceEvent};
-use async::{AsyncClient, ErrorType};
+use async::{AsyncConnection, ErrorType};
 use async::ops::{RequestResponse, RequestResponseError};
 
 #[derive(Debug)]
@@ -23,7 +23,7 @@ enum Inner<D: Debug> {
 
 
 impl <D: Debug> ProduceOne<D> {
-    pub fn new(mut client: AsyncClient<D>, partition: ActorId, namespace: String, parent_id: Option<FloEventId>, data: D) -> ProduceOne<D> {
+    pub fn new(mut client: AsyncConnection<D>, partition: ActorId, namespace: String, parent_id: Option<FloEventId>, data: D) -> ProduceOne<D> {
         let op_id = client.next_op_id();
         let inner: Inner<D> = match client.codec.convert_produced(&namespace, data) {
             Ok(converted) => {
@@ -52,7 +52,7 @@ impl <D: Debug> ProduceOne<D> {
     }
 
 
-    fn response_received(client: AsyncClient<D>, response: ProtocolMessage) -> Result<Async<(FloEventId, AsyncClient<D>)>, ProduceErr<D>> {
+    fn response_received(client: AsyncConnection<D>, response: ProtocolMessage) -> Result<Async<(FloEventId, AsyncConnection<D>)>, ProduceErr<D>> {
         match response {
             ProtocolMessage::AckEvent(ack) => {
                 Ok(Async::Ready((ack.event_id, client)))
@@ -75,7 +75,7 @@ impl <D: Debug> ProduceOne<D> {
 }
 
 impl <D: Debug> Future for ProduceOne<D> {
-    type Item = (FloEventId, AsyncClient<D>);
+    type Item = (FloEventId, AsyncConnection<D>);
     type Error = ProduceErr<D>;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
@@ -92,8 +92,8 @@ impl <D: Debug> Future for ProduceOne<D> {
     }
 }
 
-impl <D: Debug> Into<AsyncClient<D>> for ProduceOne<D> {
-    fn into(self) -> AsyncClient<D> {
+impl <D: Debug> Into<AsyncConnection<D>> for ProduceOne<D> {
+    fn into(self) -> AsyncConnection<D> {
         match self.inner {
             Inner::RequestResp(rr) => rr.into(),
             Inner::CodecErr(mut err) => {
@@ -106,7 +106,7 @@ impl <D: Debug> Into<AsyncClient<D>> for ProduceOne<D> {
 
 #[derive(Debug)]
 pub struct ProduceErr<D: Debug> {
-    pub client: AsyncClient<D>,
+    pub client: AsyncConnection<D>,
     pub err: ErrorType,
 }
 

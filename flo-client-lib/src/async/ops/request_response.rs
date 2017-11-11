@@ -5,7 +5,7 @@ use std::fmt::Debug;
 use futures::{Future, Async, Poll};
 
 use protocol::{ProtocolMessage};
-use async::{AsyncClient};
+use async::{AsyncConnection};
 use async::ops::{SendMessage, SendError, AwaitResponse, AwaitResponseError};
 
 #[derive(Debug)]
@@ -15,7 +15,7 @@ pub struct RequestResponse<D: Debug> {
 }
 
 impl <D: Debug> RequestResponse<D> {
-    pub fn new(client: AsyncClient<D>, request: ProtocolMessage) -> RequestResponse<D> {
+    pub fn new(client: AsyncConnection<D>, request: ProtocolMessage) -> RequestResponse<D> {
         let op_id = request.get_op_id();
         debug_assert_ne!(op_id, 0);
         RequestResponse {
@@ -26,7 +26,7 @@ impl <D: Debug> RequestResponse<D> {
 }
 
 impl <D: Debug> Future for RequestResponse<D> {
-    type Item = (ProtocolMessage, AsyncClient<D>);
+    type Item = (ProtocolMessage, AsyncConnection<D>);
     type Error = RequestResponseError<D>;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
@@ -49,8 +49,8 @@ impl <D: Debug> Future for RequestResponse<D> {
     }
 }
 
-impl <D: Debug> Into<AsyncClient<D>> for RequestResponse<D> {
-    fn into(self) -> AsyncClient<D> {
+impl <D: Debug> Into<AsyncConnection<D>> for RequestResponse<D> {
+    fn into(self) -> AsyncConnection<D> {
         match self.state {
             State::Request(send) => send.into(),
             State::Response(response) => response.into()
@@ -61,7 +61,7 @@ impl <D: Debug> Into<AsyncClient<D>> for RequestResponse<D> {
 
 #[derive(Debug)]
 pub struct RequestResponseError<D: Debug> {
-    pub client: AsyncClient<D>,
+    pub client: AsyncConnection<D>,
     pub error: io::Error,
 }
 

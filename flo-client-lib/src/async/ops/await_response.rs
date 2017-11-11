@@ -6,20 +6,20 @@ use std::io;
 use futures::{Future, Async, Poll};
 
 use protocol::ProtocolMessage;
-use async::{AsyncClient};
+use async::{AsyncConnection};
 
 
 #[derive(Debug)]
 pub struct AwaitResponse<D: Debug> {
     op_id: u32,
-    client: Option<AsyncClient<D>>,
+    client: Option<AsyncConnection<D>>,
     buffered_message: Option<ProtocolMessage>,
 }
 
 
 impl <D: Debug> AwaitResponse<D> {
 
-    pub fn new(mut client: AsyncClient<D>, op_id: u32) -> AwaitResponse<D> {
+    pub fn new(mut client: AsyncConnection<D>, op_id: u32) -> AwaitResponse<D> {
         // first check to see if we happen to have the response already buffered.
         let buffered: Option<ProtocolMessage> = {
             let buf: &mut VecDeque<ProtocolMessage> = &mut client.received_message_buffer;
@@ -52,7 +52,7 @@ impl <D: Debug> AwaitResponse<D> {
 
 
 impl <D: Debug> Future for AwaitResponse<D> {
-    type Item = (ProtocolMessage, AsyncClient<D>);
+    type Item = (ProtocolMessage, AsyncConnection<D>);
     type Error = AwaitResponseError<D>;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
@@ -101,8 +101,8 @@ impl <D: Debug> Future for AwaitResponse<D> {
     }
 }
 
-impl <D: Debug> Into<AsyncClient<D>> for AwaitResponse<D> {
-    fn into(mut self) -> AsyncClient<D> {
+impl <D: Debug> Into<AsyncConnection<D>> for AwaitResponse<D> {
+    fn into(mut self) -> AsyncConnection<D> {
         self.client.take().expect("AwaitResponse has already been completed")
     }
 }
@@ -110,6 +110,6 @@ impl <D: Debug> Into<AsyncClient<D>> for AwaitResponse<D> {
 
 #[derive(Debug)]
 pub struct AwaitResponseError<D: Debug> {
-    pub client: AsyncClient<D>,
+    pub client: AsyncConnection<D>,
     pub err: io::Error,
 }

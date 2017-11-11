@@ -6,8 +6,8 @@ use futures::{Future, Poll};
 use tokio_core::net::TcpStream;
 use tokio_core::reactor::Handle;
 
-use async::AsyncClient;
-use async::ops::ConnectClientError;
+use async::AsyncConnection;
+use async::ops::HandshakeError;
 use codec::EventCodec;
 
 
@@ -22,11 +22,11 @@ pub fn tcp_connect<N: Into<String>, D: Debug + 'static, C: EventCodec<EventData=
                 tcp.set_nodelay(true).map(|()| tcp)
             })
             .map(|tcp| {
-                AsyncClient::from_tcp_stream(client_name, tcp, boxed_codec)
+                AsyncConnection::from_tcp_stream(client_name, tcp, boxed_codec)
             })
             .map_err(|io_err| {
 
-                ConnectClientError {
+                HandshakeError {
                     message: "Failed to create client from TCP stream",
                     error_type: io_err.into(),
                 }
@@ -38,11 +38,11 @@ pub fn tcp_connect<N: Into<String>, D: Debug + 'static, C: EventCodec<EventData=
 }
 
 
-pub struct AsyncTcpClientConnect<D: Debug>(Box<Future<Item=AsyncClient<D>, Error=ConnectClientError>>);
+pub struct AsyncTcpClientConnect<D: Debug>(Box<Future<Item=AsyncConnection<D>, Error=HandshakeError>>);
 
 impl <D: Debug> Future for AsyncTcpClientConnect<D> {
-    type Item = AsyncClient<D>;
-    type Error = ConnectClientError;
+    type Item = AsyncConnection<D>;
+    type Error = HandshakeError;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         self.0.poll()
