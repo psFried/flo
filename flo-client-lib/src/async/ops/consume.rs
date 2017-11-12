@@ -5,7 +5,7 @@ use std::io;
 use futures::{Future, Async, Poll, Stream};
 
 use event::VersionVector;
-use protocol::{ProtocolMessage, NewConsumerStart, RecvEvent};
+use protocol::{ProtocolMessage, NewConsumerStart, CONSUME_UNLIMITED, RecvEvent};
 use async::{AsyncConnection, ErrorType};
 use async::ops::{SendMessage, SendError, AwaitResponse, AwaitResponseError};
 use ::Event;
@@ -15,6 +15,7 @@ pub struct Consume<D: Debug> {
     op_id: u32,
     batch_size: u32,
     namespace: String,
+    await_new_events: bool,
     total_events_remaining: Option<u64>,
     state: State<D>,
 }
@@ -23,12 +24,12 @@ type PollState<D> = Poll<PollSuccess<D>, ConsumeError<D>>;
 
 impl <D: Debug> Consume<D> {
 
-    pub fn new(mut connection: AsyncConnection<D>, namespace: String, version_vec: &VersionVector, event_limit: Option<u64>) -> Consume<D> {
+    pub fn new(mut connection: AsyncConnection<D>, namespace: String, version_vec: &VersionVector, event_limit: Option<u64>, await_new: bool) -> Consume<D> {
         let op_id = connection.next_op_id();
         let consumer_start = NewConsumerStart {
             op_id: op_id,
             version_vector: version_vec.snapshot(),
-            max_events: event_limit.unwrap_or(0),
+            max_events: event_limit.unwrap_or(CONSUME_UNLIMITED),
             namespace: namespace.clone(),
         };
         let message = ProtocolMessage::NewStartConsuming(consumer_start);
@@ -38,6 +39,7 @@ impl <D: Debug> Consume<D> {
             op_id: op_id,
             batch_size: 0,
             namespace: namespace,
+            await_new_events: await_new,
             total_events_remaining: event_limit,
             state: initial_state
         }
@@ -107,6 +109,7 @@ impl <D: Debug> Stream for Consume<D> {
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         if self.event_limit_reached() {
+            debug!("Consumer for op_id: {} is finished because event limit was reached", self.op_id);
             return Ok(Async::Ready(None));
         }
 
@@ -135,6 +138,14 @@ impl <D: Debug> Stream for Consume<D> {
         let poll_success: PollSuccess<D> = try_ready!(poll_state);
 
         match poll_success {
+            PollSuccess::AwaitReceived if self.await_new_events => {
+                // just poll again to make sure we're registered to get notified when the next event is ready
+                self.poll()
+            }
+            PollSuccess::AwaitReceived => {
+                debug!("Consumer for op_id: {} is finished because AwaitingEvents was received and await_new=false", self.op_id);
+                Ok(Async::Ready(None))
+            }
             PollSuccess::Event(event) => {
                 self.decrement_events_remaining();
                 Ok(Async::Ready(Some(event)))
@@ -157,6 +168,7 @@ impl <D: Debug> Debug for Consume<D> {
 enum PollSuccess<D: Debug> {
     Event(Event<D>),
     NewState(State<D>),
+    AwaitReceived,
 }
 
 enum State<D: Debug> {
@@ -241,7 +253,7 @@ impl <D: Debug> EventReceiver<D> {
             }
             Some(ProtocolMessage::AwaitingEvents) => {
                 debug!("Received AwaitingEvents for consumer with op_id: {}", op_id);
-                Ok(Async::NotReady)
+                Ok(Async::Ready(PollSuccess::AwaitReceived))
             }
             Some(other) => {
                 Err(consume_error(self.0.take().unwrap(), other))

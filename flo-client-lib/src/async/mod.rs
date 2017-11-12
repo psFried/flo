@@ -114,8 +114,8 @@ impl <D: Debug> AsyncConnection<D> {
     /// If `event_limit` is `None`, then the resulting `Stream` will never terminate unless there's an error.
     /// The `version_vector` represents the exclusive starting `EventCounter` for each partition on the stream that the consumer
     /// will receive events for. Only events matching the `namespace` glob will be received.
-    pub fn consume<N: Into<String>>(self, namespace: N, version_vector: &VersionVector, event_limit: Option<u64>) -> Consume<D> {
-        Consume::new(self, namespace.into(), version_vector, event_limit)
+    pub fn consume<N: Into<String>>(self, namespace: N, version_vector: &VersionVector, event_limit: Option<u64>, await_new: bool) -> Consume<D> {
+        Consume::new(self, namespace.into(), version_vector, event_limit, await_new)
     }
 
     /// Initiates the handshake with the server. The returned `Future` resolves the this connection, which will then be guaranteed
@@ -576,7 +576,7 @@ mod test {
         version_vec.set(FloEventId::new(2, 8));
         version_vec.set(FloEventId::new(3, 4));
 
-        let consume_stream = connection.consume("/foo/*", &version_vec, Some(2));
+        let consume_stream = connection.consume("/foo/*", &version_vec, Some(2), true);
         let results = get_stream_results(consume_stream);
 
         let sent = send_verify.get_received();

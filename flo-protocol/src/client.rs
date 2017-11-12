@@ -147,6 +147,8 @@ pub struct ConsumerStart {
     pub namespace: String,
 }
 
+pub const CONSUME_UNLIMITED: u64 = 0;
+
 /// New message sent from client to server to begin reading events from the stream
 #[derive(Debug, PartialEq, Clone)]
 pub struct NewConsumerStart {

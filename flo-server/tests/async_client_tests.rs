@@ -60,7 +60,7 @@ fn produce_one_event_and_read_it_back() {
 
         let mut vv = VersionVector::new();
         vv.set(FloEventId::new(1, 0));
-        let stream = client.consume("/foo/*", &vv, Some(1));
+        let stream = client.consume("/foo/*", &vv, Some(1), false);
         let mut collected = core.run(stream.collect()).expect("failed to consume");
         assert_eq!(1, collected.len());
         let event = collected.pop().unwrap();
