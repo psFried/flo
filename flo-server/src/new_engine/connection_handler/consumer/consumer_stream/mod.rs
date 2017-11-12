@@ -25,6 +25,9 @@ pub struct Consumer {
     /// whether the EndOfBatch message was sent already or not
     end_of_batch_sent: bool,
 
+    /// whether the AwaitNewEvents message has been sent already or not
+    await_new_events_sent: bool,
+
     /// actually reads events from the partitions
     readers: MultiPartitionEventReader,
 
@@ -55,6 +58,7 @@ impl Consumer {
             task_setter: task_setter,
             status_checker: status_checker,
             end_of_batch_sent: false,
+            await_new_events_sent: false,
         }
     }
 
@@ -65,7 +69,13 @@ impl Consumer {
     fn await_more_events(&mut self) -> Poll<Option<ProtocolMessage>, ConsumerError> {
         trace!("Awaiting more events for connection_id: {}", self.connection_id);
         self.task_setter.await_more_events();
-        Ok(Async::NotReady)
+        if self.await_new_events_sent {
+            Ok(Async::NotReady)
+        } else {
+            debug!("Sending AwaitingEvents for connection_id: {}", self.connection_id);
+            self.await_new_events_sent = true;
+            Ok(Async::Ready(Some(ProtocolMessage::AwaitingEvents)))
+        }
     }
 
     fn send_event(&mut self, event: PersistentEvent) -> Poll<Option<ProtocolMessage>, ConsumerError> {
@@ -105,6 +115,7 @@ impl Consumer {
 
     fn check_status(&mut self) -> Poll<Option<StreamStatus>, ConsumerError> {
         if self.is_done() {
+            debug!("Consumer for connection_id: {} is done", self.connection_id);
             return Ok(Async::Ready(None));
         }
 

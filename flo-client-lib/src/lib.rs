@@ -4,6 +4,9 @@ extern crate serde;
 #[cfg(feature = "serde-json-codec")]
 extern crate serde_json;
 
+#[cfg(test)]
+extern crate env_logger;
+
 extern crate flo_event as event;
 extern crate flo_protocol as protocol;
 

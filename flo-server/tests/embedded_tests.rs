@@ -65,6 +65,26 @@ fn run_future<T: Debug, E: Debug, F: Future<Item=T, Error=E> + Debug>(reactor: &
 }
 
 #[test]
+fn consumer_stops_at_end_of_stream_when_await_new_events_is_false() {
+    integration_test("consumer stops at end of stream when await new events is false", default_test_options(), |server, mut reactor| {
+
+        let mut connection = server.connect_client::<String>("producer".to_owned(), codec(), reactor.handle());
+        connection = reactor.run(connection.connect()).expect("failed to connect producer");
+
+        let produce = connection.produce_to(1, "/foo", None, "some data".to_owned());
+        let (_, connection) = run_future(&mut reactor, produce);
+
+        let mut vv = VersionVector::new();
+        vv.set(FloEventId::new(1, 0));
+        let stream = connection.consume("/foo", &vv, None, false);
+
+        // should complete more or less immediately and not time out waiting for new events
+        let results = run_future(&mut reactor, stream.collect());
+        assert_eq!(1, results.len());
+    });
+}
+
+#[test]
 fn consumer_can_read_events_from_multiple_partitions() {
     let partition_count = 3;
     let options = EventStreamOptions {
@@ -91,7 +111,7 @@ fn consumer_can_read_events_from_multiple_partitions() {
             vv.set(FloEventId::new(i + 1, 0));
         }
 
-        let consume = client.consume("/test", &vv, Some(50));
+        let consume = client.consume("/test", &vv, Some(50), false);
         let events = run_future(&mut reactor, consume.collect());
         let actual_ids = events.iter().map(|e| e.id).collect::<Vec<FloEventId>>();
         assert_eq!(expected_ids, actual_ids);
@@ -112,7 +132,7 @@ fn consumer_reads_events_in_batches() {
         }
         let mut vv = VersionVector::new();
         vv.set(FloEventId::new(1, 0));
-        let consume = client.consume("/test", &vv, Some(event_count as u64));
+        let consume = client.consume("/test", &vv, Some(event_count as u64), false);
         let events = run_future(&mut reactor, consume.collect());
         assert_eq!(event_count, events.len());
     });
@@ -140,7 +160,7 @@ fn consumer_receives_only_events_matching_glob() {
 
         let mut vv = VersionVector::new();
         vv.set(FloEventId::new(1, 0));
-        let consumer = client.consume("/**/bar/*", &vv, Some(2));
+        let consumer = client.consume("/**/bar/*", &vv, Some(2), false);
         let events = run_future(&mut reactor, consumer.collect());
 
         let actual_namespaces = events.iter().map(|event| event.namespace.to_string()).collect::<Vec<String>>();
@@ -166,7 +186,7 @@ fn consumer_receives_event_as_it_is_produced() {
 
             let mut vv = VersionVector::new();
             vv.set(FloEventId::new(1, 0));
-            let stream = consumer_client.consume("/foo", &vv, Some(1));
+            let stream = consumer_client.consume("/foo", &vv, Some(1), true);
             println!("About to run consumer");
             let result = run_future(&mut consumer_core, stream.collect());
             println!("Finished consumer thread");
@@ -206,7 +226,7 @@ fn produce_many_events_then_consume() {
         let mut vv = VersionVector::new();
         vv.set(FloEventId::new(1, 0));
 
-        let consume_stream = client.consume("/foo", &vv, Some(produce_count as u64));
+        let consume_stream = client.consume("/foo", &vv, Some(produce_count as u64), false);
         let mut results: Vec<Event<String>> = run_future(&mut reactor, consume_stream.collect());
         assert_eq!(produce_count, results.len());
 
@@ -229,7 +249,7 @@ fn produce_one_event_then_consume_it() {
         let mut version_vec = VersionVector::new();
         version_vec.set(FloEventId::new(1, 0));
 
-        let consume_future = client.consume("/foo/*", &version_vec, Some(1));
+        let consume_future = client.consume("/foo/*", &version_vec, Some(1), false);
         let mut event_result = run_future(&mut reactor, consume_future.collect());
         assert_eq!(1, event_result.len());
         assert_eq!(&event_result.pop().unwrap().data, "my data");

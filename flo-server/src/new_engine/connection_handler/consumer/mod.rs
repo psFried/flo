@@ -72,7 +72,7 @@ impl ConsumerConnectionState {
 
     pub fn handle_start_consuming(&mut self, start: NewConsumerStart, connection: &mut ConnectionState) -> ConnectionHandlerResult {
         let NewConsumerStart {op_id, version_vector, namespace, max_events} = start;
-        let event_limit = if max_events == u64::max_value() {
+        let event_limit = if max_events == CONSUME_UNLIMITED {
             None
         } else {
             Some(max_events)
