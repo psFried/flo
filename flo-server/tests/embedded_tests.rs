@@ -126,7 +126,7 @@ fn consumer_reads_events_in_batches() {
 
         let event_count = 100usize;
         for _ in 0..event_count {
-            let produce = client.produce("/test", None, "event data".to_owned());
+            let produce = client.produce_to(1, "/test", None, "event data".to_owned());
             let (_, c) = run_future(&mut reactor, produce);
             client = c;
         }
@@ -153,7 +153,7 @@ fn consumer_receives_only_events_matching_glob() {
         ];
 
         for ns in event_namespaces {
-            let produce = client.produce(ns, None, "event data".to_owned());
+            let produce = client.produce_to(1, ns, None, "event data".to_owned());
             let (_, client_to_reuse) = run_future(&mut reactor, produce);
             client = client_to_reuse;
         }
@@ -196,7 +196,7 @@ fn consumer_receives_event_as_it_is_produced() {
         println!("started consumer thread");
         thread::sleep(Duration::from_millis(50));
 
-        let produce = producer_client.produce("/foo", None, "some data".to_owned());
+        let produce = producer_client.produce_to(1, "/foo", None, "some data".to_owned());
         println!("about to run produce future");
         let (id, _) = reactor.run(produce).expect("failed to produce event");
         println!("finished produce future");
@@ -217,7 +217,7 @@ fn produce_many_events_then_consume() {
 
         let produce_count = 20usize;
         for i in 0..produce_count {
-            let produce = client.produce("/foo", None, format!("event data {}", i));
+            let produce = client.produce_to(1, "/foo", None, format!("event data {}", i));
             let (id, client_again) = reactor.run(produce).expect("failed to produce event");
             client = client_again;
             assert_eq!(i as u64 + 1, id.event_counter);
@@ -241,7 +241,7 @@ fn produce_one_event_then_consume_it() {
         let client = server.connect_client::<String>("testy mctesterson".to_owned(), codec(), reactor.handle());
 
         let client = reactor.run(client.connect()).expect("failed to connect client");
-        let future = client.produce("/foo/bar", None, "my data".to_owned());
+        let future = client.produce_to(1, "/foo/bar", None, "my data".to_owned());
 
         let (id, client) = reactor.run(future).expect("failed to run produce future");
         println!("produced event: {}", id);

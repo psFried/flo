@@ -54,7 +54,7 @@ fn produce_one_event_and_read_it_back() {
         let connect = tcp_connect(desc, &localhost(port), StringCodec, &core.handle());
         let client: AsyncConnection<String> = core.run(connect).expect("failed to connect client");
 
-        let produce = client.produce("/foo/bar", None, "some event data".to_owned());
+        let produce = client.produce_to(1, "/foo/bar", None, "some event data".to_owned());
         let (id, client) = core.run(produce).expect("failed to produce event");
         assert_eq!(FloEventId::new(1, 1), id);
 

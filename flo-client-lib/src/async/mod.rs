@@ -91,8 +91,8 @@ impl <D: Debug> AsyncConnection<D> {
 
     /// Produce a single event on the stream and await acknowledgement that it was persisted. Returns a future that resolves
     /// to a tuple of the `FloEventId` of the produced event and this `AsyncConnection`.
-    pub fn produce<N: Into<String>>(self, namespace: N, parent_id: Option<FloEventId>, data: D) -> ProduceOne<D> {
-        let partition = parent_id.map(|id| id.actor).unwrap_or(1);
+    pub fn produce(self, event: EventToProduce<D>) -> ProduceOne<D> {
+        let EventToProduce{partition, namespace, parent_id, data} = event;
         self.produce_to(partition, namespace, parent_id, data)
     }
 
