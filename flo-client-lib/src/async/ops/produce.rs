@@ -136,6 +136,21 @@ pub struct EventToProduce<D: Debug> {
     pub data: D,
 }
 
+impl <D: Debug> EventToProduce<D> {
+    pub fn new<N: Into<String>>(partition: ActorId, namespace: N, parent_id: Option<FloEventId>, data: D) -> EventToProduce<D> {
+        EventToProduce {
+            partition,
+            namespace: namespace.into(),
+            parent_id,
+            data
+        }
+    }
+
+    pub fn witout_parent<N: Into<String>>(partition: ActorId, namespace: N, data: D) -> EventToProduce<D> {
+        EventToProduce::new(partition, namespace, None, data)
+    }
+}
+
 
 /// An operation that will produce each event from the iterator in sequence. This will wait for acknowledgement of each event
 /// before proceeding to the next, and will short circuit the rest of the iterator when an error is encountered.

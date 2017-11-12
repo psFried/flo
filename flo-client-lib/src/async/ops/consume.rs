@@ -45,13 +45,17 @@ impl <D: Debug> Consume<D> {
         }
     }
 
-    pub fn decrement_events_remaining(&mut self) {
+    pub fn get_events_remaining(&self) -> Option<u64> {
+        self.total_events_remaining
+    }
+
+    fn decrement_events_remaining(&mut self) {
         if let Some(count) = self.total_events_remaining.as_mut() {
             *count -= 1;
         }
     }
 
-    pub fn event_limit_reached(&self) -> bool {
+    fn event_limit_reached(&self) -> bool {
         self.total_events_remaining.map(|rem| rem == 0).unwrap_or(false)
     }
 }
@@ -169,6 +173,7 @@ enum PollSuccess<D: Debug> {
     Event(Event<D>),
     NewState(State<D>),
     AwaitReceived,
+    // TODO: Send StopConsuming message at the end
 }
 
 enum State<D: Debug> {
@@ -193,8 +198,8 @@ impl <D: Debug> Debug for State<D> {
 
 #[derive(Debug)]
 pub struct ConsumeError<D: Debug> {
-    connection: AsyncConnection<D>,
-    error: ErrorType,
+    pub connection: AsyncConnection<D>,
+    pub error: ErrorType,
 }
 
 impl <D: Debug> From<AwaitResponseError<D>> for ConsumeError<D> {
