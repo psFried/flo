@@ -20,7 +20,7 @@ use event::{FloEventId, ActorId, VersionVector};
 use codec::EventCodec;
 use self::recv::MessageRecvStream;
 use self::send::MessageSendSink;
-use self::ops::{ProduceOne, Consume, Handshake};
+use self::ops::{ProduceOne, ProduceAll, EventToProduce, Consume, Handshake};
 
 
 pub use self::tcp_connect::{tcp_connect, AsyncTcpClientConnect};
@@ -96,8 +96,18 @@ impl <D: Debug> AsyncConnection<D> {
         self.produce_to(partition, namespace, parent_id, data)
     }
 
+    /// Produces a single event to the specified partition and awaits acknowledgement that it was persisted. Returns a future
+    /// that resolves to a tuple of the `FloEventId` of the new event and this `AsyncConnection` for reuse.
     pub fn produce_to<N: Into<String>>(self, partition: ActorId, namespace: N, parent_id: Option<FloEventId>, data: D) -> ProduceOne<D> {
         ProduceOne::new(self, partition, namespace.into(), parent_id, data)
+    }
+
+    /// Produce each of the events yielded by the iterator. The events are each produced in order. Subsequent operations are not
+    /// begun until the previous event has been acknowledged as being persisted successfully. In the event of a failure, all
+    /// subsequent events are skipped, and the error is returned immediated. The error struct contains the number of events
+    /// that were produced successfully.
+    pub fn produce_all<I: Iterator<Item=EventToProduce<D>>>(self, events: I) -> ProduceAll<D, I> {
+        ProduceAll::new(self, events)
     }
 
     /// Start consuming events from the server. Returns a `Stream` that yields events continuously until the `event_limit` is reached.
@@ -346,6 +356,106 @@ mod test {
             }
         }
         results
+    }
+
+    #[test]
+    fn produce_all_produces_multiple_events_in_sequence() {
+        let expected_sent = vec![
+            ProtocolMessage::ProduceEvent(ProduceEvent {
+                op_id: 1,
+                partition: 1,
+                namespace: "/foo".to_owned(),
+                parent_id: None,
+                data: Vec::new(),
+            }),
+            ProtocolMessage::ProduceEvent(ProduceEvent {
+                op_id: 2,
+                partition: 2,
+                namespace: "/bar".to_owned(),
+                parent_id: None,
+                data: Vec::new(),
+            }),
+            ProtocolMessage::ProduceEvent(ProduceEvent {
+                op_id: 3,
+                partition: 3,
+                namespace: "/baz".to_owned(),
+                parent_id: None,
+                data: Vec::new(),
+            })
+        ];
+        let to_recv = vec![
+            ProtocolMessage::AckEvent(EventAck{
+                op_id: 1,
+                event_id: FloEventId::new(1, 1),
+            }),
+            ProtocolMessage::AckEvent(EventAck{
+                op_id: 2,
+                event_id: FloEventId::new(2, 2),
+            }),
+            ProtocolMessage::AckEvent(EventAck{
+                op_id: 3,
+                event_id: FloEventId::new(3, 3),
+            }),
+        ];
+
+        let events_to_produce = vec![
+            EventToProduce {
+                partition: 1,
+                namespace: "/foo".to_owned(),
+                parent_id: None,
+                data: String::new()
+            },
+            EventToProduce {
+                partition: 2,
+                namespace: "/bar".to_owned(),
+                parent_id: None,
+                data: String::new()
+            },
+            EventToProduce {
+                partition: 3,
+                namespace: "/baz".to_owned(),
+                parent_id: None,
+                data: String::new()
+            }
+        ];
+
+        let recv = MockReceiveStream::will_produce(to_recv);
+        let (send, mut send_verify) = MockSendStream::new();
+        let connection = create_client(recv, send);
+
+        let op = connection.produce_all(events_to_produce.into_iter());
+        let result = run_future(op).expect("failed to run produce_all");
+
+        assert_eq!(expected_sent, send_verify.get_received());
+
+        let expected_ids = vec![
+            FloEventId::new(1, 1),
+            FloEventId::new(2, 2),
+            FloEventId::new(3, 3)
+        ];
+        assert_eq!(expected_ids, result.events_produced);
+    }
+
+    #[test]
+    fn produce_all_returns_immediate_success_when_iterator_is_empty() {
+        let recv = MockReceiveStream::empty();
+        let (send, mut send_verify) = MockSendStream::new();
+        let connection = create_client(recv, send);
+
+        let mut op = connection.produce_all(Vec::new().into_iter());
+
+        let result = op.poll().unwrap();
+
+        match result {
+            Async::Ready(result) => {
+                assert!(result.events_produced.is_empty());
+            }
+            Async::NotReady => {
+                panic!("Expected Async::Ready but got NotReady");
+            }
+        }
+
+        assert!(send_verify.get_received().is_empty());
     }
 
     #[test]

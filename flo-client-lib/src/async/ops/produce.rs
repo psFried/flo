@@ -8,7 +8,12 @@ use protocol::{ProtocolMessage, ProduceEvent};
 use async::{AsyncConnection, ErrorType};
 use async::ops::{RequestResponse, RequestResponseError};
 
+/// An operation that produces a single event on an event stream and waits for it to be acknowledged. This future will
+/// not resolve until acknowledgement is received from the server that either the event has been persisted successfully or
+/// an error occured.
+/// If successful, this future resolves to the `FloEventId` of the event produced, along with the connection itself for reuse.
 #[derive(Debug)]
+#[must_use = "futures must be polled in order to do any work"]
 pub struct ProduceOne<D: Debug> {
     #[allow(dead_code)]
     op_id: u32,
@@ -103,7 +108,7 @@ impl <D: Debug> Into<AsyncConnection<D>> for ProduceOne<D> {
     }
 }
 
-
+/// Error type when there is a failure to produce an event. Includes the connection itself, in case it can be reused
 #[derive(Debug)]
 pub struct ProduceErr<D: Debug> {
     pub connection: AsyncConnection<D>,
@@ -120,4 +125,125 @@ impl <D: Debug> From<RequestResponseError<D>> for ProduceErr<D> {
         }
     }
 }
+
+/// Contains all the required data to produce an event. This is the primary struct used by clients to produce events on a
+/// stream.
+#[derive(Debug, PartialEq)]
+pub struct EventToProduce<D: Debug> {
+    pub partition: ActorId,
+    pub namespace: String,
+    pub parent_id: Option<FloEventId>,
+    pub data: D,
+}
+
+
+/// An operation that will produce each event from the iterator in sequence. This will wait for acknowledgement of each event
+/// before proceeding to the next, and will short circuit the rest of the iterator when an error is encountered.
+#[derive(Debug)]
+#[must_use = "futures must be polled in order to do any work"]
+pub struct ProduceAll<D: Debug, I: Iterator<Item=EventToProduce<D>>> {
+    iter: Option<I>,
+    current_op: Option<ProduceOne<D>>,
+    conn: Option<AsyncConnection<D>>,
+    produced_ids: Vec<FloEventId>,
+}
+
+impl <D: Debug, I: Iterator<Item=EventToProduce<D>>> ProduceAll<D, I> {
+    /// Creates a new `ProduceAll` for the given client which will produce the events in the iterator. An empty iterator
+    /// is acceptable, and will just immediately return a successful result when the future is polled
+    pub fn new(connection: AsyncConnection<D>, mut iterator: I) -> ProduceAll<D, I> {
+        let first_event = iterator.next();
+
+        if let Some(EventToProduce{partition, namespace, parent_id, data}) = first_event {
+            let first_op = connection.produce_to(partition, namespace, parent_id, data);
+            ProduceAll {
+                iter: Some(iterator),
+                current_op: Some(first_op),
+                conn: None,
+                produced_ids: Vec::new(),
+            }
+        } else {
+            // empty produceAll, which will simply yield a result the first time it is polled
+            ProduceAll {
+                iter: None,
+                current_op: None,
+                conn: Some(connection),
+                produced_ids: Vec::new(),
+            }
+        }
+    }
+}
+
+/// The Error returned when any produce operation fails for a `ProduceAll` operation
+#[derive(Debug)]
+pub struct ProduceAllError<D: Debug> {
+    /// The error that was encountered
+    pub error: ErrorType,
+    /// Information about the successful portion of events produced
+    pub result: ProduceAllResult<D>,
+}
+
+/// Information about the successful portion of a `ProduceAll` operation. If some of the events are produced successfully,
+/// then `events_produced` will be greater than 0 and `last_produced_id` will be set.
+#[derive(Debug)]
+pub struct ProduceAllResult<D: Debug> {
+    pub connection: AsyncConnection<D>,
+    pub events_produced: Vec<FloEventId>,
+}
+
+impl <D: Debug, I: Iterator<Item=EventToProduce<D>>> Future for ProduceAll<D, I> {
+    type Item = ProduceAllResult<D>;
+    type Error = ProduceAllError<D>;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        {
+            let ProduceAll{ref mut iter, ref mut current_op, ref mut conn, ref mut produced_ids} = *self;
+
+            if current_op.is_some() {
+
+                let (id, connection) = {
+                    let produce = current_op.as_mut().unwrap();
+                    let produce_result = produce.poll().map_err(|err| {
+                        let ProduceErr {connection, err} = err;
+                        let events_produced = ::std::mem::replace(produced_ids, Vec::new());
+                        let res = ProduceAllResult {
+                            connection,
+                            events_produced
+                        };
+                        ProduceAllError {
+                            error: err,
+                            result: res,
+                        }
+                    });
+                    try_ready!(produce_result)
+                };
+                produced_ids.push(id);
+                debug!("Finished producing event: {} with id: {}", produced_ids.len(), id);
+
+                if let Some(next) = iter.as_mut().expect("attempted to poll ProduceAll after it completed with error").next() {
+                    let EventToProduce {partition, namespace, parent_id, data} = next;
+                    let produce = connection.produce_to(partition, namespace, parent_id, data);
+                    *current_op = Some(produce)
+                } else {
+                    *conn = Some(connection);
+                }
+            }
+        }
+
+
+        if let Some(connection) = self.conn.take() {
+            debug!("Successfully produced all {} events", self.produced_ids.len());
+            Ok(Async::Ready(ProduceAllResult {
+                connection,
+                events_produced: ::std::mem::replace(&mut self.produced_ids, Vec::new()),
+            }))
+        } else {
+            self.poll()
+        }
+
+    }
+}
+
+
+
 
