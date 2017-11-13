@@ -51,7 +51,7 @@ impl ProducerBenchmark {
             let data = data.clone();
 
             let start = self.clocksource.counter();
-            let id = connection.produce(ns, data).map_err(|err| {
+            let id = connection.produce_to(1, ns, None, data).map_err(|err| {
                 format!("Error producing event: {:?}", err)
             })?;
             let end = self.clocksource.counter();

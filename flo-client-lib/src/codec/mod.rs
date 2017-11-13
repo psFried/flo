@@ -36,6 +36,7 @@ pub trait EventCodec {
 }
 
 /// The simplest possible codec. It just passes every event through as it is and only produces binary data.
+#[derive(Debug)]
 pub struct RawCodec;
 impl EventCodec for RawCodec {
     type EventData = Vec<u8>;
@@ -52,6 +53,7 @@ impl EventCodec for RawCodec {
 /// An EventCodec for events that use UTF-8 Strings for the event body. Clients using this codec will receive
 /// `BasicEvent<String>` instances in the consumer, and will produce simple `String`s. This codec will return an error
 /// if the event data is not valid UTF-8. If this isn't what you want, then consider using the `LossyStringCodec` instead.
+#[derive(Debug)]
 pub struct StringCodec;
 impl EventCodec for StringCodec {
     type EventData = String;
@@ -66,6 +68,7 @@ impl EventCodec for StringCodec {
 }
 
 /// A more permissive version of the `StringCodec` that will allow non-utf8 characters by converting them into � characters.
+#[derive(Debug)]
 pub struct LossyStringCodec;
 impl EventCodec for LossyStringCodec {
     type EventData = String;
