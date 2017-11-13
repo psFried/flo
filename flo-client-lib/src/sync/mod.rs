@@ -7,7 +7,7 @@ use tokio_core::reactor::Core;
 use futures::{Future, Stream};
 
 use event::{FloEventId, ActorId, VersionVector};
-use async::{AsyncConnection, tcp_connect};
+use async::{AsyncConnection, tcp_connect_with};
 use async::ops::{ProduceErr, HandshakeError, Consume, ConsumeError};
 use codec::EventCodec;
 use ::Event;
@@ -40,13 +40,13 @@ impl <D: Debug> From<AsyncConnection<D>> for SyncConnection<D> {
 
 impl <D: Debug + 'static> SyncConnection<D> {
 
-    pub fn connect<A, N, C>(address: A, client_name: N, codec: C) -> Result<SyncConnection<D>, HandshakeError>
+    pub fn connect<A, N, C>(address: A, client_name: N, codec: C, consume_batch_size: Option<u32>) -> Result<SyncConnection<D>, HandshakeError>
                     where A: Into<SocketAddr>, N: Into<String>, C: EventCodec<EventData=D> + 'static {
 
         let result = REACTOR.with(move |core| {
             let mut core = core.borrow_mut();
             let addr = address.into();
-            let connect = tcp_connect(client_name, &addr, codec, &core.handle());
+            let connect = tcp_connect_with(client_name, &addr, consume_batch_size, codec, &core.handle());
             core.run(connect)
         });
         result.map(|async_conn| async_conn.into())

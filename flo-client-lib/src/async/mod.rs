@@ -23,7 +23,7 @@ use self::send::MessageSendSink;
 use self::ops::{ProduceOne, ProduceAll, EventToProduce, Consume, Handshake};
 
 
-pub use self::tcp_connect::{tcp_connect, AsyncTcpClientConnect};
+pub use self::tcp_connect::{tcp_connect, tcp_connect_with, AsyncTcpClientConnect};
 pub use self::current_stream_state::{CurrentStreamState, PartitionState};
 pub type MessageSender = Box<Sink<SinkItem=ProtocolMessage, SinkError=io::Error>>;
 pub type MessageReceiver = Box<Stream<Item=ProtocolMessage, Error=io::Error>>;
@@ -124,6 +124,9 @@ impl <D: Debug> AsyncConnection<D> {
         self.connect_with(None)
     }
 
+    /// Initiates the handshake with the server, using the given `consume_batch_size`. The returned `Future`
+    /// resolves to this connection, which will then be guaranteed to have `current_stream()` return
+    /// `Some` as long as the handshake was successful.
     pub fn connect_with(mut self, consume_batch_size: Option<u32>) -> Handshake<D> {
         self.inner.recv_batch_size = consume_batch_size;
         Handshake::new(self)
