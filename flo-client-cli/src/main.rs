@@ -7,7 +7,7 @@ extern crate clap;
 mod client_cli;
 
 
-use flo_client_lib::FloEventId;
+use flo_client_lib::{FloEventId, ActorId};
 use clap::{App, Arg, ArgMatches, SubCommand, AppSettings};
 use client_cli::{Producer, ProduceOptions, Verbosity, Context, Critical, CliConsumer, CliConsumerOptions};
 
@@ -28,6 +28,7 @@ mod args {
     //produce options
     pub const EVENT_DATA: &'static str = "event-data";
     pub const PARENT_ID: &'static str = "parent-id";
+    pub const PARTITION: &'static str = "partition";
 
     //consume options
     pub const CONSUME_LIMIT: &'static str = "consume-limit";
@@ -65,6 +66,10 @@ fn create_app_args() -> App<'static, 'static> {
                             .help("The namespace to produce the event in. By convention, this is slash separated path (/foo/bar/baz)")
                             .takes_value(true)
                             .required(true))
+                    .arg(Arg::with_name(args::PARTITION)
+                        .long("partition")
+                        .default_value("1")
+                        .help("The partition number to produce the event onto"))
                     .arg(Arg::with_name(args::EVENT_DATA)
                             .short("d")
                             .long("data")
@@ -119,12 +124,14 @@ fn main() {
             let parent_id = get_parent_id(&produce_args, &context);
             let event_data = get_event_data(&produce_args);
             let namespace = produce_args.value_of(args::NAMESPACE).or_abort_with_message("Must supply a namespace", &context).to_owned();
+            let partition = parse_opt_or_exit::<ActorId>(args::PARTITION, &produce_args, &context).or_abort_process(&context);
             let produce_options = ProduceOptions {
-                host: host,
-                port: port,
-                namespace: namespace,
-                event_data: event_data,
-                parent_id: parent_id,
+                host,
+                port,
+                namespace,
+                partition,
+                event_data,
+                parent_id,
             };
             ::client_cli::run::<Producer>(produce_options, context);
         }
@@ -180,7 +187,13 @@ fn get_parent_id(args: &ArgMatches, context: &Context) -> Option<FloEventId> {
 
 fn get_event_data(args: &ArgMatches) -> Vec<Vec<u8>> {
     args.values_of(args::EVENT_DATA).map(|values| {
-        values.map(|str_val| str_val.as_bytes().to_owned()).collect()
+        let mut vec = values.map(|str_val| {
+            str_val.as_bytes().to_owned()
+        }).collect::<Vec<Vec<u8>>>();
+
+        // work around some weird bug where we keep getting an extra value that is an empty string
+        vec.pop();
+        vec
     }).unwrap_or(Vec::new())
 }
 

@@ -2,7 +2,7 @@ mod producer;
 
 pub use self::producer::ProducerBenchmark;
 
-use flo_client_lib::sync::connection::Connection;
+use flo_client_lib::sync::Connection;
 use flo_client_lib::codec::RawCodec;
 
 

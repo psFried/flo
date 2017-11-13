@@ -8,12 +8,12 @@ use futures::{Future, Stream};
 
 use event::{FloEventId, ActorId, VersionVector};
 use async::{AsyncConnection, tcp_connect_with};
-use async::ops::{ProduceErr, HandshakeError, Consume, ConsumeError};
+use async::ops::{ProduceErr, Consume, ConsumeError};
 use codec::EventCodec;
 use ::Event;
 
-pub use async::ErrorType;
-pub use async::ops::EventToProduce;
+pub use async::{ErrorType, CurrentStreamState};
+pub use async::ops::{EventToProduce, HandshakeError};
 
 
 
@@ -39,6 +39,30 @@ impl <D: Debug> From<AsyncConnection<D>> for SyncConnection<D> {
 }
 
 impl <D: Debug + 'static> SyncConnection<D> {
+
+    pub fn connect_from_str<N, C>(address: &str, client_name: N, codec: C, consume_batch_size: Option<u32>) -> Result<SyncConnection<D>, HandshakeError>
+            where N: Into<String>, C: EventCodec<EventData=D> + 'static {
+        REACTOR.with(|core| {
+            let mut core = core.borrow_mut();
+            let handle = core.handle();
+
+            ::std::net::TcpStream::connect(address).and_then(|std_stream| {
+                ::tokio_core::net::TcpStream::from_stream(std_stream, &handle)
+            }).map_err(|io_err| {
+                HandshakeError {
+                    message: "Failed to create TCP connection",
+                    error_type: io_err.into()
+                }
+            }).and_then(move |tokio_stream| {
+                let boxed_codec = Box::new(codec) as Box<EventCodec<EventData=D>>;
+                let conn = AsyncConnection::from_tcp_stream(client_name.into(), tokio_stream, boxed_codec);
+                let future = conn.connect_with(consume_batch_size);
+                core.run(future)
+            }).map(|async_connection| {
+                async_connection.into()
+            })
+        })
+    }
 
     pub fn connect<A, N, C>(address: A, client_name: N, codec: C, consume_batch_size: Option<u32>) -> Result<SyncConnection<D>, HandshakeError>
                     where A: Into<SocketAddr>, N: Into<String>, C: EventCodec<EventData=D> + 'static {
@@ -84,6 +108,10 @@ impl <D: Debug + 'static> SyncConnection<D> {
             consume: Some(consume),
             connection: None,
         }
+    }
+
+    pub fn current_stream(&self) -> Option<&CurrentStreamState> {
+        self.async_connection.as_ref().and_then(|conn| conn.current_stream())
     }
 
 }
