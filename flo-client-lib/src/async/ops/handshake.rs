@@ -1,5 +1,5 @@
 
-use std::fmt::Debug;
+use std::fmt::{self, Display, Debug};
 use std::io;
 
 use futures::{Future, Async, Poll};
@@ -99,5 +99,11 @@ impl From<io::Error> for HandshakeError {
             message: "IO Error during connection",
             error_type: io_err.into(),
         }
+    }
+}
+
+impl Display for HandshakeError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Error: '{}', caused by: {:?}", self.message, self.error_type)
     }
 }
