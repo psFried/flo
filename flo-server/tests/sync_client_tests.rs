@@ -8,8 +8,6 @@ use std::time::Duration;
 use std::net::{SocketAddrV4, Ipv4Addr};
 use std::thread;
 
-
-#[macro_use]
 mod test_utils;
 
 use test_utils::*;

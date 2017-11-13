@@ -43,41 +43,6 @@ pub fn get_server_port() -> (ServerProcessType, u16) {
     })
 }
 
-#[macro_export]
-macro_rules! integration_test {
-    ($d:ident, $p:ident, $s:ident, $t:block) => (
-        #[test]
-        #[allow(unused_variables, unused_mut)]
-        fn $d() {
-            init_logger();
-            let (process_type, port) = get_server_port();
-
-            let mut flo_proc: Option<FloServerProcess> = None;
-            if ServerProcessType::Child == process_type {
-                // if env variable is not defined, then we need to start the server process ourselves
-                let data_dir = tempdir::TempDir::new("flo-integration-test").unwrap();
-                flo_proc = Some(FloServerProcess::new(port, data_dir));
-                // To give the external process time to start
-                thread::sleep(Duration::from_millis(250));
-            }
-
-
-            let address: SocketAddr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), port));
-
-            let mut $s = TcpStream::connect(address).unwrap();
-            $s.set_read_timeout(Some(Duration::from_millis(10000))).unwrap();
-
-            let $p = port;
-
-            $t
-
-            if let Some(mut process) = flo_proc {
-                process.kill();
-            }
-        }
-    )
-}
-
 #[derive(Debug)]
 pub struct FloServerProcess {
     child_proc: Option<Child>,
