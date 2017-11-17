@@ -57,7 +57,8 @@ impl PersistentEvent {
         self.file_offset
     }
 
-    fn from_raw(id: FloEventId, mmap: MmapRef, start_offset: usize, data_len: usize) -> io::Result<PersistentEvent> {
+    // TODO: remove data_len field from PersistentEvent
+    fn from_raw(id: FloEventId, mmap: MmapRef, start_offset: usize, _data_len: usize) -> io::Result<PersistentEvent> {
         Ok(PersistentEvent {
             id: id,
             file_offset: start_offset,

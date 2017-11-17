@@ -149,7 +149,7 @@ impl PartitionImpl {
                 Ok(())
             }
             OpType::Tick => {
-                // TODO: expire old events
+                self.expire_old_events();
                 Ok(())
             }
         }
@@ -165,9 +165,14 @@ impl PartitionImpl {
         }
     }
 
-    fn drop_segments_through_index(&mut self, index: usize) {
-        info!("Dropping first {} segments", index + 1);
-        self.segments.drain(..index).for_each(|mut drop_segment| {
+    fn drop_segments_through_index(&mut self, segment_index: usize) {
+        info!("Dropping first {} segment(s)", segment_index + 1);
+        let PartitionImpl { ref mut segments, ref mut index, ref mut reader_refs, .. } = *self;
+
+        segments.drain(..(segment_index + 1)).for_each(|mut drop_segment| {
+            info!("Removing Segment: {:?} with highest_event counter: {}", drop_segment.segment_num, drop_segment.get_highest_event_counter());
+            reader_refs.remove_through(drop_segment.segment_num);
+            index.remove_through(drop_segment.get_highest_event_counter());
             drop_segment.delete_on_drop();
         });
     }

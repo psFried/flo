@@ -12,7 +12,7 @@ use memmap::Mmap;
 use new_engine::event_stream::partition::segment::PersistentEvent;
 use new_engine::event_stream::partition::SegmentNum;
 use new_engine::event_stream::partition::index::{PartitionIndex, IndexEntry};
-use event::FloEvent;
+use event::{FloEvent, EventCounter};
 use super::header::SegmentHeader;
 
 
@@ -76,7 +76,10 @@ struct SegmentDeleter(PathBuf);
 impl Drop for SegmentDeleter {
     fn drop(&mut self) {
         info!("About to delete segment file: {:?}", self.0);
-        unimplemented!()
+        let result = ::std::fs::remove_file(&self.0);
+        if let Err(err) = result {
+            error!("Error deleting segment file: {:?} - {:?}", self.0, err);
+        }
     }
 }
 
@@ -85,6 +88,7 @@ pub struct MmapAppender {
     dirty: bool,
     inner: MmapRef,
     file_path: PathBuf,
+    pub last_event_counter: EventCounter,
 }
 
 
@@ -98,7 +102,8 @@ impl MmapAppender {
         MmapAppender {
             dirty: false,
             inner: Arc::new(inner),
-            file_path
+            file_path,
+            last_event_counter: 0,
         }
     }
 
@@ -109,15 +114,18 @@ impl MmapAppender {
         // While we're at it, we'll initialize the index as well
         let header_len = SegmentHeader::get_repr_length();
         let file_len = mmap.len();
-        let appender = MmapAppender::new(mmap, file_len, file_path);
+        let mut appender = MmapAppender::new(mmap, file_len, file_path);
         let mut reader = appender.reader(header_len);
 
         let mut event_count = 0;
+        let mut highest_counter = 0;
         while let Some(Ok(event)) = reader.next() {
             let entry = IndexEntry::new(event.id().event_counter, segment_num, event.file_offset());
             index.append(entry);
             event_count += 1;
+            highest_counter = event.id().event_counter;
         }
+        appender.last_event_counter = highest_counter;
         let head = reader.current_offset;
         debug!("initialized appender to existing segment with {} events and total len: {}", event_count, head);
         // reset the head to the actual value, now that we know what it is
@@ -145,6 +153,7 @@ impl MmapAppender {
             PersistentEvent::write_unchecked(event, write_slice);
             self.inner.head.fetch_add(event_len, Ordering::SeqCst);
             self.dirty = true;
+            self.last_event_counter = event.id().event_counter;
 
             Ok(Some(start_offset))
         }
@@ -325,7 +334,7 @@ mod test {
             "/foo/bar".to_owned(),
             vec![1, 2, 3, 4, 5]);
 
-        let off_1 = subject.append(&input1).unwrap().expect("write returned none");
+        let _off_1 = subject.append(&input1).unwrap().expect("write returned none");
         let off_2 = subject.append(&input2).unwrap().expect("write returned none");
         let off_3 = subject.append(&input3).unwrap().expect("write returned none");
 
@@ -344,29 +353,18 @@ mod test {
         assert_eq!(input3, read_3.to_owned());
     }
 
-    fn assert_events_eq<L: FloEvent, R: FloEvent>(lhs: &L, rhs: &R) {
-        assert_eq!(lhs.id(), rhs.id());
-        assert_eq!(lhs.parent_id(), rhs.parent_id());
-        assert_eq!(lhs.timestamp(), rhs.timestamp());
-        assert_eq!(lhs.namespace(), rhs.namespace());
-        assert_eq!(lhs.data_len(), rhs.data_len());
-        assert_eq!(lhs.data(), rhs.data());
-    }
-
     fn assert_read_err<F: Fn(&mut [u8])>(expected_description: &str, modify_buffer_fun: F) {
         use std::error::Error;
 
         let mut subject = anon_mmap();
         let mut reader = subject.reader(0);
 
-        let mmap = Mmap::anonymous(1024, Protection::ReadWrite).unwrap();
         let input = OwnedFloEvent::new(
             FloEventId::new(3, 4),
             Some(FloEventId::new(3, 3)),
             time::from_millis_since_epoch(999),
             "/foo/bar".to_owned(),
             vec![1, 2, 3, 4, 5]);
-        let input_len = PersistentEvent::get_repr_length(&input);
 
         subject.append(&input).unwrap();
 
