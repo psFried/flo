@@ -58,6 +58,7 @@ pub enum OpType {
     Produce(ProduceOperation),
     Consume(ConsumeOperation),
     StopConsumer,
+    Tick,
 }
 
 
@@ -106,6 +107,14 @@ impl Operation {
             op_type: OpType::Produce(produce),
         };
         (op, rx)
+    }
+
+    pub fn tick() -> Operation {
+        Operation {
+            connection_id: 0,
+            client_message_recv_time: Instant::now(),
+            op_type: OpType::Tick,
+        }
     }
 }
 

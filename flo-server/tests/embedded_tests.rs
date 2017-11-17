@@ -41,8 +41,8 @@ fn integration_test<F>(test_name: &'static str, stream_opts: EventStreamOptions,
         storage_dir: tmp_dir.path().to_owned(),
         default_stream_options: stream_opts,
     };
-    let embedded_server = run_embedded_server(controller_options).expect("failed to run embedded server");
     let reactor = Core::new().expect("failed to create reactor");
+    let embedded_server = run_embedded_server(controller_options, reactor.remote()).expect("failed to run embedded server");
 
     fun(embedded_server, reactor);
 }
@@ -62,6 +62,50 @@ fn run_future<T: Debug, E: Debug, F: Future<Item=T, Error=E> + Debug>(reactor: &
         Err(Either::A(_)) => panic!("Error in timeout"),
         Err(Either::B((err, _))) => panic!("Error executing future: {:?}", err),
     }
+}
+
+#[test]
+fn oldest_events_are_dropped_from_beginning_of_stream_after_time_based_expiration() {
+    let retention_duration = chrono::Duration::milliseconds(300);
+    let segment_duration = chrono::Duration::milliseconds(100);
+    let options = EventStreamOptions {
+        event_retention: retention_duration,
+        max_segment_duration: segment_duration,
+        segment_max_size_bytes: 999999,
+        ..Default::default()
+    };
+    integration_test("drop oldest events by time", options, |server, mut reactor| {
+        let mut connection = server.connect_client::<String>("producer".to_owned(), codec(), reactor.handle());
+        connection = reactor.run(connection.connect()).expect("failed to connect producer");
+
+        let start_time = ::std::time::Instant::now();
+        while start_time.elapsed() < retention_duration.to_std().unwrap() {
+            let future = connection.produce_to(1, "/foo", None, String::new());
+            let (_, conn) = run_future(&mut reactor, future);
+            connection = conn;
+        }
+
+        let start_time = ::std::time::Instant::now();
+        let until_all_expired = (retention_duration + segment_duration).to_std().unwrap();
+        let mut first_event_id = FloEventId::new(1, 0);
+        let mut vv = VersionVector::new();
+        vv.set(first_event_id);
+
+        while start_time.elapsed() < until_all_expired {
+            let future = connection.consume("/*", &vv, Some(1), false).into_future();
+            let (maybe_event, stream) = run_future(&mut reactor, future);
+            connection = stream.into();
+            if let Some(event) = maybe_event {
+                assert!(event.id >= first_event_id);
+                first_event_id = event.id;
+            } else {
+                break;
+            }
+        }
+        let future = connection.consume("/*", &vv, Some(1), false).into_future();
+        let (maybe_event, _) = run_future(&mut reactor, future);
+        assert!(maybe_event.is_none(), "Expected events to all be gone, first event id was: {}", first_event_id);
+    });
 }
 
 #[test]

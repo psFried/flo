@@ -49,6 +49,14 @@ pub struct Segment {
 
 impl Segment {
 
+    pub fn is_expired(&self, now: Timestamp) -> bool {
+        now < self.segment_end_time
+    }
+
+    pub fn delete_on_drop(&mut self) {
+        info!("Segment: {:?} will delete on drop", self.segment_num);
+    }
+
     pub fn append<E: FloEvent>(&mut self, event: &E) -> AppendResult {
         if event.timestamp() > self.segment_end_time {
             return AppendResult::TimeOutOfRange;
@@ -67,6 +75,7 @@ impl Segment {
 
     pub fn range_iter(&self, start_offset: usize) -> SegmentReader {
         let start = ::std::cmp::max(start_offset, SegmentHeader::get_repr_length());
+        trace!("creating range iter starting at offset: {}", start);
         SegmentReader {
             segment_id: self.segment_num,
             reader: self.appender.reader(start)
@@ -87,7 +96,7 @@ impl Segment {
         let mmap = Mmap::open(&file, Protection::ReadWrite)?;
         let header = SegmentHeader::read(&mmap)?;
 
-        let mmap_appender = MmapAppender::init_existing(mmap.into_view_sync(), segment_num, index);
+        let mmap_appender = MmapAppender::init_existing(mmap, segment_num, index, file_path.to_owned());
         let current_position = mmap_appender.get_file_position();
 
         let segment = Segment {
@@ -106,7 +115,7 @@ impl Segment {
     pub fn init_new(dir_path: &Path, segment_num: SegmentNum, max_size: usize, end_time: Timestamp) -> io::Result<Segment> {
         let file_path = get_events_file(dir_path, segment_num);
         debug!("initializing new segment: {:?} at path: {:?}, max_size: {}, end_time: {:?}", segment_num, file_path, max_size, end_time);
-        let file = OpenOptions::new().read(true).write(true).create(true).open(file_path)?;
+        let file = OpenOptions::new().read(true).write(true).create(true).open(&file_path)?;
 
         // Pre-allocate the file, since we're going to use it for mmap, and extending the file after it's been mapped
         // requires ensuring there are no existing borrows of it in any other threads. Far simpler just to pre-allocate the
@@ -123,7 +132,7 @@ impl Segment {
         let start_position = SegmentHeader::get_repr_length();
 
         Ok(Segment {
-            appender: MmapAppender::new(mmap.into_view_sync(), start_position),
+            appender: MmapAppender::new(mmap, start_position, file_path),
             segment_file: file,
             segment_num: segment_num,
             current_length_bytes: start_position,
@@ -195,9 +204,10 @@ mod test {
                     .expect("failed to initialize segment");
 
             let result = subject.append(&event);
-            assert_eq!(AppendResult::Success(16), result);
+            assert_eq!(AppendResult::Success(SegmentHeader::get_repr_length()), result);
 
             let mut iter = subject.iter_from_start();
+
             let event_result = iter.next().expect("next returned None").expect("failed to read event");
 
             assert_events_eq(&event, &event_result);

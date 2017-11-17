@@ -53,7 +53,7 @@ fn run_new_engine(options: ServerOptions) -> io::Result<()> {
         },
     };
 
-    let engine_ref = start_controller(controller_options)?;
+    let engine_ref = start_controller(controller_options, event_loop_handles.next_handle())?;
 
     let server_port = options.port;
     let address: SocketAddr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), server_port));
