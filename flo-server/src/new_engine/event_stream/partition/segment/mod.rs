@@ -11,7 +11,7 @@ use memmap::{Mmap, Protection};
 use self::mmap::{MmapAppender};
 use new_engine::event_stream::partition::{get_events_file, SegmentNum};
 use new_engine::event_stream::partition::index::PartitionIndex;
-use event::{Timestamp, FloEvent, time};
+use event::{Timestamp, FloEvent, EventCounter, time};
 use self::mmap::{MmapReader};
 
 pub use self::persistent_event::PersistentEvent;
@@ -55,6 +55,11 @@ impl Segment {
 
     pub fn delete_on_drop(&mut self) {
         info!("Segment: {:?} will delete on drop", self.segment_num);
+        self.appender.delete_on_drop();
+    }
+
+    pub fn get_highest_event_counter(&self) -> EventCounter {
+        self.appender.last_event_counter
     }
 
     pub fn append<E: FloEvent>(&mut self, event: &E) -> AppendResult {
