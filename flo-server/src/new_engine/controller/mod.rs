@@ -4,6 +4,8 @@ use std::sync::Arc;
 use std::collections::HashMap;
 use std::io;
 
+use tokio_core::reactor::Remote;
+
 use new_engine::{EngineRef, system_stream_name};
 use new_engine::event_stream::{EventStreamRef,
                                EventStreamOptions,
@@ -26,7 +28,7 @@ pub struct FloController {
 }
 
 
-pub fn start_controller(options: ControllerOptions) -> io::Result<EngineRef> {
+pub fn start_controller(options: ControllerOptions, remote: Remote) -> io::Result<EngineRef> {
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
     use std::sync::atomic::AtomicUsize;
@@ -45,9 +47,9 @@ pub fn start_controller(options: ControllerOptions) -> io::Result<EngineRef> {
 
     let system_stream_dir = storage_dir.join(&default_stream_options.name);
     let event_stream_ref = if system_stream_dir.exists() {
-        init_existing_event_stream(system_stream_dir, default_stream_options, status_writer.reader())?
+        init_existing_event_stream(system_stream_dir, default_stream_options, status_writer.reader(), remote)?
     } else {
-        init_new_event_stream(system_stream_dir, default_stream_options, status_writer.reader())?
+        init_new_event_stream(system_stream_dir, default_stream_options, status_writer.reader(), remote)?
     };
 
     let mut streams = HashMap::with_capacity(1);

@@ -148,9 +148,29 @@ impl PartitionImpl {
                 self.consumer_manager.remove(connection_id);
                 Ok(())
             }
+            OpType::Tick => {
+                // TODO: expire old events
+                Ok(())
+            }
         }
     }
 
+    fn expire_old_events(&mut self) {
+        let now = time::now();
+        let expired_segment_index = self.segments.iter().enumerate().take_while(|&(_, ref segment)| {
+            segment.is_expired(now)
+        }).last().map(|(ref index, _)| *index);
+        if let Some(drop_through_index) = expired_segment_index {
+            self.drop_segments_through_index(drop_through_index);
+        }
+    }
+
+    fn drop_segments_through_index(&mut self, index: usize) {
+        info!("Dropping first {} segments", index + 1);
+        self.segments.drain(..index).for_each(|mut drop_segment| {
+            drop_segment.delete_on_drop();
+        });
+    }
 
     fn handle_produce(&mut self, produce: ProduceOperation) -> io::Result<()> {
         let ProduceOperation {client, op_id, events} = produce;

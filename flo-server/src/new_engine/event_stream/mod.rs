@@ -4,6 +4,8 @@ mod highest_counter;
 use std::path::{PathBuf, Path};
 use std::io;
 
+use tokio_core::reactor::Remote;
+use futures::{Sink, Async, AsyncSink, StartSend, Poll};
 use chrono::Duration;
 
 use event::ActorId;
@@ -34,10 +36,15 @@ impl Default for EventStreamOptions {
     }
 }
 
+impl EventStreamOptions {
+    pub fn get_tick_interval(&self) -> Duration {
+        self.max_segment_duration / 3
+    }
+}
 
 
 
-pub fn init_existing_event_stream(event_stream_storage_dir: PathBuf, options: EventStreamOptions, status_reader: AtomicBoolReader) -> Result<EventStreamRef, io::Error> {
+pub fn init_existing_event_stream(event_stream_storage_dir: PathBuf, options: EventStreamOptions, status_reader: AtomicBoolReader, remote: Remote) -> Result<EventStreamRef, io::Error> {
 
     debug!("Starting initialization of existing event stream with: {:?}", &options);
     let partition_numbers = determine_existing_partition_dirs(&event_stream_storage_dir)?;
@@ -53,13 +60,18 @@ pub fn init_existing_event_stream(event_stream_storage_dir: PathBuf, options: Ev
 
     partition_refs.sort_by_key(|part| part.partition_num());
 
-    Ok(EventStreamRef {
+    let tick_interval = options.get_tick_interval();
+    let event_stream = EventStreamRef {
         name: options.name,
         partitions: partition_refs,
-    })
+    };
+
+    start_tick_timer(remote, event_stream.clone(), tick_interval);
+
+    Ok(event_stream)
 }
 
-pub fn init_new_event_stream(event_stream_storage_dir: PathBuf, options: EventStreamOptions, status_reader: AtomicBoolReader) -> Result<EventStreamRef, io::Error> {
+pub fn init_new_event_stream(event_stream_storage_dir: PathBuf, options: EventStreamOptions, status_reader: AtomicBoolReader, remote: Remote) -> Result<EventStreamRef, io::Error> {
 
     debug!("Starting initialization of new event stream with: {:?}", &options);
     let partition_count = options.num_partitions;
@@ -75,13 +87,15 @@ pub fn init_new_event_stream(event_stream_storage_dir: PathBuf, options: EventSt
         partition_refs.push(partition_ref);
     }
 
+    let tick_interval = options.get_tick_interval();
     let EventStreamOptions{name, ..} = options;
     debug!("Finished initializing {} partitions for event stream: '{}'", partition_count, &name);
-
-    Ok(EventStreamRef{
+    let event_stream = EventStreamRef {
         name: name,
         partitions: partition_refs,
-    })
+    };
+    start_tick_timer(remote, event_stream.clone(), tick_interval);
+    Ok(event_stream)
 }
 
 
@@ -142,6 +156,43 @@ impl EventStreamRef {
     }
 }
 
+
+fn start_tick_timer(remote: Remote, event_stream: EventStreamRef, tick_interval: Duration) {
+    use tokio_core::reactor::Interval;
+    use futures::{Stream, Future};
+
+    remote.spawn(move |handle| {
+        let interval = Interval::new(tick_interval.to_std().unwrap(), handle).expect("Failed to create timer interval");
+        interval.map_err(|io_err| {
+            error!("Failed to fire timer: {:?}", io_err);
+        }).forward(TickTimerSink(event_stream))
+            .map(|_| ())
+    });
+}
+
+pub struct TickTimerSink(EventStreamRef);
+
+impl Sink for TickTimerSink {
+    type SinkItem = ();
+    type SinkError = ();
+
+    fn start_send(&mut self, _item: Self::SinkItem) -> StartSend<Self::SinkItem, Self::SinkError> {
+        for partition in self.0.partitions.iter_mut() {
+            partition.tick().map_err(|io_err| {
+                error!("Failed to send Tick operation to Partition: {}, {:?}", partition.partition_num(), io_err);
+            })?;
+        }
+        Ok(AsyncSink::Ready)
+    }
+
+    fn poll_complete(&mut self) -> Poll<(), Self::SinkError> {
+        Ok(Async::Ready(()))
+    }
+
+    fn close(&mut self) -> Poll<(), Self::SinkError> {
+        Ok(Async::Ready(()))
+    }
+}
 
 
 

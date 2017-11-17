@@ -1,9 +1,9 @@
 use std::io;
 
-use memmap::MmapViewSync;
 use byteorder::{ByteOrder, BigEndian};
 
 use event::{FloEvent, OwnedFloEvent, FloEventId, Timestamp, time};
+use new_engine::event_stream::partition::segment::mmap::{MmapRef};
 
 
 
@@ -11,7 +11,7 @@ use event::{FloEvent, OwnedFloEvent, FloEventId, Timestamp, time};
 pub struct PersistentEvent {
     id: FloEventId,
     file_offset: usize,
-    raw_data: MmapViewSync,
+    raw_data: MmapRef,
 }
 
 
@@ -38,26 +38,18 @@ impl PersistentEvent {
         PersistentEvent::get_repr_length(self) as usize
     }
 
-    pub unsafe fn write<E: FloEvent>(event: &E,
-                                     start_offset: usize,
-                                     mmap: &mut MmapViewSync) -> io::Result<Self> {
+    pub unsafe fn write_unchecked<E: FloEvent>(event: &E, buffer: &mut [u8]) {
         let len = PersistentEvent::get_repr_length(event);
-
-        {
-            let mmap_buf = mmap.as_mut_slice();
-            write_event_unchecked(&mut mmap_buf[start_offset..], event, len);
-        }
-
-        PersistentEvent::from_raw(*event.id(), mmap, start_offset, len as usize)
+        write_event_unchecked(buffer, event, len);
     }
 
-    pub fn read(mmap: &MmapViewSync, start_offset: usize) -> io::Result<Self> {
-        let buffer = unsafe {
-            mmap.as_slice()
+    pub fn read(mmap: &MmapRef, start_offset: usize) -> io::Result<Self> {
+        let result = {
+            let buffer = mmap.get_read_slice(start_offset);
+            PersistentEvent::validate(buffer)
         };
-        let range = &buffer[start_offset..];
-        PersistentEvent::validate(range).and_then(|(id, total_size)| {
-            PersistentEvent::from_raw( id, mmap, start_offset, total_size as usize)
+        result.and_then(|(id, total_size)| {
+            PersistentEvent::from_raw( id, mmap.clone(), start_offset, total_size as usize)
         })
     }
 
@@ -65,16 +57,11 @@ impl PersistentEvent {
         self.file_offset
     }
 
-    fn from_raw(id: FloEventId, mmap: &MmapViewSync, start_offset: usize, data_len: usize) -> io::Result<PersistentEvent> {
-        let mut view = unsafe {
-            mmap.clone()
-        };
-        view.restrict(start_offset, data_len)?;
-
+    fn from_raw(id: FloEventId, mmap: MmapRef, start_offset: usize, data_len: usize) -> io::Result<PersistentEvent> {
         Ok(PersistentEvent {
             id: id,
             file_offset: start_offset,
-            raw_data: view,
+            raw_data: mmap,
         })
     }
 
@@ -114,9 +101,7 @@ impl PersistentEvent {
     }
 
     fn as_buf(&self, start: usize, len: usize) -> &[u8] {
-        unsafe {
-            &self.raw_data.as_slice()[start..(start + len)]
-        }
+        &self.raw_data.get_read_slice(self.file_offset + start)[..len]
     }
 
     fn namespace_len(&self) -> u32 {
@@ -212,120 +197,4 @@ fn write_event_unchecked<E: FloEvent>(buffer: &mut [u8], event: &E, total_size: 
             .finish();
 }
 
-#[cfg(test)]
-mod test {
-    use super::*;
-    use memmap::{Mmap, Protection};
-    use event::{OwnedFloEvent, FloEvent, FloEventId, time};
 
-    #[test]
-    fn write_and_read_an_event_with_zero_lengh_namespace_and_data() {
-        let mut mmap = Mmap::anonymous(1024, Protection::ReadWrite).unwrap().into_view_sync();
-        let input = OwnedFloEvent::new(
-            FloEventId::new(3, 4),
-            Some(FloEventId::new(3, 3)),
-            time::from_millis_since_epoch(999),
-            "".to_owned(),
-            Vec::new());
-
-        unsafe {
-            let result = PersistentEvent::write(&input, 0, &mut mmap);
-            let persisted = result.expect("failed to write event");
-            assert_events_eq(&input, &persisted);
-        }
-    }
-
-    #[test]
-    fn read_event_returns_error_when_namespace_length_is_too_large() {
-        assert_read_err("namespace length too large", |buf| {
-            buf[41] = 56;
-        })
-    }
-
-    #[test]
-    fn read_event_returns_error_when_namespace_length_is_too_small() {
-        assert_read_err("mismatched lengths", |buf| {
-            buf[43] = 7; //make the namespace length 7 instead of 8
-        })
-    }
-
-    #[test]
-    fn read_event_returns_error_when_data_length_is_too_large() {
-        assert_read_err("mismatched lengths", |buf| {
-            buf[55] = 6; //make the data length 6 instead of 5
-        })
-    }
-
-    #[test]
-    fn read_event_returns_error_when_data_length_is_too_small() {
-        assert_read_err("mismatched lengths", |buf| {
-            buf[55] = 4; //make the data length 4 instead of 5
-        })
-    }
-
-
-    #[test]
-    fn write_an_event_and_read_it_back() {
-        use memmap::{Mmap, Protection};
-
-        let mut mmap = Mmap::anonymous(1024, Protection::ReadWrite).unwrap().into_view_sync();
-
-        let input = OwnedFloEvent::new(
-            FloEventId::new(3, 4),
-            Some(FloEventId::new(3, 3)),
-            time::from_millis_since_epoch(999),
-            "/foo/bar".to_owned(),
-            vec![1, 2, 3, 4, 5]);
-
-        unsafe {
-            let result = PersistentEvent::write( &input, 0, &mut mmap);
-            let persisted = result.expect("failed to write event");
-            assert_events_eq(&input, &persisted);
-        }
-
-        let len = PersistentEvent::get_repr_length(&input);
-        let result = PersistentEvent::read(&mmap, 0);
-        let persisted = result.expect("failed to read event");
-        assert_events_eq(&input, &persisted);
-        assert_eq!(len, PersistentEvent::get_repr_length(&persisted));
-    }
-
-    fn assert_events_eq<L: FloEvent, R: FloEvent>(lhs: &L, rhs: &R) {
-        assert_eq!(lhs.id(), rhs.id());
-        assert_eq!(lhs.parent_id(), rhs.parent_id());
-        assert_eq!(lhs.timestamp(), rhs.timestamp());
-        assert_eq!(lhs.namespace(), rhs.namespace());
-        assert_eq!(lhs.data_len(), rhs.data_len());
-        assert_eq!(lhs.data(), rhs.data());
-    }
-
-    fn assert_read_err<F: Fn(&mut [u8])>(expected_description: &str, modify_buffer_fun: F) {
-        use std::error::Error;
-        use memmap::{Mmap, Protection};
-
-        let mut mmap = Mmap::anonymous(1024, Protection::ReadWrite).unwrap().into_view_sync();
-        let input = OwnedFloEvent::new(
-            FloEventId::new(3, 4),
-            Some(FloEventId::new(3, 3)),
-            time::from_millis_since_epoch(999),
-            "/foo/bar".to_owned(),
-            vec![1, 2, 3, 4, 5]);
-        let input_len = PersistentEvent::get_repr_length(&input);
-
-        unsafe {
-            let result = PersistentEvent::write(&input, 0, &mut mmap);
-            let event = result.expect("failed to write event");
-            let result_len = PersistentEvent::get_repr_length(&event);
-            assert_eq!(input_len, result_len);
-
-            // modify the buffer
-            modify_buffer_fun(mmap.as_mut_slice());
-        }
-
-
-        let err_result = PersistentEvent::read(&mmap, 0);
-        assert!(err_result.is_err());
-        let io_err = err_result.unwrap_err();
-        assert_eq!(expected_description, io_err.description());
-    }
-}

@@ -5,7 +5,7 @@
 use std::fmt::Debug;
 use std::io;
 
-use tokio_core::reactor::Handle;
+use tokio_core::reactor::{Handle, Remote};
 use futures::Stream;
 
 use flo_client_lib::async::{AsyncConnection, MessageReceiver, MessageSender};
@@ -45,8 +45,8 @@ impl EmbeddedFloServer {
 }
 
 
-pub fn run_embedded_server(options: ControllerOptions) -> io::Result<EmbeddedFloServer> {
-    start_controller(options).map(|engine_ref| {
+pub fn run_embedded_server(options: ControllerOptions, remote: Remote) -> io::Result<EmbeddedFloServer> {
+    start_controller(options, remote).map(|engine_ref| {
         EmbeddedFloServer {
             engine_ref: engine_ref,
         }
