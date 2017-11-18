@@ -66,11 +66,9 @@ fn result_from_response<D: Debug>(response: ProtocolMessage, mut connection: Asy
         }
         other @ _ => {
             // bad, bad, not good
-            let err_msg = format!("Received unexpected message, expected: StreamStatus message, got: {:?}", other);
-            error!("{}", err_msg);
             Err(HandshakeError {
                 message: "Unexpected message from server",
-                error_type: ErrorType::Io(io::Error::new(io::ErrorKind::InvalidData, err_msg))
+                error_type: ErrorType::unexpected_message("StreamStatus", other)
             })
         }
     }

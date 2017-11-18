@@ -65,6 +65,43 @@ fn run_future<T: Debug, E: Debug, F: Future<Item=T, Error=E> + Debug>(reactor: &
 }
 
 #[test]
+fn consumer_stops_and_restarts_consuming() {
+    integration_test("stop_and_restart_consuming", default_test_options(), |server, mut reactor| {
+        let mut connection = server.connect_client::<String>("restart_consumer".to_owned(), codec(), reactor.handle());
+        connection = reactor.run(connection.connect()).expect("failed to connect consumer");
+
+        for _ in 0..5 {
+            let prod = connection.produce_to(1, "/test", None, "some data".to_owned());
+            let (_, c) = run_future(&mut reactor, prod);
+            connection = c;
+        }
+
+        let mut vv = VersionVector::new();
+        vv.set(FloEventId::new(1, 0));
+
+        // start consuming without a limit and without stopping at the end of the stream
+        let consumer = connection.consume("/test", &vv, None, true);
+
+        // read one event from the stream and then have the consumer stop, returning the connection for re-use
+        let future = consumer.into_future()
+                .map_err(|err| err.0.error)
+                .and_then(|(_, consumer)| {
+                    consumer.stop()
+                });
+        let connection = reactor.run(future).expect("failed to run first consume");
+
+        // now expect that the connection can be reused
+        let consumer = connection.consume("/test", &vv, None, true);
+        let next_consume = consumer.into_future();
+        let (maybe_event, _) = reactor.run(next_consume).expect("failed to run second consume");
+        let event = maybe_event.expect("next event was None");
+
+        // Assert that we get the first event again
+        assert_eq!(FloEventId::new(1, 1), event.id);
+    });
+}
+
+#[test]
 fn oldest_events_are_dropped_from_beginning_of_stream_after_time_based_expiration() {
     let retention_duration = chrono::Duration::milliseconds(300);
     let segment_duration = chrono::Duration::milliseconds(100);
