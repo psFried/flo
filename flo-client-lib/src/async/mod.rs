@@ -163,6 +163,19 @@ pub enum ErrorType {
     Server(ErrorMessage)
 }
 
+impl ErrorType {
+    pub fn unexpected_message(expected: &'static str, actual: ProtocolMessage) -> ErrorType {
+        let msg = format!("Unexpected message: {:?}, expected: {}", actual, expected);
+        io::Error::new(io::ErrorKind::InvalidData, msg).into()
+    }
+}
+
+impl From<ErrorMessage> for ErrorType {
+    fn from(message: ErrorMessage) -> Self {
+        ErrorType::Server(message)
+    }
+}
+
 impl From<io::Error> for ErrorType {
     fn from(io_err: io::Error) -> Self {
         ErrorType::Io(io_err)

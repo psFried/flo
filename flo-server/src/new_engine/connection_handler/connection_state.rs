@@ -45,7 +45,10 @@ impl ConnectionState {
             debug!("Using consume batch size of {} for connection_id: {}", batch_size, self.connection_id);
             self.consume_batch_size = batch_size;
         }
+        self.send_stream_status(op_id)
+    }
 
+    pub fn send_stream_status(&mut self, op_id: u32) -> ConnectionHandlerResult {
         let status = create_stream_status(op_id, &self.event_stream);
         self.send_to_client(ProtocolMessage::StreamStatus(status)).map_err(|err| {
             format!("Error sending message to client: {:?}", err)

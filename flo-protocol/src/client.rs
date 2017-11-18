@@ -331,7 +331,7 @@ pub enum ProtocolMessage {
     /// send by the server to a client in response to a StartConsuming message to indicate the start of a series of events
     CursorCreated(CursorInfo),
     /// sent by a client to a server to tell the server to stop sending events. This is required in order to reuse the connection for multiple queries
-    StopConsuming,
+    StopConsuming(u32),
     /// Sent by the client to set the batch size to use for consuming. It is an error to send this message while consuming.
     SetBatchSize(u32),
     /// Sent by the client to tell the server that it is ready for the next batch
@@ -672,7 +672,13 @@ named!{parse_set_batch_size<ProtocolMessage>, chain!(
 
 named!{parse_next_batch<ProtocolMessage>, map!(tag!(&[NEXT_BATCH]), |_| {ProtocolMessage::NextBatch})}
 named!{parse_end_of_batch<ProtocolMessage>, map!(tag!(&[END_OF_BATCH]), |_| {ProtocolMessage::EndOfBatch})}
-named!{parse_stop_consuming<ProtocolMessage>, map!(tag!(&[headers::STOP_CONSUMING]), |_| {ProtocolMessage::StopConsuming})}
+named!{parse_stop_consuming<ProtocolMessage>, chain!(
+    _tag: tag!(&[STOP_CONSUMING]) ~
+    op_id: be_u32,
+    || {
+        ProtocolMessage::StopConsuming(op_id)
+    }
+)}
 
 named!{parse_cursor_created<ProtocolMessage>, chain!(
     _tag: tag!(&[headers::CURSOR_CREATED]) ~
@@ -846,8 +852,11 @@ impl ProtocolMessage {
             ProtocolMessage::AwaitingEvents => {
                 Serializer::new(buf).write_u8(AWAITING_EVENTS).finish()
             }
-            ProtocolMessage::StopConsuming => {
-                Serializer::new(buf).write_u8(headers::STOP_CONSUMING).finish()
+            ProtocolMessage::StopConsuming(op_id) => {
+                Serializer::new(buf)
+                        .write_u8(headers::STOP_CONSUMING)
+                        .write_u32(op_id)
+                        .finish()
             }
             ProtocolMessage::ProduceEvent(ref header) => {
                 serialize_new_produce_header(header, buf)
@@ -937,6 +946,7 @@ impl ProtocolMessage {
             ProtocolMessage::AckEvent(ref ack) => ack.op_id,
             ProtocolMessage::StreamStatus(ref status) => status.op_id,
             ProtocolMessage::SetEventStream(ref set) => set.op_id,
+            ProtocolMessage::StopConsuming(ref op_id) => *op_id,
             _ => 0
         }
     }
@@ -1086,7 +1096,7 @@ mod test {
 
     #[test]
     fn stop_consuming_is_serialized_and_parsed() {
-        test_serialize_then_deserialize(&ProtocolMessage::StopConsuming);
+        test_serialize_then_deserialize(&ProtocolMessage::StopConsuming(345));
     }
 
     #[test]

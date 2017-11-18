@@ -41,7 +41,7 @@ impl ConsumerConnectionState {
     }
 
     pub fn shutdown(&mut self, connection: &mut ConnectionState) {
-        if let Some(ref mut consumer) = self.consumer_ref {
+        if let Some(ref mut consumer) = self.consumer_ref.take() {
             // tell the active consumer to stop sending events
             consumer.status_setter.set(ConsumerStatus::Stop);
 
@@ -54,6 +54,11 @@ impl ConsumerConnectionState {
                 }
             }
         }
+    }
+
+    pub fn stop_consuming(&mut self, op_id: u32, connection: &mut ConnectionState) -> ConnectionHandlerResult {
+        self.shutdown(connection);
+        connection.send_stream_status(op_id)
     }
 
     pub fn requires_poll_complete(&self) -> bool {

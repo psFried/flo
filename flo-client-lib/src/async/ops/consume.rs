@@ -7,7 +7,7 @@ use futures::{Future, Async, Poll, Stream};
 use event::VersionVector;
 use protocol::{ProtocolMessage, NewConsumerStart, CONSUME_UNLIMITED, RecvEvent};
 use async::{AsyncConnection, ErrorType};
-use async::ops::{SendMessage, SendError, AwaitResponse, AwaitResponseError};
+use async::ops::{SendMessage, SendError, AwaitResponse, AwaitResponseError, RequestResponse};
 use ::Event;
 
 
@@ -47,6 +47,10 @@ impl <D: Debug> Consume<D> {
 
     pub fn get_events_remaining(&self) -> Option<u64> {
         self.total_events_remaining
+    }
+
+    pub fn stop(self) -> StopConsuming<D> {
+        StopConsuming::new(self.into())
     }
 
     fn decrement_events_remaining(&mut self) {
@@ -303,5 +307,45 @@ impl <D: Debug> EventReceiver<D> {
 impl <D: Debug> Into<AsyncConnection<D>> for EventReceiver<D> {
     fn into(mut self) -> AsyncConnection<D> {
         self.0.take().expect("EventReceiver has already been completed")
+    }
+}
+
+
+pub struct StopConsuming<D: Debug>(RequestResponse<D>);
+
+impl <D: Debug> StopConsuming<D> {
+    pub fn new(mut connection: AsyncConnection<D>) -> StopConsuming<D> {
+        let op_id = connection.next_op_id();
+        let request_response = RequestResponse::new(connection, ProtocolMessage::StopConsuming(op_id));
+        StopConsuming(request_response)
+    }
+}
+
+impl <D: Debug> Future for StopConsuming<D> {
+    type Item = AsyncConnection<D>;
+    type Error = ErrorType;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        let poll_result = self.0.poll().map_err(|rr_err| {
+            error!("Error stopping consumer: {:?}, connection will be closed", rr_err);
+            rr_err.error
+        });
+        let (response, mut connection) = try_ready!(poll_result);
+        match response {
+            ProtocolMessage::StreamStatus(status) => {
+                connection.inner.current_stream = Some(status.into());
+                debug!("Successfully stopped consuming, clearing: {} messages from received_message_buffer", connection.inner.received_message_buffer.len());
+                connection.inner.received_message_buffer.clear();
+                Ok(Async::Ready(connection))
+            }
+            ProtocolMessage::Error(err_message) => {
+                error!("Received error response to StopConsuming: {:?}, connection will be closed", err_message);
+                Err(err_message.into())
+            }
+            other @ _ => {
+                error!("received unexpected message in response to StopConsuming: {:?}, connection will be closed", other);
+                Err(ErrorType::unexpected_message("StreamStatus", other))
+            }
+        }
     }
 }

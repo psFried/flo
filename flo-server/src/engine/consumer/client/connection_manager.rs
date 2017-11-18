@@ -49,7 +49,7 @@ impl <S: Sender<ProtocolMessage> + 'static> ClientConnection<S> {
             &ProtocolMessage::StartConsuming(ref start) => {
                 self.start_consuming(start, context)
             }
-            &ProtocolMessage::StopConsuming => {
+            &ProtocolMessage::StopConsuming(_) => {
                 self.state.stop_consuming()
             }
             &ProtocolMessage::AckEvent(ref ack) => {
