@@ -111,6 +111,16 @@ impl PersistentEvent {
     }
 }
 
+impl PartialEq for PersistentEvent {
+    fn eq(&self, other: &PersistentEvent) -> bool {
+        self.id() == other.id() &&
+                self.parent_id() == other.parent_id() &&
+                self.namespace() == other.namespace() &&
+                self.timestamp() == other.timestamp() &&
+                self.data() == other.data()
+    }
+}
+
 impl FloEvent for PersistentEvent {
     fn id(&self) -> &FloEventId {
         &self.id

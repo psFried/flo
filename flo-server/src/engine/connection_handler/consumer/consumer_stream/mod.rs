@@ -6,9 +6,9 @@ use std::io;
 
 use futures::{Stream, Poll, Async};
 
-use engine::ConnectionId;
+use engine::{ConnectionId, SendProtocolMessage};
 use engine::event_stream::partition::{PartitionReader, PersistentEvent};
-use protocol::{ProtocolMessage, RecvEvent};
+use protocol::{ProtocolMessage};
 
 pub use self::notifier::{ConsumerTaskSetter};
 pub use self::status_check::{ConsumerStatus, ConsumerStatusChecker, ConsumerStatusSetter, create_status_channel};
@@ -66,7 +66,7 @@ impl Consumer {
         self.total_events_remaining.map(|n| n == 0).unwrap_or(false)
     }
 
-    fn await_more_events(&mut self) -> Poll<Option<ProtocolMessage<OwnedFloEvent>>, ConsumerError> {
+    fn await_more_events(&mut self) -> Poll<Option<SendProtocolMessage>, ConsumerError> {
         trace!("Awaiting more events for connection_id: {}", self.connection_id);
         self.task_setter.await_more_events();
         if self.await_new_events_sent {
@@ -78,7 +78,7 @@ impl Consumer {
         }
     }
 
-    fn send_event(&mut self, event: PersistentEvent) -> Poll<Option<ProtocolMessage<OwnedFloEvent>>, ConsumerError> {
+    fn send_event(&mut self, event: PersistentEvent) -> Poll<Option<SendProtocolMessage>, ConsumerError> {
         use event::FloEvent;
 
         // decrement total count and batch remaining. We've already checked to ensure that both counts are > 0
@@ -96,14 +96,13 @@ impl Consumer {
             self.status_checker.await_status_change();
         }
 
-        // TODO: Allow ProtocolMessage to work with PersistentEvents to get rid of this copy
-        let message = ProtocolMessage::ReceiveEvent(RecvEvent::Owned(event.to_owned()));
+        let message = ProtocolMessage::ReceiveEvent(event);
 
         // return the event, which will get forwarded to the client Sink
         Ok(Async::Ready(Some(message)))
     }
 
-    fn read_err(&mut self, err: io::Error) -> Poll<Option<ProtocolMessage<OwnedFloEvent>>, ConsumerError> {
+    fn read_err(&mut self, err: io::Error) -> Poll<Option<SendProtocolMessage>, ConsumerError> {
         error!("Read error for consumer: connection_id: {}, op_id: {}, err: {:?}", self.connection_id, self.op_id, err);
 
         // set the total remaining to 0 to make sure that all future poll calls will return None
@@ -155,7 +154,7 @@ impl Consumer {
         }
     }
 
-    fn next_matching_result(&mut self) -> Poll<Option<ProtocolMessage<OwnedFloEvent>>, ConsumerError> {
+    fn next_matching_result(&mut self) -> Poll<Option<SendProtocolMessage>, ConsumerError> {
         let result = self.readers.next_matching();
         match result {
             None => self.await_more_events(),
@@ -173,7 +172,7 @@ enum StreamStatus {
 
 
 impl Stream for Consumer {
-    type Item = ProtocolMessage<OwnedFloEvent>;
+    type Item = SendProtocolMessage;
     type Error = ConsumerError;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
@@ -197,7 +196,7 @@ use futures::sync::mpsc::SendError;
 
 #[derive(Debug)]
 pub enum ConsumerError {
-    Send(SendError<ProtocolMessage<OwnedFloEvent>>),
+    Send(SendError<SendProtocolMessage>),
     Read(io::Error)
 }
 
@@ -207,8 +206,8 @@ impl From<io::Error> for ConsumerError {
     }
 }
 
-impl From<SendError<ProtocolMessage<OwnedFloEvent>>> for ConsumerError {
-    fn from(err: SendError<ProtocolMessage<OwnedFloEvent>>) -> Self {
+impl From<SendError<SendProtocolMessage>> for ConsumerError {
+    fn from(err: SendError<SendProtocolMessage>) -> Self {
         ConsumerError::Send(err)
     }
 }

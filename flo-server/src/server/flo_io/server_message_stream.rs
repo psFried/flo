@@ -8,21 +8,22 @@ use futures::{Future, Poll};
 use tokio_core::io::WriteHalf;
 use tokio_core::net::TcpStream;
 
-use engine::ConnectionId;
-use protocol::{ProtocolMessage, MessageWriter};
+use engine::{ConnectionId, SendProtocolMessage};
+use engine::event_stream::partition::PersistentEvent;
+use protocol::MessageWriter;
 
 #[allow(deprecated)]
 pub type ServerWriteStream = WriteHalf<TcpStream>;
 
 pub struct ServerMessageStream {
     connection_id: ConnectionId,
-    server_receiver: UnboundedReceiver<ProtocolMessage>,
-    current_message: Option<MessageWriter<'static>>,
+    server_receiver: UnboundedReceiver<SendProtocolMessage>,
+    current_message: Option<MessageWriter<PersistentEvent>>,
     tcp_stream: ServerWriteStream,
 }
 
 impl ServerMessageStream {
-    pub fn new(connection_id: ConnectionId, server_rx: UnboundedReceiver<ProtocolMessage>, tcp_stream: ServerWriteStream) -> ServerMessageStream {
+    pub fn new(connection_id: ConnectionId, server_rx: UnboundedReceiver<SendProtocolMessage>, tcp_stream: ServerWriteStream) -> ServerMessageStream {
         ServerMessageStream {
             connection_id: connection_id,
             server_receiver: server_rx,

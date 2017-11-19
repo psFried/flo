@@ -3,15 +3,16 @@ use std::io::{self, Read};
 use futures::{Poll, Async};
 use futures::stream::Stream;
 
-use engine::ConnectionId;
-use protocol::{MessageStream, ProtocolMessage};
+use event::OwnedFloEvent;
+use engine::{ConnectionId, ReceivedProtocolMessage};
+use protocol::MessageStream;
 
 
 /// New implementation, that just provides a `Stream` of `ProtocolMessage`s.
 /// Theres a lot of duplicated code here, at the moment, until `ClientMessageStream` is removed
 pub struct ProtocolMessageStream<R: Read> {
     connection_id: ConnectionId,
-    message_reader: MessageStream<R>,
+    message_reader: MessageStream<R, OwnedFloEvent>,
     connected: bool
 }
 
@@ -26,7 +27,7 @@ impl <R: Read> ProtocolMessageStream<R> {
 }
 
 impl <R: Read> Stream for ProtocolMessageStream<R> {
-    type Item = ProtocolMessage;
+    type Item = ReceivedProtocolMessage;
     type Error = io::Error;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {

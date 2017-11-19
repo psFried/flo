@@ -14,8 +14,6 @@ use nom::{be_u64, be_u32, be_u16};
 use event::{time, OwnedFloEvent, FloEvent, FloEventId, ActorId, EventCounter, Timestamp};
 use serializer::Serializer;
 use std::net::SocketAddr;
-use std::fmt::Write;
-use std::str::FromStr;
 
 pub mod headers {
     pub const CLIENT_AUTH: u8 = 1;
@@ -254,10 +252,6 @@ pub enum ProtocolMessage<E: FloEvent> {
     ReceiveEvent(E),
     /// Sent from the server to client to acknowledge that an event was persisted successfully.
     AckEvent(EventAck),
-    /// Sent by a client to set it's current position in the event stream
-    UpdateMarker(FloEventId),
-    /// sent by a client to start reading events from the stream
-    StartConsuming(ConsumerStart),
     /// New message sent by a client to start reading events from the stream
     NewStartConsuming(NewConsumerStart),
     /// send by the server to a client in response to a StartConsuming message to indicate the start of a series of events
@@ -275,17 +269,6 @@ pub enum ProtocolMessage<E: FloEvent> {
     /// continue to send events as more come in, but this just lets the client know that it may be some time before more
     /// events are available. This message will only be sent at most once to a given consumer.
     AwaitingEvents,
-    /// Sent between flo servers to announce their presence. Essentially makes a claim that the given server represents
-    /// the given `ActorId` and provides whatever information the actor has about the current state of the cluster
-    PeerAnnounce(ClusterState),
-    /// Sent between flo servers to provide the version vector and cluster state of the peer
-    PeerUpdate(ClusterState),
-    /// This is just a bit of speculative engineering, honestly. Just don't even bother using it.
-    ClientAuth {
-        namespace: String,
-        username: String,
-        password: String,
-    },
     /// Represents an error response to any other message
     Error(ErrorMessage),
 }
@@ -295,15 +278,6 @@ named!{pub parse_str<String>,
         length_data!(be_u16),
         |res| {
             ::std::str::from_utf8(res).map(|val| val.to_owned())
-        }
-    )
-}
-
-named!{parse_string_slice<&str>,
-    map_res!(
-        length_data!(be_u16),
-        |res| {
-            ::std::str::from_utf8(res)
         }
     )
 }
@@ -336,22 +310,6 @@ named!{parse_event_stream_status<ProtocolMessage<OwnedFloEvent>>,
                 name: name,
                 partitions: partitions,
             })
-        }
-    )
-}
-
-named!{pub parse_auth<ProtocolMessage<OwnedFloEvent>>,
-    chain!(
-        _tag: tag!(&[CLIENT_AUTH]) ~
-        namespace: parse_str ~
-        username: parse_str ~
-        password: parse_str,
-        || {
-            ProtocolMessage::ClientAuth {
-                namespace: namespace,
-                username: username,
-                password: password,
-            }
         }
     )
 }
@@ -447,35 +405,6 @@ named!{parse_event_ack<ProtocolMessage<OwnedFloEvent>>,
     )
 }
 
-named!{parse_update_marker<ProtocolMessage<OwnedFloEvent>>,
-    chain!(
-        _tag: tag!(&[UPDATE_MARKER]) ~
-        counter: be_u64 ~
-        actor: be_u16,
-        || {
-            ProtocolMessage::UpdateMarker(
-                FloEventId::new(actor, counter)
-            )
-        }
-    )
-}
-
-named!{parse_start_consuming<ProtocolMessage<OwnedFloEvent>>,
-    chain!(
-        _tag: tag!(&[START_CONSUMING]) ~
-        op_id: be_u32 ~
-        namespace: parse_str ~
-        count: be_u64,
-        || {
-            ProtocolMessage::StartConsuming(ConsumerStart {
-                op_id: op_id,
-                namespace: namespace,
-                max_events: count,
-            })
-        }
-    )
-}
-
 named!{parse_new_start_consuming<ProtocolMessage<OwnedFloEvent>>,
     chain!(
         _tag: tag!(&[NEW_START_CONSUMING]) ~
@@ -508,71 +437,10 @@ named!{parse_set_event_stream<ProtocolMessage<OwnedFloEvent>>,
     )
 }
 
-named!{parse_cluster_state<ClusterState>,
-    chain!(
-        actor_id: be_u16 ~
-        actor_port: be_u16 ~
-        version_vec: parse_version_vec ~
-        members: length_count!(be_u16, parse_cluster_member_status),
-        || {
-            ClusterState {
-                actor_id: actor_id,
-                actor_port: actor_port,
-                version_vector: version_vec,
-                other_members: members,
-            }
-        }
-    )
-}
-
-named!{parse_socket_addr<SocketAddr>, map_res!(parse_string_slice, to_socket_addr) }
-
-fn to_socket_addr(input: &str) -> Result<SocketAddr, ::std::net::AddrParseError> {
-    SocketAddr::from_str(input)
-}
-
-fn to_bool(byte_slice: &[u8]) -> bool {
-    byte_slice == &[1u8]
-}
-
-named!{parse_cluster_member_status<ClusterMember>,
-    chain!(
-        actor_id: be_u16 ~
-        address: parse_socket_addr ~
-        connected: map!(take!(1), to_bool),
-        || {
-            ClusterMember {
-                addr: address,
-                actor_id: actor_id,
-                connected: connected,
-            }
-        }
-    )
-}
-
-named!{parse_peer_announce<ProtocolMessage<OwnedFloEvent>>,
-    chain!(
-        _tag: tag!(&[PEER_ANNOUNCE]) ~
-        state: parse_cluster_state,
-        || {
-            ProtocolMessage::PeerAnnounce(state)
-        }
-    )
-}
-
 named!{parse_version_vec<Vec<FloEventId>>,
     length_count!(be_u16, parse_zeroable_event_id)
 }
 
-named!{parse_peer_update<ProtocolMessage<OwnedFloEvent>>,
-    chain!(
-        _tag: tag!(&[PEER_UPDATE]) ~
-        state: parse_cluster_state,
-        || {
-            ProtocolMessage::PeerUpdate(state)
-        }
-    )
-}
 
 named!{parse_error_message<ProtocolMessage<OwnedFloEvent>>,
     chain!(
@@ -645,11 +513,6 @@ named!{parse_client_announce<ProtocolMessage<OwnedFloEvent>>, chain!(
 named!{pub parse_any<ProtocolMessage<OwnedFloEvent>>, alt!(
         parse_event_ack |
         parse_receive_event_header |
-        parse_peer_update |
-        parse_peer_announce |
-        parse_update_marker |
-        parse_start_consuming |
-        parse_auth |
         parse_error_message |
         parse_awaiting_events |
         parse_new_producer_event |
@@ -693,30 +556,6 @@ fn serialize_error_message(err: &ErrorMessage, buf: &mut [u8]) -> usize {
             .write_u8(err.kind.u8_value())
             .write_string(&err.description)
             .finish()
-}
-
-fn serialize_cluster_state(header: u8, state: &ClusterState, buf: &mut [u8]) -> usize {
-    let mut addr_buffer = String::new();
-
-    let mut ser = Serializer::new(buf).write_u8(header)
-            .write_u16(state.actor_id)
-            .write_u16(state.actor_port)
-            .write_u16(state.version_vector.len() as u16);
-
-    for id in state.version_vector.iter() {
-        ser = ser.write_u64(id.event_counter).write_u16(id.actor);
-    }
-
-    ser = ser.write_u16(state.other_members.len() as u16);
-    for member in state.other_members.iter() {
-        addr_buffer.clear();
-        write!(addr_buffer, "{}", member.addr).unwrap();
-
-        ser = ser.write_u16(member.actor_id)
-                 .write_string(&addr_buffer)
-                 .write_bool(member.connected);
-    }
-    ser.finish()
 }
 
 fn serialize_receive_event_header<E: FloEvent>(event: &E, buf: &mut [u8]) -> usize {
@@ -791,13 +630,6 @@ impl <E: FloEvent> ProtocolMessage<E> {
             ProtocolMessage::ProduceEvent(ref header) => {
                 serialize_new_produce_header(header, buf)
             }
-            ProtocolMessage::StartConsuming(ConsumerStart{ref op_id, ref namespace, ref max_events}) => {
-                Serializer::new(buf).write_u8(START_CONSUMING)
-                                    .write_u32(*op_id)
-                                    .write_string(namespace)
-                                    .write_u64(*max_events)
-                                    .finish()
-            }
             ProtocolMessage::NewStartConsuming(NewConsumerStart{ref op_id, ref version_vector, ref max_events, ref namespace}) => {
                 let mut serializer = Serializer::new(buf).write_u8(NEW_START_CONSUMING)
                         .write_u32(*op_id)
@@ -808,25 +640,6 @@ impl <E: FloEvent> ProtocolMessage<E> {
                 }
                 serializer.write_u64(*max_events)
                         .write_string(namespace).finish()
-            }
-            ProtocolMessage::UpdateMarker(id) => {
-                Serializer::new(buf).write_u8(UPDATE_MARKER)
-                                    .write_u64(id.event_counter)
-                                    .write_u16(id.actor)
-                                    .finish()
-            }
-            ProtocolMessage::ClientAuth {ref namespace, ref username, ref password} => {
-                Serializer::new(buf).write_u8(CLIENT_AUTH)
-                                    .write_string(namespace)
-                                    .write_string(username)
-                                    .write_string(password)
-                                    .finish()
-            }
-            ProtocolMessage::PeerUpdate(ref state) => {
-                serialize_cluster_state(PEER_UPDATE, state, buf)
-            }
-            ProtocolMessage::PeerAnnounce(ref cluster_state) => {
-                serialize_cluster_state(PEER_ANNOUNCE, cluster_state, buf)
             }
             ProtocolMessage::AckEvent(ref ack) => {
                 serialize_event_ack(ack, buf)
@@ -866,7 +679,6 @@ impl <E: FloEvent> ProtocolMessage<E> {
         match *self {
             ProtocolMessage::Announce(ref ann) => ann.op_id,
             ProtocolMessage::ProduceEvent(ref prod) => prod.op_id,
-            ProtocolMessage::StartConsuming(ref start) => start.op_id,
             ProtocolMessage::CursorCreated(ref info) => info.op_id,
             ProtocolMessage::Error(ref err) => err.op_id,
             ProtocolMessage::AckEvent(ref ack) => ack.op_id,
@@ -883,7 +695,6 @@ mod test {
     use super::*;
     use nom::{IResult, Needed};
     use event::{OwnedFloEvent, time, FloEventId};
-    use std::net::{SocketAddr, SocketAddrV4, Ipv4Addr};
 
     fn test_serialize_then_deserialize(message: &ProtocolMessage<OwnedFloEvent>) {
         let result  = ser_de(message);
@@ -1065,74 +876,6 @@ mod test {
     }
 
     #[test]
-    fn peer_announce_is_parsed() {
-        let state = ClusterState {
-            actor_id: 5,
-            actor_port: 5555,
-            version_vector: vec![FloEventId::new(5, 6), FloEventId::new(1, 9), FloEventId::new(2, 1)],
-            other_members: vec![
-                ClusterMember {
-                    addr: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0,0,0,0), 4444)),
-                    actor_id: 6,
-                    connected: true,
-                },
-                ClusterMember {
-                    addr: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(7, 8, 9, 10), 3333)),
-                    actor_id: 3,
-                    connected: false,
-                },
-                ClusterMember {
-                    addr: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0,0,0,0), 4444)),
-                    actor_id: 2,
-                    connected: true,
-                },
-            ],
-        };
-        test_serialize_then_deserialize(&mut ProtocolMessage::PeerAnnounce(state));
-    }
-
-    #[test]
-    fn peer_update_is_parsed() {
-        let state = ClusterState {
-            actor_id: 5,
-            actor_port: 5555,
-            version_vector: vec![FloEventId::new(5, 6), FloEventId::new(1, 9), FloEventId::new(2, 1)],
-            other_members: vec![
-                ClusterMember {
-                    addr: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0,0,0,0), 4444)),
-                    actor_id: 6,
-                    connected: true,
-                },
-                ClusterMember {
-                    addr: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(7, 8, 9, 10), 3333)),
-                    actor_id: 3,
-                    connected: false,
-                },
-                ClusterMember {
-                    addr: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0,0,0,0), 4444)),
-                    actor_id: 2,
-                    connected: true,
-                },
-            ],
-        };
-        test_serialize_then_deserialize(&mut ProtocolMessage::PeerUpdate(state));
-    }
-
-    #[test]
-    fn event_marker_update_is_parsed() {
-        test_serialize_then_deserialize(&mut ProtocolMessage::UpdateMarker(FloEventId::new(2, 255)));
-    }
-
-    #[test]
-    fn start_consuming_message_is_parsed() {
-        test_serialize_then_deserialize(&mut ProtocolMessage::StartConsuming(ConsumerStart{
-            op_id: 123,
-            namespace: "/test/ns".to_owned(),
-            max_events: 8766
-        }));
-    }
-
-    #[test]
     fn parse_producer_event_parses_the_header_but_not_the_data() {
         let input = ProduceEvent {
             namespace: "/the/namespace".to_owned(),
@@ -1156,41 +899,6 @@ mod test {
             panic!("got the wrong fucking message. Just quit now");
         }
     }
-
-
-    #[test]
-    fn parse_client_auth_returns_incomplete_result_when_password_is_missing() {
-        let mut input = vec![headers::CLIENT_AUTH];
-        input.extend_from_slice(b"hello\n");
-        input.extend_from_slice(b"world\n");
-
-        let result = parse_auth(&input);
-        match result {
-            IResult::Incomplete(_) => { }
-            e @ _ => panic!("Expected Incomplete, got: {:?}", e)
-        }
-    }
-
-    #[test]
-    fn parse_client_auth_parses_valid_header_with_no_remaining_bytes() {
-        test_serialize_then_deserialize(&mut ProtocolMessage::ClientAuth {
-            namespace: "hello".to_owned(),
-            username: "usr".to_owned(),
-            password: "pass".to_owned(),
-        });
-    }
-
-    #[test]
-    fn parse_client_auth_returns_error_result_when_namespace_contains_invalid_utf_characters() {
-        let mut input = Vec::new();
-        input.extend_from_slice(b"FLO_AUT\n");
-        input.extend_from_slice(&vec![0, 0xC0, 0, 0, 2, 10]);
-        input.extend_from_slice(b"usr\n");
-        input.extend_from_slice(b"pass\n");
-        let result = parse_auth(&input);
-        assert!(result.is_err());
-    }
-
 
     #[test]
     fn parse_string_returns_empty_string_string_length_is_0() {

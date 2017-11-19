@@ -10,7 +10,7 @@ use futures::{Async, Poll, AsyncSink, StartSend, Sink, Stream, Future};
 use tokio_core::reactor::Handle;
 
 use protocol::*;
-use engine::{ConnectionId, ClientSender, EngineRef};
+use engine::{ConnectionId, ClientSender, EngineRef, ReceivedProtocolMessage};
 use self::connection_state::ConnectionState;
 use self::consumer::ConsumerConnectionState;
 use self::producer::ProducerConnectionState;
@@ -34,11 +34,11 @@ impl ConnectionHandler {
         }
     }
 
-    pub fn can_process(&self, _message: &ProtocolMessage) -> bool {
+    pub fn can_process(&self, _message: &ReceivedProtocolMessage) -> bool {
         !self.producer_state.requires_poll_complete() && !self.consumer_state.requires_poll_complete()
     }
 
-    pub fn handle_incoming_message(&mut self, message: ProtocolMessage) -> ConnectionHandlerResult {
+    pub fn handle_incoming_message(&mut self, message: ReceivedProtocolMessage) -> ConnectionHandlerResult {
         trace!("client: {:?}, received message: {:?}", self.common_state, message);
 
         let ConnectionHandler{ref mut common_state, ref mut consumer_state, ref mut producer_state } = *self;
@@ -71,7 +71,7 @@ impl ConnectionHandler {
 
 
 impl Sink for ConnectionHandler {
-    type SinkItem = ProtocolMessage;
+    type SinkItem = ReceivedProtocolMessage;
     type SinkError = io::Error;
 
     fn start_send(&mut self, item: Self::SinkItem) -> StartSend<Self::SinkItem, Self::SinkError> {
@@ -213,7 +213,7 @@ mod test {
             result.expect(&format!("partition: {} failed to receive message", partition_id))
         }
 
-        fn assert_sent_to_client(&mut self, expected: ProtocolMessage) {
+        fn assert_sent_to_client(&mut self, expected: ProtocolMessage<PersistentEvent>) {
             use tokio_core::reactor::Timeout;
             use futures::future::Either;
 

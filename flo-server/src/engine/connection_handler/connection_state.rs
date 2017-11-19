@@ -3,7 +3,7 @@ use tokio_core::reactor::Handle;
 
 use protocol::*;
 
-use engine::{ConnectionId, ClientSender, EngineRef};
+use engine::{ConnectionId, ClientSender, EngineRef, SendProtocolMessage};
 use engine::event_stream::EventStreamRef;
 
 use super::ConnectionHandlerResult;
@@ -84,7 +84,7 @@ impl ConnectionState {
         }
     }
 
-    pub fn send_to_client(&self, message: ProtocolMessage) -> ConnectionHandlerResult {
+    pub fn send_to_client(&self, message: SendProtocolMessage) -> ConnectionHandlerResult {
         self.client_sender.unbounded_send(message).map_err(|e| {
             format!("Error sending outgoing message for connection_id: {}, message: {:?}", self.connection_id, e.into_inner())
         })
