@@ -5,7 +5,7 @@ use std::io;
 use futures::{Future, Async, Poll};
 
 use protocol::{ProtocolMessage, ClientAnnounce};
-use async::{AsyncConnection, ErrorType};
+use async::{AsyncConnection, ErrorType, ClientProtocolMessage};
 use async::ops::{RequestResponse, RequestResponseError};
 
 const PROTOCOL_VERSION: u32 = 1;
@@ -48,7 +48,7 @@ impl <D: Debug> Into<AsyncConnection<D>> for Handshake<D> {
     }
 }
 
-fn result_from_response<D: Debug>(response: ProtocolMessage, mut connection: AsyncConnection<D>) -> Poll<AsyncConnection<D>, HandshakeError> {
+fn result_from_response<D: Debug>(response: ClientProtocolMessage, mut connection: AsyncConnection<D>) -> Poll<AsyncConnection<D>, HandshakeError> {
     debug!("Received Response: {:?}", response);
 
     match response {

@@ -4,9 +4,9 @@ use std::io;
 
 use futures::{Future, Async, Poll, Stream};
 
-use event::VersionVector;
-use protocol::{ProtocolMessage, NewConsumerStart, CONSUME_UNLIMITED, OwnedFloEvent};
-use async::{AsyncConnection, ErrorType};
+use event::{VersionVector, OwnedFloEvent};
+use protocol::{ProtocolMessage, NewConsumerStart, CONSUME_UNLIMITED};
+use async::{AsyncConnection, ErrorType, ClientProtocolMessage};
 use async::ops::{SendMessage, SendError, AwaitResponse, AwaitResponseError, RequestResponse};
 use ::Event;
 
@@ -64,7 +64,7 @@ impl <D: Debug> Consume<D> {
     }
 }
 
-fn response_received<D: Debug>(op_id: u32, response: ProtocolMessage, connection: AsyncConnection<D>) -> Result<Async<(u32, State<D>)>, ConsumeError<D>> {
+fn response_received<D: Debug>(op_id: u32, response: ClientProtocolMessage, connection: AsyncConnection<D>) -> Result<Async<(u32, State<D>)>, ConsumeError<D>> {
     match response {
         ProtocolMessage::CursorCreated(info) => {
             debug!("Consumer with op_id: {} received CursorCreated: {:?}", op_id, info);
@@ -82,7 +82,7 @@ fn new_state<D: Debug>(state: State<D>) -> PollState<D> {
     Ok(Async::Ready(PollSuccess::NewState(state)))
 }
 
-fn consume_error<D: Debug>(connection: AsyncConnection<D>, message: ProtocolMessage) -> ConsumeError<D> {
+fn consume_error<D: Debug>(connection: AsyncConnection<D>, message: ClientProtocolMessage) -> ConsumeError<D> {
     match message {
         ProtocolMessage::Error(error_message) => {
             ConsumeError {
@@ -284,7 +284,6 @@ impl <D: Debug> EventReceiver<D> {
     }
 
     fn convert_received(&mut self, event: OwnedFloEvent, op_id: u32) -> PollState<D> {
-        let event = event.into_owned();
         let event_id = event.id;
         let converted = {
             self.0.as_ref().unwrap().inner.codec.convert_from_message(event)

@@ -5,15 +5,14 @@ use std::io;
 
 use futures::{Future, Async, Poll};
 
-use protocol::ProtocolMessage;
-use async::{AsyncConnection};
+use async::{AsyncConnection, ClientProtocolMessage};
 
 
 #[derive(Debug)]
 pub struct AwaitResponse<D: Debug> {
     op_id: u32,
     connection: Option<AsyncConnection<D>>,
-    buffered_message: Option<ProtocolMessage>,
+    buffered_message: Option<ClientProtocolMessage>,
 }
 
 
@@ -21,8 +20,8 @@ impl <D: Debug> AwaitResponse<D> {
 
     pub fn new(mut connection: AsyncConnection<D>, op_id: u32) -> AwaitResponse<D> {
         // first check to see if we happen to have the response already buffered.
-        let buffered: Option<ProtocolMessage> = {
-            let buf: &mut VecDeque<ProtocolMessage> = &mut connection.inner.received_message_buffer;
+        let buffered: Option<ClientProtocolMessage> = {
+            let buf: &mut VecDeque<ClientProtocolMessage> = &mut connection.inner.received_message_buffer;
             let index = buf.iter().enumerate().find(|&(_, ref message)| {
                 message.get_op_id() == op_id
             }).map(|(idx, _)| idx);
@@ -43,7 +42,7 @@ impl <D: Debug> AwaitResponse<D> {
         self.connection.as_ref().map(|connection| connection.can_buffer_received()).unwrap_or(false)
     }
 
-    fn buffer_received(&mut self, message: ProtocolMessage) {
+    fn buffer_received(&mut self, message: ClientProtocolMessage) {
         let connection = self.connection.as_mut().unwrap();
         connection.buffer_received(message);
     }
@@ -52,7 +51,7 @@ impl <D: Debug> AwaitResponse<D> {
 
 
 impl <D: Debug> Future for AwaitResponse<D> {
-    type Item = (ProtocolMessage, AsyncConnection<D>);
+    type Item = (ClientProtocolMessage, AsyncConnection<D>);
     type Error = AwaitResponseError<D>;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
@@ -63,7 +62,7 @@ impl <D: Debug> Future for AwaitResponse<D> {
 
         loop {
             let msg_result = self.connection.as_mut().expect("Attempt to poll AwaitResponse after completion").inner.recv.as_mut().unwrap().poll();
-            let message: ProtocolMessage = match msg_result {
+            let message: ClientProtocolMessage = match msg_result {
                 Ok(Async::Ready(Some(msg))) => msg,
                 Ok(Async::Ready(None)) => {
                     let err = io::Error::new(io::ErrorKind::UnexpectedEof, format!("Got EOF before response to op_id: {}", self.op_id));

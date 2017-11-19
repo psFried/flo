@@ -4,8 +4,7 @@ use std::fmt::Debug;
 
 use futures::{Future, Async, Poll};
 
-use protocol::{ProtocolMessage};
-use async::{AsyncConnection};
+use async::{AsyncConnection, ClientProtocolMessage};
 use async::ops::{SendMessage, SendError, AwaitResponse, AwaitResponseError};
 
 #[derive(Debug)]
@@ -15,7 +14,7 @@ pub struct RequestResponse<D: Debug> {
 }
 
 impl <D: Debug> RequestResponse<D> {
-    pub fn new(connection: AsyncConnection<D>, request: ProtocolMessage) -> RequestResponse<D> {
+    pub fn new(connection: AsyncConnection<D>, request: ClientProtocolMessage) -> RequestResponse<D> {
         let op_id = request.get_op_id();
         debug_assert_ne!(op_id, 0);
         RequestResponse {
@@ -26,7 +25,7 @@ impl <D: Debug> RequestResponse<D> {
 }
 
 impl <D: Debug> Future for RequestResponse<D> {
-    type Item = (ProtocolMessage, AsyncConnection<D>);
+    type Item = (ClientProtocolMessage, AsyncConnection<D>);
     type Error = RequestResponseError<D>;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {

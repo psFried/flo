@@ -1011,12 +1011,8 @@ mod test {
             namespace: "/foo/bar".to_owned(),
             data: vec![9; 99],
         };
-        let message = ProtocolMessage::ReceiveEvent(RecvEvent::Owned(event.clone()));
+        let message = ProtocolMessage::ReceiveEvent(event.clone());
         let result = serde_with_body(&message, true);
-        assert_eq!(message, result);
-
-        let arc_message = ProtocolMessage::ReceiveEvent(RecvEvent::Ref(Arc::new(event.clone())));
-        let result = serde_with_body(&arc_message, true);
         assert_eq!(message, result);
     }
 

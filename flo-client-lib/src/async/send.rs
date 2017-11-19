@@ -3,14 +3,16 @@ use std::io::{self, Write};
 use std::fmt::{self, Debug};
 
 use futures::{Sink, AsyncSink, StartSend, Poll, Async};
+
+use event::OwnedFloEvent;
 use protocol::*;
+use async::ClientProtocolMessage;
 
-
-pub trait MessageSink: Sink<SinkItem=ProtocolMessage, SinkError=io::Error> + Debug {
+pub trait MessageSink: Sink<SinkItem=ClientProtocolMessage, SinkError=io::Error> + Debug {
 }
 
 pub struct MessageSendSink<W: Write> {
-    message_buffer: Vec<MessageWriter<'static>>,
+    message_buffer: Vec<MessageWriter<OwnedFloEvent>>,
     writer: W
 }
 
@@ -32,7 +34,7 @@ impl <W: Write> Debug for MessageSendSink<W> {
 }
 
 impl <W: Write> Sink for MessageSendSink<W> {
-    type SinkItem = ProtocolMessage;
+    type SinkItem = ClientProtocolMessage;
     type SinkError = io::Error;
 
     fn start_send(&mut self, item: Self::SinkItem) -> StartSend<Self::SinkItem, Self::SinkError> {
@@ -45,7 +47,7 @@ impl <W: Write> Sink for MessageSendSink<W> {
         while !message_buffer.is_empty() {
 
             {
-                let message: &mut MessageWriter<'static> = message_buffer.first_mut().unwrap();
+                let message: &mut MessageWriter<OwnedFloEvent> = message_buffer.first_mut().unwrap();
                 match message.write(writer) {
                     Ok(()) => {
                         if !message.is_done() {

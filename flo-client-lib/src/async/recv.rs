@@ -3,13 +3,14 @@ use std::fmt::{self, Debug};
 
 use futures::{Async, Poll, Stream};
 
+use event::OwnedFloEvent;
 use protocol::{self, ProtocolMessage};
 
-pub trait MessageStream: Stream<Item=ProtocolMessage, Error=io::Error> + Debug {
+pub trait MessageStream: Stream<Item=ProtocolMessage<OwnedFloEvent>, Error=io::Error> + Debug {
 }
 
 pub struct MessageRecvStream<R: Read> {
-    message_reader: protocol::MessageStream<R>,
+    message_reader: protocol::MessageStream<R, OwnedFloEvent>,
     connected: bool
 }
 
@@ -31,7 +32,7 @@ impl <R: Read> Debug for MessageRecvStream<R> {
 }
 
 impl <R: Read> Stream for MessageRecvStream<R> {
-    type Item = ProtocolMessage;
+    type Item = ProtocolMessage<OwnedFloEvent>;
     type Error = io::Error;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {

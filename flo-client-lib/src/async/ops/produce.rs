@@ -5,7 +5,7 @@ use futures::{Future, Poll, Async};
 
 use event::{FloEventId, ActorId};
 use protocol::{ProtocolMessage, ProduceEvent};
-use async::{AsyncConnection, ErrorType};
+use async::{AsyncConnection, ErrorType, ClientProtocolMessage};
 use async::ops::{RequestResponse, RequestResponseError};
 
 /// An operation that produces a single event on an event stream and waits for it to be acknowledged. This future will
@@ -57,7 +57,7 @@ impl <D: Debug> ProduceOne<D> {
     }
 
 
-    fn response_received(connection: AsyncConnection<D>, response: ProtocolMessage) -> Result<Async<(FloEventId, AsyncConnection<D>)>, ProduceErr<D>> {
+    fn response_received(connection: AsyncConnection<D>, response: ClientProtocolMessage) -> Result<Async<(FloEventId, AsyncConnection<D>)>, ProduceErr<D>> {
         match response {
             ProtocolMessage::AckEvent(ack) => {
                 Ok(Async::Ready((ack.event_id, connection)))
