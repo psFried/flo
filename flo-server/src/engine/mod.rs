@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicUsize};
 
 use protocol::ProtocolMessage;
-
+use event::OwnedFloEvent;
 use self::event_stream::EventStreamRef;
 
 pub use self::controller::{ControllerOptions, start_controller};
@@ -16,9 +16,15 @@ pub use self::connection_handler::{ConnectionHandler, ConnectionHandlerResult};
 
 pub type ConnectionId = usize;
 
-use engine::event_stream::partition::segment::PersistentEvent;
-pub type ClientSender = ::futures::sync::mpsc::UnboundedSender<ProtocolMessage<PersistentEvent>>;
-pub type ClientReceiver = ::futures::sync::mpsc::UnboundedReceiver<ProtocolMessage<OwnedFloEvent>>;
+use engine::event_stream::partition::PersistentEvent;
+
+/// Thy type of messages that are received from clients
+pub type ReceivedProtocolMessage = ProtocolMessage<OwnedFloEvent>;
+/// The type of messages that are sent to client
+pub type SendProtocolMessage = ProtocolMessage<PersistentEvent>;
+
+pub type ClientSender = ::futures::sync::mpsc::UnboundedSender<SendProtocolMessage>;
+pub type ClientReceiver = ::futures::sync::mpsc::UnboundedReceiver<SendProtocolMessage>;
 
 pub fn create_client_channels() -> (ClientSender, ClientReceiver) {
     ::futures::sync::mpsc::unbounded()

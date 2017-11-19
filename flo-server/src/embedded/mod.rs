@@ -8,10 +8,11 @@ use std::io;
 use tokio_core::reactor::{Handle, Remote};
 use futures::Stream;
 
-use flo_client_lib::async::{AsyncConnection, MessageReceiver, MessageSender};
+use protocol::ProtocolMessage;
+use flo_client_lib::async::{AsyncConnection, MessageReceiver, MessageSender, ClientProtocolMessage};
 use flo_client_lib::codec::EventCodec;
-
-use engine::{EngineRef, create_client_channels, start_controller, ConnectionHandler};
+use event::FloEvent;
+use engine::{EngineRef, create_client_channels, start_controller, ConnectionHandler, SendProtocolMessage};
 
 pub use engine::ControllerOptions;
 pub use engine::event_stream::EventStreamOptions;
@@ -34,7 +35,9 @@ impl EmbeddedFloServer {
                                                             engine_ref,
                                                              handle);
 
-        let receiver = client_receiver.map_err(|recv_err| {
+        let receiver = client_receiver.map(|message| {
+            message_to_owned(message)
+        }).map_err(|recv_err| {
             io::Error::new(io::ErrorKind::UnexpectedEof, format!("Error reading from channel: {:?}", recv_err))
         });
         let recv = Box::new(receiver) as MessageReceiver;
@@ -44,6 +47,27 @@ impl EmbeddedFloServer {
     }
 }
 
+// ugh, this is an annoying copy, because of the need to change the server's event type into that of the client.
+// We could just make `AsyncConnection` generic over received event type in order to avoid this, but should
+// probably figure out a way to avoid exposing the generic types via the public api. Seems like a 'later' problem
+fn message_to_owned(server_msg: SendProtocolMessage) -> ClientProtocolMessage {
+    match server_msg {
+        ProtocolMessage::ReceiveEvent(event) => ProtocolMessage::ReceiveEvent(event.to_owned()),
+        ProtocolMessage::StopConsuming(op) => ProtocolMessage::StopConsuming(op),
+        ProtocolMessage::AwaitingEvents => ProtocolMessage::AwaitingEvents,
+        ProtocolMessage::Error(op) => ProtocolMessage::Error(op),
+        ProtocolMessage::StreamStatus(op) => ProtocolMessage::StreamStatus(op),
+        ProtocolMessage::AckEvent(op) => ProtocolMessage::AckEvent(op),
+        ProtocolMessage::ProduceEvent(op) => ProtocolMessage::ProduceEvent(op),
+        ProtocolMessage::NextBatch => ProtocolMessage::NextBatch,
+        ProtocolMessage::EndOfBatch => ProtocolMessage::EndOfBatch,
+        ProtocolMessage::SetBatchSize(op) => ProtocolMessage::SetBatchSize(op),
+        ProtocolMessage::NewStartConsuming(op) => ProtocolMessage::NewStartConsuming(op),
+        ProtocolMessage::CursorCreated(op) => ProtocolMessage::CursorCreated(op),
+        ProtocolMessage::Announce(op) => ProtocolMessage::Announce(op),
+        ProtocolMessage::SetEventStream(op) => ProtocolMessage::SetEventStream(op),
+    }
+}
 
 pub fn run_embedded_server(options: ControllerOptions, remote: Remote) -> io::Result<EmbeddedFloServer> {
     start_controller(options, remote).map(|engine_ref| {
