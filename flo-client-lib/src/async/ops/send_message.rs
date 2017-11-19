@@ -4,8 +4,7 @@ use std::io;
 use futures::{Sink, Future, Async, Poll};
 use futures::sink::Send;
 
-use protocol::ProtocolMessage;
-use async::{AsyncConnection, MessageSender};
+use async::{AsyncConnection, MessageSender, ClientProtocolMessage};
 
 pub struct SendMessage<D: Debug> {
     connection: Option<AsyncConnection<D>>,
@@ -19,7 +18,7 @@ impl <D: Debug> Debug for SendMessage<D> {
 }
 
 impl <D: Debug> SendMessage<D> {
-    pub fn new(mut connection: AsyncConnection<D>, message: ProtocolMessage) -> SendMessage<D> {
+    pub fn new(mut connection: AsyncConnection<D>, message: ClientProtocolMessage) -> SendMessage<D> {
         let sender = connection.take_sender();
 
         let send = sender.send(message);

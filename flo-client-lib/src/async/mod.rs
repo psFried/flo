@@ -25,8 +25,10 @@ use self::ops::{ProduceOne, ProduceAll, EventToProduce, Consume, Handshake};
 
 pub use self::tcp_connect::{tcp_connect, tcp_connect_with, AsyncTcpClientConnect};
 pub use self::current_stream_state::{CurrentStreamState, PartitionState};
-pub type MessageSender = Box<Sink<SinkItem=ProtocolMessage<OwnedFloEvent>, SinkError=io::Error>>;
-pub type MessageReceiver = Box<Stream<Item=ProtocolMessage<OwnedFloEvent>, Error=io::Error>>;
+
+pub type ClientProtocolMessage = ProtocolMessage<OwnedFloEvent>;
+pub type MessageSender = Box<Sink<SinkItem=ClientProtocolMessage, SinkError=io::Error>>;
+pub type MessageReceiver = Box<Stream<Item=ClientProtocolMessage, Error=io::Error>>;
 
 pub const DEFAULT_RECV_BATCH_SIZE: u32 = 1000;
 
@@ -145,7 +147,7 @@ impl <D: Debug> AsyncConnection<D> {
         self.inner.received_message_buffer.len() < max_buffered as usize
     }
 
-    fn buffer_received(&mut self, message: ProtocolMessage) {
+    fn buffer_received(&mut self, message: ClientProtocolMessage) {
         self.inner.received_message_buffer.push_back(message);
     }
 
@@ -164,7 +166,7 @@ pub enum ErrorType {
 }
 
 impl ErrorType {
-    pub fn unexpected_message(expected: &'static str, actual: ProtocolMessage) -> ErrorType {
+    pub fn unexpected_message(expected: &'static str, actual: ClientProtocolMessage) -> ErrorType {
         let msg = format!("Unexpected message: {:?}, expected: {}", actual, expected);
         io::Error::new(io::ErrorKind::InvalidData, msg).into()
     }
@@ -194,7 +196,7 @@ struct AsyncConnectionInner<D: Debug> {
     codec: Box<EventCodec<EventData=D>>,
     current_stream: Option<CurrentStreamState>,
     current_op_id: u32,
-    received_message_buffer: VecDeque<ProtocolMessage>,
+    received_message_buffer: VecDeque<ClientProtocolMessage>,
 }
 
 
@@ -240,10 +242,10 @@ mod test {
         }
     }
 
-    pub struct MockSinkVerifier(Arc<Mutex<Vec<ProtocolMessage>>>);
+    pub struct MockSinkVerifier(Arc<Mutex<Vec<ClientProtocolMessage>>>);
 
     impl MockSinkVerifier {
-        fn get_received(&mut self) -> Vec<ProtocolMessage> {
+        fn get_received(&mut self) -> Vec<ClientProtocolMessage> {
             let mut vec = self.0.lock().unwrap();
 
 
@@ -252,7 +254,7 @@ mod test {
     }
 
     pub struct MockSendStream {
-        received: Arc<Mutex<Vec<ProtocolMessage>>>,
+        received: Arc<Mutex<Vec<ClientProtocolMessage>>>,
         state: MockState,
     }
 
@@ -269,7 +271,7 @@ mod test {
     }
 
     impl Sink for MockSendStream {
-        type SinkItem = ProtocolMessage;
+        type SinkItem = ClientProtocolMessage;
         type SinkError = io::Error;
 
         fn start_send(&mut self, item: Self::SinkItem) -> StartSend<Self::SinkItem, Self::SinkError> {
@@ -302,12 +304,12 @@ mod test {
 
 
     pub struct MockReceiveStream{
-        to_produce: Vec<ProtocolMessage>,
+        to_produce: Vec<ClientProtocolMessage>,
         state: MockState,
     }
 
     impl MockReceiveStream {
-        pub fn will_produce(mut messages: Vec<ProtocolMessage>) -> MessageReceiver {
+        pub fn will_produce(mut messages: Vec<ClientProtocolMessage>) -> MessageReceiver {
             // Vec::pop removes from the end of the vec, but the tests are more readable if messages are yielded in the order that they are in the vec
             messages.reverse();
             Box::new(MockReceiveStream {
@@ -322,7 +324,7 @@ mod test {
     }
 
     impl Stream for MockReceiveStream {
-        type Item = ProtocolMessage;
+        type Item = ClientProtocolMessage;
         type Error = io::Error;
 
         fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
@@ -542,20 +544,20 @@ mod test {
         let connection = create_client(recv, send);
 
         let await = AwaitResponse::new(connection, 7);
-        let (response, connection): (ProtocolMessage, AsyncConnection<String>) = run_future(await).expect("await response returned error");
+        let (response, connection): (ClientProtocolMessage, AsyncConnection<String>) = run_future(await).expect("await response returned error");
         assert_eq!(ProtocolMessage::AckEvent(EventAck { op_id: 7, event_id: FloEventId::new(8, 9) }), response);
 
         let expected_buffer = vec![
             ProtocolMessage::EndOfBatch,
             ProtocolMessage::NextBatch,
         ];
-        let actual_buffer: Vec<ProtocolMessage> = connection.inner.received_message_buffer.iter().cloned().collect();
+        let actual_buffer: Vec<ClientProtocolMessage> = connection.inner.received_message_buffer.iter().cloned().collect();
         assert_eq!(expected_buffer, actual_buffer);
     }
 
     #[test]
     fn consume_yields_stream_of_events() {
-        use protocol::{CursorInfo, RecvEvent};
+        use protocol::CursorInfo;
         use event::{OwnedFloEvent, VersionVector, FloEventId, time};
         use ::Event;
 
@@ -563,22 +565,22 @@ mod test {
 
         let to_receive = vec![
             ProtocolMessage::CursorCreated(CursorInfo{ op_id: consume_op_id, batch_size: 1 }),
-            ProtocolMessage::ReceiveEvent(RecvEvent::Owned(OwnedFloEvent {
+            ProtocolMessage::ReceiveEvent(OwnedFloEvent {
                 id: FloEventId::new(3, 4),
                 timestamp: time::from_millis_since_epoch(8),
                 parent_id: None,
                 namespace: "/foo/bar".to_owned(),
                 data: "first event data".as_bytes().to_owned(),
-            })),
+            }),
             ProtocolMessage::EndOfBatch,
             ProtocolMessage::AwaitingEvents,
-            ProtocolMessage::ReceiveEvent(RecvEvent::Owned(OwnedFloEvent {
+            ProtocolMessage::ReceiveEvent(OwnedFloEvent {
                 id: FloEventId::new(3, 5),
                 timestamp: time::from_millis_since_epoch(9),
                 parent_id: Some(FloEventId::new(3, 4)),
                 namespace: "/foo/bar".to_owned(),
                 data: "second event data".as_bytes().to_owned(),
-            })),
+            }),
         ];
         let receiver = MockReceiveStream::will_produce(to_receive);
         let (sender, mut send_verify) = MockSendStream::new();
