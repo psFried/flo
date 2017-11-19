@@ -48,7 +48,6 @@ pub struct ServerOptions {
     pub cluster_addresses: Option<Vec<SocketAddr>>,
     pub actor_id: ActorId,
     pub max_io_threads: Option<usize>,
-    pub use_new_engine: bool,
 }
 
 

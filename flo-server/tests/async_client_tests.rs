@@ -29,8 +29,7 @@ fn run_test<F>(desc: &'static str, test_fun: F) where F: Fn(u16) + std::panic::R
     let (proc_type, port) = get_server_port();
     let server_stuff = if proc_type == ServerProcessType::Child {
         let temp_dir = TempDir::new(desc).unwrap();
-        let args = vec!["--use-new-engine".to_string()];
-        let server_proc = FloServerProcess::with_args(port, temp_dir, args);
+        let server_proc = FloServerProcess::with_args(port, temp_dir, Vec::new());
         Some(server_proc)
     } else {
         None

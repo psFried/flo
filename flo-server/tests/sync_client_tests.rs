@@ -38,8 +38,7 @@ fn test_with_server<F: FnOnce(u16)>(test_name: &'static str, flo_server_args: Ve
     let mut server_process = None;
 
     if proc_type == ServerProcessType::Child {
-        let mut args = flo_server_args.iter().map(|a| a.to_string()).collect::<Vec<_>>();
-        args.push("--use-new-engine".to_string());
+        let args = flo_server_args.iter().map(|a| a.to_string()).collect::<Vec<_>>();
         server_process = Some(FloServerProcess::with_args(port, temp_dir, args));
     }
 
