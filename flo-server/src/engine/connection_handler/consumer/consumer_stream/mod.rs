@@ -66,7 +66,7 @@ impl Consumer {
         self.total_events_remaining.map(|n| n == 0).unwrap_or(false)
     }
 
-    fn await_more_events(&mut self) -> Poll<Option<ProtocolMessage>, ConsumerError> {
+    fn await_more_events(&mut self) -> Poll<Option<ProtocolMessage<OwnedFloEvent>>, ConsumerError> {
         trace!("Awaiting more events for connection_id: {}", self.connection_id);
         self.task_setter.await_more_events();
         if self.await_new_events_sent {
@@ -78,7 +78,7 @@ impl Consumer {
         }
     }
 
-    fn send_event(&mut self, event: PersistentEvent) -> Poll<Option<ProtocolMessage>, ConsumerError> {
+    fn send_event(&mut self, event: PersistentEvent) -> Poll<Option<ProtocolMessage<OwnedFloEvent>>, ConsumerError> {
         use event::FloEvent;
 
         // decrement total count and batch remaining. We've already checked to ensure that both counts are > 0
@@ -103,7 +103,7 @@ impl Consumer {
         Ok(Async::Ready(Some(message)))
     }
 
-    fn read_err(&mut self, err: io::Error) -> Poll<Option<ProtocolMessage>, ConsumerError> {
+    fn read_err(&mut self, err: io::Error) -> Poll<Option<ProtocolMessage<OwnedFloEvent>>, ConsumerError> {
         error!("Read error for consumer: connection_id: {}, op_id: {}, err: {:?}", self.connection_id, self.op_id, err);
 
         // set the total remaining to 0 to make sure that all future poll calls will return None
@@ -155,7 +155,7 @@ impl Consumer {
         }
     }
 
-    fn next_matching_result(&mut self) -> Poll<Option<ProtocolMessage>, ConsumerError> {
+    fn next_matching_result(&mut self) -> Poll<Option<ProtocolMessage<OwnedFloEvent>>, ConsumerError> {
         let result = self.readers.next_matching();
         match result {
             None => self.await_more_events(),
@@ -173,7 +173,7 @@ enum StreamStatus {
 
 
 impl Stream for Consumer {
-    type Item = ProtocolMessage;
+    type Item = ProtocolMessage<OwnedFloEvent>;
     type Error = ConsumerError;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
@@ -197,7 +197,7 @@ use futures::sync::mpsc::SendError;
 
 #[derive(Debug)]
 pub enum ConsumerError {
-    Send(SendError<ProtocolMessage>),
+    Send(SendError<ProtocolMessage<OwnedFloEvent>>),
     Read(io::Error)
 }
 
@@ -207,8 +207,8 @@ impl From<io::Error> for ConsumerError {
     }
 }
 
-impl From<SendError<ProtocolMessage>> for ConsumerError {
-    fn from(err: SendError<ProtocolMessage>) -> Self {
+impl From<SendError<ProtocolMessage<OwnedFloEvent>>> for ConsumerError {
+    fn from(err: SendError<ProtocolMessage<OwnedFloEvent>>) -> Self {
         ConsumerError::Send(err)
     }
 }

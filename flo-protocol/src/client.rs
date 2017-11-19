@@ -16,7 +16,6 @@ use serializer::Serializer;
 use std::net::SocketAddr;
 use std::fmt::Write;
 use std::str::FromStr;
-use std::sync::Arc;
 
 pub mod headers {
     pub const CLIENT_AUTH: u8 = 1;
@@ -206,73 +205,6 @@ pub struct CursorInfo {
     pub batch_size: u32,
 }
 
-/// Used to be abstract over owned events versus shared references
-#[derive(Debug, PartialEq, Clone)]
-pub enum RecvEvent {
-    Owned(OwnedFloEvent),
-    Ref(Arc<OwnedFloEvent>),
-}
-
-impl RecvEvent {
-    /// Converts into an OwnedFloEvent and avoids copying if this is already an `Owned` variant
-    pub fn into_owned(self) -> OwnedFloEvent {
-        match self {
-            RecvEvent::Owned(owned) => owned,
-            RecvEvent::Ref(arc) => <Arc<OwnedFloEvent> as FloEvent>::to_owned(&arc)
-        }
-    }
-}
-
-impl FloEvent for RecvEvent {
-    fn id(&self) -> &FloEventId {
-        match *self {
-            RecvEvent::Owned(ref e) => e.id(),
-            RecvEvent::Ref(ref e) => e.id()
-        }
-    }
-
-    fn timestamp(&self) -> Timestamp {
-        match *self {
-            RecvEvent::Owned(ref e) => e.timestamp(),
-            RecvEvent::Ref(ref e) => e.timestamp()
-        }
-    }
-
-    fn parent_id(&self) -> Option<FloEventId> {
-        match *self {
-            RecvEvent::Owned(ref e) => e.parent_id(),
-            RecvEvent::Ref(ref e) => e.parent_id()
-        }
-    }
-
-    fn namespace(&self) -> &str {
-        match *self {
-            RecvEvent::Owned(ref e) => e.namespace(),
-            RecvEvent::Ref(ref e) => e.namespace()
-        }
-    }
-
-    fn data_len(&self) -> u32 {
-        match *self {
-            RecvEvent::Owned(ref e) => e.data_len(),
-            RecvEvent::Ref(ref e) => e.data_len()
-        }
-    }
-
-    fn data(&self) -> &[u8] {
-        match *self {
-            RecvEvent::Owned(ref e) => e.data(),
-            RecvEvent::Ref(ref e) => e.data()
-        }
-    }
-
-    fn to_owned(&self) -> OwnedFloEvent {
-        match *self {
-            RecvEvent::Owned(ref e) => <OwnedFloEvent as FloEvent>::to_owned(e),
-            RecvEvent::Ref(ref e) => <Arc<OwnedFloEvent> as FloEvent>::to_owned(e)
-        }
-    }
-}
 
 /// Information on the status of a partition. Included as part of `EventStreamStatus`
 #[derive(Debug, PartialEq, Clone)]
@@ -309,7 +241,7 @@ pub struct ClientAnnounce {
 
 /// Defines all the distinct messages that can be sent over the wire between client and server.
 #[derive(Debug, PartialEq, Clone)]
-pub enum ProtocolMessage {
+pub enum ProtocolMessage<E: FloEvent> {
     /// Always the first message sent by the client to the server
     Announce(ClientAnnounce),
     /// Contains basic information about the status of an event stream
@@ -319,7 +251,7 @@ pub enum ProtocolMessage {
     /// Signals a client's intent to publish a new event. The server will respond with either an `EventAck` or an `ErrorMessage`
     ProduceEvent(ProduceEvent),
     /// This is a complete event as serialized over the wire. This message is sent to to both consumers as well as other servers
-    ReceiveEvent(RecvEvent),
+    ReceiveEvent(E),
     /// Sent from the server to client to acknowledge that an event was persisted successfully.
     AckEvent(EventAck),
     /// Sent by a client to set it's current position in the event stream
@@ -392,7 +324,7 @@ named!{parse_partition_status<PartitionStatus>,
     )
 }
 
-named!{parse_event_stream_status<ProtocolMessage>,
+named!{parse_event_stream_status<ProtocolMessage<OwnedFloEvent>>,
     chain!(
         _tag: tag!(&[EVENT_STREAM_STATUS]) ~
         op_id: be_u32 ~
@@ -408,7 +340,7 @@ named!{parse_event_stream_status<ProtocolMessage>,
     )
 }
 
-named!{pub parse_auth<ProtocolMessage>,
+named!{pub parse_auth<ProtocolMessage<OwnedFloEvent>>,
     chain!(
         _tag: tag!(&[CLIENT_AUTH]) ~
         namespace: parse_str ~
@@ -456,7 +388,7 @@ named!{pub parse_event_id<Option<FloEventId>>,
     )
 }
 
-named!{pub parse_new_producer_event<ProtocolMessage>,
+named!{pub parse_new_producer_event<ProtocolMessage<OwnedFloEvent>>,
     chain!(
         _tag: tag!(&[PRODUCE_EVENT]) ~
         namespace: parse_str ~
@@ -480,7 +412,7 @@ named!{parse_timestamp<Timestamp>,
     map!(be_u64, time::from_millis_since_epoch)
 }
 
-named!{parse_receive_event_header<ProtocolMessage>,
+named!{parse_receive_event_header<ProtocolMessage<OwnedFloEvent>>,
     chain!(
         _tag: tag!(&[RECEIVE_EVENT]) ~
         id: parse_non_zero_event_id ~
@@ -489,18 +421,18 @@ named!{parse_receive_event_header<ProtocolMessage>,
         namespace: parse_str ~
         data: length_data!(be_u32),
         || {
-           ProtocolMessage::ReceiveEvent(RecvEvent::Owned(OwnedFloEvent {
+           ProtocolMessage::ReceiveEvent(OwnedFloEvent {
                 id: id,
                 parent_id: parent_id,
                 namespace: namespace,
                 timestamp: timestamp,
                 data: data.to_vec(),
-            }))
+            })
         }
     )
 }
 
-named!{parse_event_ack<ProtocolMessage>,
+named!{parse_event_ack<ProtocolMessage<OwnedFloEvent>>,
     chain!(
         _tag: tag!(&[ACK_HEADER]) ~
         op_id: be_u32 ~
@@ -515,7 +447,7 @@ named!{parse_event_ack<ProtocolMessage>,
     )
 }
 
-named!{parse_update_marker<ProtocolMessage>,
+named!{parse_update_marker<ProtocolMessage<OwnedFloEvent>>,
     chain!(
         _tag: tag!(&[UPDATE_MARKER]) ~
         counter: be_u64 ~
@@ -528,7 +460,7 @@ named!{parse_update_marker<ProtocolMessage>,
     )
 }
 
-named!{parse_start_consuming<ProtocolMessage>,
+named!{parse_start_consuming<ProtocolMessage<OwnedFloEvent>>,
     chain!(
         _tag: tag!(&[START_CONSUMING]) ~
         op_id: be_u32 ~
@@ -544,7 +476,7 @@ named!{parse_start_consuming<ProtocolMessage>,
     )
 }
 
-named!{parse_new_start_consuming<ProtocolMessage>,
+named!{parse_new_start_consuming<ProtocolMessage<OwnedFloEvent>>,
     chain!(
         _tag: tag!(&[NEW_START_CONSUMING]) ~
         op_id: be_u32 ~
@@ -562,7 +494,7 @@ named!{parse_new_start_consuming<ProtocolMessage>,
     )
 }
 
-named!{parse_set_event_stream<ProtocolMessage>,
+named!{parse_set_event_stream<ProtocolMessage<OwnedFloEvent>>,
     chain!(
         _tag: tag!(&[SET_EVENT_STREAM]) ~
         op_id: be_u32 ~
@@ -618,7 +550,7 @@ named!{parse_cluster_member_status<ClusterMember>,
     )
 }
 
-named!{parse_peer_announce<ProtocolMessage>,
+named!{parse_peer_announce<ProtocolMessage<OwnedFloEvent>>,
     chain!(
         _tag: tag!(&[PEER_ANNOUNCE]) ~
         state: parse_cluster_state,
@@ -632,7 +564,7 @@ named!{parse_version_vec<Vec<FloEventId>>,
     length_count!(be_u16, parse_zeroable_event_id)
 }
 
-named!{parse_peer_update<ProtocolMessage>,
+named!{parse_peer_update<ProtocolMessage<OwnedFloEvent>>,
     chain!(
         _tag: tag!(&[PEER_UPDATE]) ~
         state: parse_cluster_state,
@@ -642,7 +574,7 @@ named!{parse_peer_update<ProtocolMessage>,
     )
 }
 
-named!{parse_error_message<ProtocolMessage>,
+named!{parse_error_message<ProtocolMessage<OwnedFloEvent>>,
     chain!(
         _tag: tag!(&[ERROR_HEADER]) ~
         op_id: be_u32 ~
@@ -660,9 +592,9 @@ named!{parse_error_message<ProtocolMessage>,
     )
 }
 
-named!{parse_awaiting_events<ProtocolMessage>, map!(tag!(&[AWAITING_EVENTS]), |_| {ProtocolMessage::AwaitingEvents})}
+named!{parse_awaiting_events<ProtocolMessage<OwnedFloEvent>>, map!(tag!(&[AWAITING_EVENTS]), |_| {ProtocolMessage::AwaitingEvents})}
 
-named!{parse_set_batch_size<ProtocolMessage>, chain!(
+named!{parse_set_batch_size<ProtocolMessage<OwnedFloEvent>>, chain!(
     _tag: tag!(&[SET_BATCH_SIZE]) ~
     batch_size: be_u32,
     || {
@@ -670,9 +602,9 @@ named!{parse_set_batch_size<ProtocolMessage>, chain!(
     }
 )}
 
-named!{parse_next_batch<ProtocolMessage>, map!(tag!(&[NEXT_BATCH]), |_| {ProtocolMessage::NextBatch})}
-named!{parse_end_of_batch<ProtocolMessage>, map!(tag!(&[END_OF_BATCH]), |_| {ProtocolMessage::EndOfBatch})}
-named!{parse_stop_consuming<ProtocolMessage>, chain!(
+named!{parse_next_batch<ProtocolMessage<OwnedFloEvent>>, map!(tag!(&[NEXT_BATCH]), |_| {ProtocolMessage::NextBatch})}
+named!{parse_end_of_batch<ProtocolMessage<OwnedFloEvent>>, map!(tag!(&[END_OF_BATCH]), |_| {ProtocolMessage::EndOfBatch})}
+named!{parse_stop_consuming<ProtocolMessage<OwnedFloEvent>>, chain!(
     _tag: tag!(&[STOP_CONSUMING]) ~
     op_id: be_u32,
     || {
@@ -680,7 +612,7 @@ named!{parse_stop_consuming<ProtocolMessage>, chain!(
     }
 )}
 
-named!{parse_cursor_created<ProtocolMessage>, chain!(
+named!{parse_cursor_created<ProtocolMessage<OwnedFloEvent>>, chain!(
     _tag: tag!(&[headers::CURSOR_CREATED]) ~
     op_id: be_u32 ~
     batch_size: be_u32,
@@ -692,7 +624,7 @@ named!{parse_cursor_created<ProtocolMessage>, chain!(
     }
 )}
 
-named!{parse_client_announce<ProtocolMessage>, chain!(
+named!{parse_client_announce<ProtocolMessage<OwnedFloEvent>>, chain!(
     _tag: tag!(&[CLIENT_ANNOUNCE]) ~
     protocol_version: be_u32 ~
     op_id: be_u32 ~
@@ -710,7 +642,7 @@ named!{parse_client_announce<ProtocolMessage>, chain!(
     }
 )}
 
-named!{pub parse_any<ProtocolMessage>, alt!(
+named!{pub parse_any<ProtocolMessage<OwnedFloEvent>>, alt!(
         parse_event_ack |
         parse_receive_event_header |
         parse_peer_update |
@@ -787,9 +719,7 @@ fn serialize_cluster_state(header: u8, state: &ClusterState, buf: &mut [u8]) -> 
     ser.finish()
 }
 
-fn serialize_receive_event_header(event: &RecvEvent, buf: &mut [u8]) -> usize {
-    use event::FloEvent;
-
+fn serialize_receive_event_header<E: FloEvent>(event: &E, buf: &mut [u8]) -> usize {
     Serializer::new(buf)
             .write_u8(::client::headers::RECEIVE_EVENT)
             .write_u64(event.id().event_counter)
@@ -817,7 +747,7 @@ fn serialize_event_stream_status(status: &EventStreamStatus, buf: &mut [u8]) -> 
             .finish()
 }
 
-impl ProtocolMessage {
+impl <E: FloEvent> ProtocolMessage<E> {
 
     pub fn serialize(&self, buf: &mut [u8]) -> usize {
         match *self {
@@ -920,17 +850,13 @@ impl ProtocolMessage {
         }
     }
 
-    pub fn get_body(&self) -> Option<&Vec<u8>> {
+    pub fn get_body(&self) -> Option<&[u8]> {
         match *self {
             ProtocolMessage::ProduceEvent(ref produce) => {
-                Some(&produce.data)
+                Some(produce.data.as_slice())
             }
             ProtocolMessage::ReceiveEvent(ref event) => {
-                let data = match *event {
-                    RecvEvent::Owned(ref owned) => &owned.data,
-                    RecvEvent::Ref(ref arc) => &arc.data
-                };
-                Some(data)
+                Some(event.data())
             }
             _ => None
         }
@@ -959,16 +885,16 @@ mod test {
     use event::{OwnedFloEvent, time, FloEventId};
     use std::net::{SocketAddr, SocketAddrV4, Ipv4Addr};
 
-    fn test_serialize_then_deserialize(message: &ProtocolMessage) {
+    fn test_serialize_then_deserialize(message: &ProtocolMessage<OwnedFloEvent>) {
         let result  = ser_de(message);
         assert_eq!(*message, result);
     }
 
-    fn ser_de(message: &ProtocolMessage) -> ProtocolMessage {
+    fn ser_de(message: &ProtocolMessage<OwnedFloEvent>) -> ProtocolMessage<OwnedFloEvent> {
         serde_with_body(message, false)
     }
 
-    fn serde_with_body(message: &ProtocolMessage, include_body: bool) -> ProtocolMessage {
+    fn serde_with_body(message: &ProtocolMessage<OwnedFloEvent>, include_body: bool) -> ProtocolMessage<OwnedFloEvent> {
         let mut buffer = [0; 1024];
 
         let mut len = message.serialize(&mut buffer[..]);
