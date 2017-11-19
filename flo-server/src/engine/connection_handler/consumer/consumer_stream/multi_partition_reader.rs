@@ -2,7 +2,7 @@
 use std::io;
 
 use event::{FloEvent, EventCounter};
-use new_engine::event_stream::partition::{PartitionReader, PersistentEvent};
+use engine::event_stream::partition::{PartitionReader, PersistentEvent};
 
 
 pub struct MultiPartitionEventReader {

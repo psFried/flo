@@ -58,10 +58,3 @@ impl SegmentHeader {
     }
 }
 
-
-/*
-
-TRACE:flo::new_engine::event_stream::partition::segment::header: wrote header SegmentHeader { create_time: 2017-09-23T16:37:31.417508Z, end_time: 2017-09-23T16:37:36.416653Z } as start: 1506184651417, end: 1506184656416
-
-
-*/

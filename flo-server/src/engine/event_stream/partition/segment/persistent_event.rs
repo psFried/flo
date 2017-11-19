@@ -3,7 +3,7 @@ use std::io;
 use byteorder::{ByteOrder, BigEndian};
 
 use event::{FloEvent, OwnedFloEvent, FloEventId, Timestamp, time};
-use new_engine::event_stream::partition::segment::mmap::{MmapRef};
+use engine::event_stream::partition::segment::mmap::{MmapRef};
 
 
 

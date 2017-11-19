@@ -7,9 +7,9 @@ use futures::{Stream, Future, Async, Poll};
 
 use event::ActorId;
 use protocol::*;
-use new_engine::connection_handler::ConnectionHandlerResult;
-use new_engine::connection_handler::connection_state::ConnectionState;
-use new_engine::event_stream::partition::{PartitionReader, EventFilter};
+use engine::connection_handler::ConnectionHandlerResult;
+use engine::connection_handler::connection_state::ConnectionState;
+use engine::event_stream::partition::{PartitionReader, EventFilter};
 
 use self::consumer_stream::{Consumer,
                             ConsumerStatus,

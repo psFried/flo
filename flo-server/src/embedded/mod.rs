@@ -11,10 +11,10 @@ use futures::Stream;
 use flo_client_lib::async::{AsyncConnection, MessageReceiver, MessageSender};
 use flo_client_lib::codec::EventCodec;
 
-use new_engine::{EngineRef, create_client_channels, start_controller, ConnectionHandler};
+use engine::{EngineRef, create_client_channels, start_controller, ConnectionHandler};
 
-pub use new_engine::ControllerOptions;
-pub use new_engine::event_stream::EventStreamOptions;
+pub use engine::ControllerOptions;
+pub use engine::event_stream::EventStreamOptions;
 
 
 #[derive(Clone, Debug)]

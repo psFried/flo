@@ -4,9 +4,9 @@ use std::io;
 use futures::{Future, Async, Poll};
 
 use event::ActorId;
-use new_engine::ConnectionId;
-use new_engine::event_stream::partition::{ConsumeResponseReceiver, ConsumerNotifier, PartitionReader};
-use new_engine::connection_handler::consumer::consumer_stream::{ConsumerTaskSetter};
+use engine::ConnectionId;
+use engine::event_stream::partition::{ConsumeResponseReceiver, ConsumerNotifier, PartitionReader};
+use engine::connection_handler::consumer::consumer_stream::{ConsumerTaskSetter};
 
 
 #[derive(Debug)]

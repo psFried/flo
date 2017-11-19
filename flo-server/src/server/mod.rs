@@ -16,12 +16,12 @@ pub use self::server_options::{ServerOptions, MemoryLimit, MemoryUnit};
 pub fn run(options: ServerOptions) -> io::Result<()> {
     #[allow(deprecated)]
     use tokio_core::io::Io;
-    use new_engine::{ControllerOptions,
+    use engine::{ControllerOptions,
                      start_controller,
                      system_stream_name,
                      create_client_channels,
                      ConnectionHandler};
-    use new_engine::event_stream::EventStreamOptions;
+    use engine::event_stream::EventStreamOptions;
     use self::flo_io::{ProtocolMessageStream, ServerMessageStream};
 
     const ONE_GB: usize = 1024 * 1024 * 1024;

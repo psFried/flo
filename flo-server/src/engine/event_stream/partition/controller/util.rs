@@ -4,9 +4,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use new_engine::event_stream::partition::segment::Segment;
-use new_engine::event_stream::partition::{SegmentNum, DATA_FILE_EXTENSION};
-use new_engine::event_stream::partition::index::PartitionIndex;
+use engine::event_stream::partition::segment::Segment;
+use engine::event_stream::partition::{SegmentNum, DATA_FILE_EXTENSION};
+use engine::event_stream::partition::index::PartitionIndex;
 
 #[derive(Debug)]
 pub struct SegmentFile {

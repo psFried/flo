@@ -9,9 +9,9 @@ use std::path::PathBuf;
 
 use memmap::Mmap;
 
-use new_engine::event_stream::partition::segment::PersistentEvent;
-use new_engine::event_stream::partition::SegmentNum;
-use new_engine::event_stream::partition::index::{PartitionIndex, IndexEntry};
+use engine::event_stream::partition::segment::PersistentEvent;
+use engine::event_stream::partition::SegmentNum;
+use engine::event_stream::partition::index::{PartitionIndex, IndexEntry};
 use event::{FloEvent, EventCounter};
 use super::header::SegmentHeader;
 

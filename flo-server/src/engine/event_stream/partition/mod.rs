@@ -12,8 +12,8 @@ use std::thread;
 use std::io;
 
 use atomics::{AtomicCounterReader, AtomicBoolReader};
-use new_engine::ConnectionId;
-use new_engine::event_stream::{EventStreamOptions, HighestCounter};
+use engine::ConnectionId;
+use engine::event_stream::{EventStreamOptions, HighestCounter};
 use protocol::{ProduceEvent};
 use event::{EventCounter, ActorId};
 use self::segment::SegmentReader;

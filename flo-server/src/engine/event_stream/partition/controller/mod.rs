@@ -13,8 +13,8 @@ use event::{ActorId, FloEventId, EventCounter, FloEvent, Timestamp, time};
 use super::{SharedReaderRefsMut, Operation, OpType, ProduceOperation, ConsumeOperation, PartitionReader, EventFilter, SegmentNum};
 use super::segment::Segment;
 use super::index::{PartitionIndex, IndexEntry};
-use new_engine::event_stream::{EventStreamOptions, HighestCounter};
-use new_engine::ConnectionId;
+use engine::event_stream::{EventStreamOptions, HighestCounter};
+use engine::ConnectionId;
 use self::util::get_segment_files;
 use self::consumer_manager::ConsumerManager;
 
@@ -365,9 +365,9 @@ mod test {
 
     use super::*;
     use protocol::ProduceEvent;
-    use new_engine::event_stream::partition::{ProduceOperation, EventFilter, PartitionReader};
-    use new_engine::event_stream::{EventStreamOptions, HighestCounter};
-    use new_engine::ConnectionId;
+    use engine::event_stream::partition::{ProduceOperation, EventFilter, PartitionReader};
+    use engine::event_stream::{EventStreamOptions, HighestCounter};
+    use engine::ConnectionId;
     use atomics::AtomicBoolWriter;
 
     const PARTITION_NUM: ActorId = 1;

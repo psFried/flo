@@ -4,9 +4,9 @@ use std::error::Error;
 use protocol::*;
 use futures::{Future, Poll, Async};
 
-use new_engine::event_stream::partition::{ProduceResponseReceiver};
-use new_engine::ConnectionHandlerResult;
-use new_engine::connection_handler::connection_state::ConnectionState;
+use engine::event_stream::partition::{ProduceResponseReceiver};
+use engine::ConnectionHandlerResult;
+use engine::connection_handler::connection_state::ConnectionState;
 
 
 #[derive(Debug)]

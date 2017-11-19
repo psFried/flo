@@ -6,8 +6,8 @@ use std::io;
 
 use futures::{Stream, Poll, Async};
 
-use new_engine::ConnectionId;
-use new_engine::event_stream::partition::{PartitionReader, PersistentEvent};
+use engine::ConnectionId;
+use engine::event_stream::partition::{PartitionReader, PersistentEvent};
 use protocol::{ProtocolMessage, RecvEvent};
 
 pub use self::notifier::{ConsumerTaskSetter};

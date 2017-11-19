@@ -3,8 +3,8 @@ use tokio_core::reactor::Handle;
 
 use protocol::*;
 
-use new_engine::{ConnectionId, ClientSender, EngineRef};
-use new_engine::event_stream::EventStreamRef;
+use engine::{ConnectionId, ClientSender, EngineRef};
+use engine::event_stream::EventStreamRef;
 
 use super::ConnectionHandlerResult;
 
@@ -56,7 +56,7 @@ impl ConnectionState {
     }
 
     pub fn set_event_stream(&mut self, op_id: u32, name: String) -> ConnectionHandlerResult {
-        use new_engine::ConnectError;
+        use engine::ConnectError;
         trace!("attempting to set event stream for {:?} to '{}'", self, name);
         match self.engine.get_stream(&name) {
             Ok(new_stream) => {

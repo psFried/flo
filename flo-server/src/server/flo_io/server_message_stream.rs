@@ -8,7 +8,7 @@ use futures::{Future, Poll};
 use tokio_core::io::WriteHalf;
 use tokio_core::net::TcpStream;
 
-use new_engine::ConnectionId;
+use engine::ConnectionId;
 use protocol::{ProtocolMessage, MessageWriter};
 
 #[allow(deprecated)]

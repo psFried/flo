@@ -5,8 +5,8 @@ use std::time::Instant;
 
 use futures::sync::oneshot;
 
-use new_engine::event_stream::partition::{EventFilter, PartitionReader};
-use new_engine::ConnectionId;
+use engine::event_stream::partition::{EventFilter, PartitionReader};
+use engine::ConnectionId;
 use protocol::ProduceEvent;
 use event::{FloEventId, EventCounter};
 

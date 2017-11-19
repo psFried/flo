@@ -6,8 +6,8 @@ use std::io;
 
 use tokio_core::reactor::Remote;
 
-use new_engine::{EngineRef, system_stream_name};
-use new_engine::event_stream::{EventStreamRef,
+use engine::{EngineRef, system_stream_name};
+use engine::event_stream::{EventStreamRef,
                                EventStreamOptions,
                                init_existing_event_stream,
                                init_new_event_stream};
