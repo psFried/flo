@@ -12,10 +12,10 @@ mod client;
 
 use std::io::{self, Read, Write};
 use std::cmp;
-use std::borrow::Cow;
 use std::fmt::{self, Debug};
 
 pub use self::client::*;
+use event::{FloEvent, OwnedFloEvent};
 
 pub const BUFFER_LENGTH: usize = 8 * 1024;
 
@@ -133,21 +133,20 @@ impl Debug for Buffer {
     }
 }
 
-pub struct MessageStream<T> {
+pub struct MessageStream<T, E: FloEvent> {
     io: T,
     read_buffer: Buffer,
-    current_read_message: Option<InProgressMessage>,
-
+    current_read_message: Option<InProgressMessage<E>>,
 }
 
-impl <T> Debug for MessageStream<T> {
+impl <T, E: FloEvent> Debug for MessageStream<T, E> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "MessageStream{{ current_read_message: {:?}, read_buffer: {:?} }}", self.current_read_message, self.read_buffer)
     }
 }
 
-impl <T> MessageStream<T> {
-    pub fn new(io: T) -> MessageStream<T> {
+impl <T, E: FloEvent> MessageStream<T, E> {
+    pub fn new(io: T) -> MessageStream<T, E> {
         MessageStream {
             io: io,
             read_buffer: Buffer::new(),
@@ -156,15 +155,15 @@ impl <T> MessageStream<T> {
     }
 }
 
-impl <T> MessageStream<T> where T: Write {
-    pub fn write(&mut self, message_writer: &mut MessageWriter) -> io::Result<()> {
+impl <T, E> MessageStream<T, E> where T: Write, E: FloEvent {
+    pub fn write(&mut self, message_writer: &mut MessageWriter<E>) -> io::Result<()> {
         message_writer.write(&mut self.io)
     }
 }
 
-impl <T> MessageStream<T> where T: Read {
+impl <T> MessageStream<T, OwnedFloEvent> where T: Read {
 
-    pub fn read_next(&mut self) -> io::Result<ProtocolMessage> {
+    pub fn read_next(&mut self) -> io::Result<ProtocolMessage<OwnedFloEvent>> {
         use nom::IResult;
 
         let MessageStream {ref mut io, ref mut read_buffer, ref mut current_read_message} = *self;
@@ -225,13 +224,13 @@ impl <T> MessageStream<T> where T: Read {
 
 
 #[derive(Debug)]
-struct InProgressMessage {
-    message: ProtocolMessage,
+struct InProgressMessage<E: FloEvent> {
+    message: ProtocolMessage<E>,
     body_read_pos: usize,
 }
 
-impl InProgressMessage {
-    fn new(message: ProtocolMessage) -> InProgressMessage {
+impl <E: FloEvent> InProgressMessage<E> {
+    fn new(message: ProtocolMessage<E>) -> InProgressMessage<E> {
         InProgressMessage {
             message: message,
             body_read_pos: 0,
@@ -256,7 +255,7 @@ impl InProgressMessage {
     }
 }
 
-fn get_body_buffer(message: &mut ProtocolMessage) -> Option<&mut Vec<u8>> {
+fn get_body_buffer<E: FloEvent>(message: &mut ProtocolMessage<E>) -> Option<&mut Vec<u8>> {
     match *message {
         ProtocolMessage::ProduceEvent(ref mut event) => Some(&mut event.data),
         _ => None
@@ -273,26 +272,18 @@ fn copy_until_capacity(src: &[u8], dst: &mut Vec<u8>) -> usize {
 
 
 #[derive(Debug)]
-pub struct MessageWriter<'a> {
-    message: Cow<'a, ProtocolMessage>,
+pub struct MessageWriter<E: FloEvent> {
+    message: ProtocolMessage<E>,
     body_position: usize,
     body_len: usize,
     header_written: bool,
 }
 
-impl <'a> MessageWriter<'a> {
-    pub fn new(message: &'a ProtocolMessage) -> MessageWriter<'a> {
-        MessageWriter {
-            message: Cow::Borrowed(message),
-            body_position: 0,
-            body_len: 0,
-            header_written: false,
-        }
-    }
+impl <E: FloEvent> MessageWriter<E> {
 
-    pub fn new_owned(message: ProtocolMessage) -> MessageWriter<'static> {
+    pub fn new_owned(message: ProtocolMessage<E>) -> MessageWriter<E> {
         MessageWriter {
-            message: Cow::Owned(message),
+            message: message,
             body_position: 0,
             body_len: 0,
             header_written: false,

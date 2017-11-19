@@ -16,8 +16,9 @@ pub use self::connection_handler::{ConnectionHandler, ConnectionHandlerResult};
 
 pub type ConnectionId = usize;
 
-pub type ClientSender = ::futures::sync::mpsc::UnboundedSender<ProtocolMessage>;
-pub type ClientReceiver = ::futures::sync::mpsc::UnboundedReceiver<ProtocolMessage>;
+use engine::event_stream::partition::segment::PersistentEvent;
+pub type ClientSender = ::futures::sync::mpsc::UnboundedSender<ProtocolMessage<PersistentEvent>>;
+pub type ClientReceiver = ::futures::sync::mpsc::UnboundedReceiver<ProtocolMessage<OwnedFloEvent>>;
 
 pub fn create_client_channels() -> (ClientSender, ClientReceiver) {
     ::futures::sync::mpsc::unbounded()

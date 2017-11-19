@@ -16,7 +16,7 @@ use tokio_core::io::Io;
 use futures::{Stream, Sink};
 
 use protocol::{ProtocolMessage, ErrorMessage};
-use event::{FloEventId, ActorId, VersionVector};
+use event::{FloEventId, ActorId, VersionVector, OwnedFloEvent};
 use codec::EventCodec;
 use self::recv::MessageRecvStream;
 use self::send::MessageSendSink;
@@ -25,8 +25,8 @@ use self::ops::{ProduceOne, ProduceAll, EventToProduce, Consume, Handshake};
 
 pub use self::tcp_connect::{tcp_connect, tcp_connect_with, AsyncTcpClientConnect};
 pub use self::current_stream_state::{CurrentStreamState, PartitionState};
-pub type MessageSender = Box<Sink<SinkItem=ProtocolMessage, SinkError=io::Error>>;
-pub type MessageReceiver = Box<Stream<Item=ProtocolMessage, Error=io::Error>>;
+pub type MessageSender = Box<Sink<SinkItem=ProtocolMessage<OwnedFloEvent>, SinkError=io::Error>>;
+pub type MessageReceiver = Box<Stream<Item=ProtocolMessage<OwnedFloEvent>, Error=io::Error>>;
 
 pub const DEFAULT_RECV_BATCH_SIZE: u32 = 1000;
 

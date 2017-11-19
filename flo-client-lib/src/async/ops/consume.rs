@@ -5,7 +5,7 @@ use std::io;
 use futures::{Future, Async, Poll, Stream};
 
 use event::VersionVector;
-use protocol::{ProtocolMessage, NewConsumerStart, CONSUME_UNLIMITED, RecvEvent};
+use protocol::{ProtocolMessage, NewConsumerStart, CONSUME_UNLIMITED, OwnedFloEvent};
 use async::{AsyncConnection, ErrorType};
 use async::ops::{SendMessage, SendError, AwaitResponse, AwaitResponseError, RequestResponse};
 use ::Event;
@@ -283,7 +283,7 @@ impl <D: Debug> EventReceiver<D> {
         Ok(Async::Ready(PollSuccess::NewState(new_state)))
     }
 
-    fn convert_received(&mut self, event: RecvEvent, op_id: u32) -> PollState<D> {
+    fn convert_received(&mut self, event: OwnedFloEvent, op_id: u32) -> PollState<D> {
         let event = event.into_owned();
         let event_id = event.id;
         let converted = {
