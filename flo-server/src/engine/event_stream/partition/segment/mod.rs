@@ -9,8 +9,8 @@ use std::path::Path;
 use memmap::{Mmap, Protection};
 
 use self::mmap::{MmapAppender};
-use new_engine::event_stream::partition::{get_events_file, SegmentNum};
-use new_engine::event_stream::partition::index::PartitionIndex;
+use engine::event_stream::partition::{get_events_file, SegmentNum};
+use engine::event_stream::partition::index::PartitionIndex;
 use event::{Timestamp, FloEvent, EventCounter, time};
 use self::mmap::{MmapReader};
 
@@ -190,7 +190,7 @@ mod test {
 
     use super::*;
     use event::*;
-    use new_engine::event_stream::partition::index::PartitionIndex;
+    use engine::event_stream::partition::index::PartitionIndex;
 
     fn future_time(seconds_in_future: i64) -> Timestamp {
         time::now() + Duration::seconds(seconds_in_future)

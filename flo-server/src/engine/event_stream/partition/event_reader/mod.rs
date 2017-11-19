@@ -4,9 +4,9 @@ use std::io;
 
 use event::{FloEvent, ActorId};
 
-use new_engine::ConnectionId;
-use new_engine::event_stream::partition::{SharedReaderRefs, SegmentNum};
-use new_engine::event_stream::partition::segment::{SegmentReader, PersistentEvent};
+use engine::ConnectionId;
+use engine::event_stream::partition::{SharedReaderRefs, SegmentNum};
+use engine::event_stream::partition::segment::{SegmentReader, PersistentEvent};
 
 pub use self::namespace::NamespaceGlob;
 

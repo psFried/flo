@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use futures::task::AtomicTask;
 
-use new_engine::ConnectionId;
-use new_engine::event_stream::partition::ConsumerNotifier;
+use engine::ConnectionId;
+use engine::event_stream::partition::ConsumerNotifier;
 use atomics::{AtomicBoolReader, AtomicBoolWriter};
 
 

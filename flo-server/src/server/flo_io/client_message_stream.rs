@@ -3,7 +3,7 @@ use std::io::{self, Read};
 use futures::{Poll, Async};
 use futures::stream::Stream;
 
-use new_engine::ConnectionId;
+use engine::ConnectionId;
 use protocol::{MessageStream, ProtocolMessage};
 
 

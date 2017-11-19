@@ -10,7 +10,7 @@ use futures::{Async, Poll, AsyncSink, StartSend, Sink, Stream, Future};
 use tokio_core::reactor::Handle;
 
 use protocol::*;
-use new_engine::{ConnectionId, ClientSender, EngineRef};
+use engine::{ConnectionId, ClientSender, EngineRef};
 use self::connection_state::ConnectionState;
 use self::consumer::ConsumerConnectionState;
 use self::producer::ProducerConnectionState;
@@ -128,10 +128,10 @@ mod test {
 
     use super::*;
     use event::ActorId;
-    use new_engine::{SYSTEM_STREAM_NAME, system_stream_name};
-    use new_engine::event_stream::EventStreamRef;
-    use new_engine::event_stream::partition::*;
-    use new_engine::ClientReceiver;
+    use engine::{SYSTEM_STREAM_NAME, system_stream_name};
+    use engine::event_stream::EventStreamRef;
+    use engine::event_stream::partition::*;
+    use engine::ClientReceiver;
     use atomics::{AtomicCounterWriter, AtomicBoolWriter};
 
     struct Fixture {

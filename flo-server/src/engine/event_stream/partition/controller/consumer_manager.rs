@@ -1,6 +1,6 @@
 
-use new_engine::ConnectionId;
-use new_engine::event_stream::partition::ConsumerNotifier;
+use engine::ConnectionId;
+use engine::event_stream::partition::ConsumerNotifier;
 
 pub struct ConsumerManager {
     uncommitted_consumers: Vec<Box<ConsumerNotifier>>,
