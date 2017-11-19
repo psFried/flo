@@ -127,7 +127,6 @@ mod test {
     use tokio_core::reactor::Core;
 
     use super::*;
-    use protocol::*;
     use event::ActorId;
     use new_engine::{SYSTEM_STREAM_NAME, system_stream_name};
     use new_engine::event_stream::EventStreamRef;
