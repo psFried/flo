@@ -26,7 +26,6 @@ extern crate tempdir;
 
 pub mod logging;
 pub mod server;
-pub mod engine;
 pub mod embedded;
 pub mod new_engine;
 pub mod event_loops;
