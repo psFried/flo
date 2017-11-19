@@ -128,14 +128,22 @@ pub struct EventIterator<D: Debug> {
 }
 
 
-impl <D: Debug> Into<SyncConnection<D>> for EventIterator<D> {
-    // TODO: introduce some safety guarantees about when an iterator is converted back into a connection
-    fn into(self) -> SyncConnection<D> {
+impl <D: Debug> EventIterator<D> {
+    /// Stops the consumer and returns the connection for re-use. Stopping the consumer _may_ require a round trip communication
+    /// with the server, so this method returns a `Result` in case there is an error in that process. If an error occurs, the
+    /// connection is simply closed since it is possible for it to be left in an invalid state
+    pub fn stop_consuming(self) -> Result<SyncConnection<D>, ErrorType> {
         let EventIterator {consume, connection} = self;
-        // TODO: tell the server that the consumer is stopping
-        let connection = consume.map(|stream| stream.into()).or(connection).unwrap();
-        SyncConnection {
-            async_connection: Some(connection)
+        match consume {
+            Some(in_progress) => {
+                run_future(in_progress.stop()).map(|connection| {
+                    connection.into()
+                })
+            }
+            None => {
+                // one of either consume or connection must be populated
+                Ok(connection.unwrap().into())
+            }
         }
     }
 }

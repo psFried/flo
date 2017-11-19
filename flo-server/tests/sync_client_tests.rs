@@ -57,6 +57,31 @@ fn vv_from_start() -> VersionVector {
 }
 
 #[test]
+fn consumer_stops_early_and_connection_is_returned() {
+    test_with_server("consumer_stops_early", Vec::new(), |port| {
+        let mut connection = SyncConnection::connect(localhost(port), "large event", StringCodec, None).expect("failed to connect");
+
+        for _ in 0..5 {
+            connection.produce_to(1, "/test", None, String::new())
+                    .expect("failed to produce event");
+        }
+
+        let mut vv = VersionVector::new();
+        vv.set(FloEventId::new(1, 0));
+        // start consuming without any limit
+        let mut first_consume = connection.into_consumer("/test", &vv, None, true);
+
+        let event = first_consume.next().expect("next returned None").expect("first consume failed");
+        assert_eq!(FloEventId::new(1, 1), event.id);
+        connection = first_consume.stop_consuming().expect("failed to stop consuming");
+
+        let mut second_consume = connection.into_consumer("/test", &vv, None, true);
+        let event = second_consume.next().expect("next returned None").expect("second consume failed");
+        assert_eq!(FloEventId::new(1, 1), event.id);
+    });
+}
+
+#[test]
 fn produce_then_consume_one_large_event() {
     test_with_server("consumer_produces_and_consumes_a_large_event", Vec::new(), |port| {
         let mut connection = SyncConnection::connect(localhost(port), "large event", ::flo_client_lib::codec::RawCodec, None).expect("failed to connect");
