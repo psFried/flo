@@ -11,7 +11,7 @@ use std::sync::{Arc, RwLock};
 use std::thread;
 use std::io;
 
-use atomics::{AtomicCounterReader, AtomicBoolReader};
+use atomics::{AtomicCounterReader, AtomicBoolReader, AtomicBoolWriter};
 use engine::ConnectionId;
 use engine::event_stream::{EventStreamOptions, HighestCounter};
 use protocol::{ProduceEvent};
@@ -157,6 +157,22 @@ impl SharedReaderRefs {
 pub type AsyncProduceResult = Result<ProduceResponseReceiver, PartitionSendError>;
 pub type AsyncConsumeResult = Result<ConsumeResponseReceiver, PartitionSendError>;
 
+#[derive(Debug)]
+pub struct PartitionRefMut {
+    status_writer: AtomicBoolWriter,
+    partition_ref: PartitionRef,
+}
+
+impl PartitionRefMut {
+    pub fn partition_num(&self) -> ActorId {
+        self.partition_ref.partition_num()
+    }
+
+    pub fn clone_ref(&self) -> PartitionRef {
+        self.partition_ref.clone()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct PartitionRef {
     event_stream_name: String,
@@ -223,23 +239,36 @@ impl PartitionRef {
 pub fn initialize_existing_partition(partition_num: ActorId,
                                      event_stream_data_dir: &Path,
                                      event_stream_options: &EventStreamOptions,
-                                     status_reader: AtomicBoolReader,
-                                     highest_counter: HighestCounter) -> io::Result<PartitionRef> {
+                                     highest_counter: HighestCounter) -> io::Result<PartitionRefMut> {
 
+    let status_writer = AtomicBoolWriter::with_value(true);
     let partition_data_dir = get_partition_data_dir(event_stream_data_dir, partition_num);
-    let partition_impl = PartitionImpl::init_existing(partition_num, partition_data_dir, event_stream_options, status_reader, highest_counter)?;
-    run_partition(partition_impl)
+    let partition_impl = PartitionImpl::init_existing(partition_num, partition_data_dir, event_stream_options, status_writer.reader(), highest_counter)?;
+
+    run_partition(partition_impl).map(|partition_ref| {
+        PartitionRefMut {
+            status_writer,
+            partition_ref,
+        }
+    })
 }
 
 pub fn initialize_new_partition(partition_num: ActorId,
                                 event_stream_data_dir: &Path,
                                 event_stream_options: &EventStreamOptions,
-                                status_reader: AtomicBoolReader,
-                                highest_counter: HighestCounter) -> io::Result<PartitionRef> {
+                                highest_counter: HighestCounter) -> io::Result<PartitionRefMut> {
 
+    // TODO: for now we are starting every partition as primary. This will need to change once we have a raft implementation
+    let status_writer = AtomicBoolWriter::with_value(true);
     let partition_data_dir = get_partition_data_dir(event_stream_data_dir, partition_num);
-    let partition_impl = PartitionImpl::init_new(partition_num, partition_data_dir, &event_stream_options, status_reader, highest_counter)?;
-    run_partition(partition_impl)
+    let partition_impl = PartitionImpl::init_new(partition_num, partition_data_dir, &event_stream_options, status_writer.reader(), highest_counter)?;
+    run_partition(partition_impl).map(|partition_ref| {
+        PartitionRefMut {
+            status_writer,
+            partition_ref,
+        }
+    })
+
 }
 
 pub fn run_partition(partition_impl: PartitionImpl) -> io::Result<PartitionRef> {

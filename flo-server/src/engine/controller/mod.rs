@@ -32,7 +32,6 @@ pub fn start_controller(options: ControllerOptions, remote: Remote) -> io::Resul
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
     use std::sync::atomic::AtomicUsize;
-    use atomics::AtomicBoolWriter;
 
     debug!("Starting Flo Controller with: {:?}", options);
 
@@ -42,18 +41,15 @@ pub fn start_controller(options: ControllerOptions, remote: Remote) -> io::Resul
     // Once we start work on clustering, the system stream will be used exclusively for cluster communication
     // and other event stream(s) will be used for application data
 
-    // There's only one machine, so all partitions will always be primary. Again, this is just temporary
-    let status_writer = AtomicBoolWriter::with_value(true);
-
     let system_stream_dir = storage_dir.join(&default_stream_options.name);
     let event_stream_ref = if system_stream_dir.exists() {
-        init_existing_event_stream(system_stream_dir, default_stream_options, status_writer.reader(), remote)?
+        init_existing_event_stream(system_stream_dir, default_stream_options, remote)?
     } else {
-        init_new_event_stream(system_stream_dir, default_stream_options, status_writer.reader(), remote)?
+        init_new_event_stream(system_stream_dir, default_stream_options, remote)?
     };
 
     let mut streams = HashMap::with_capacity(1);
-    streams.insert(system_stream_name(), event_stream_ref);
+    streams.insert(system_stream_name(), event_stream_ref.clone_ref());
 
     let engine = EngineRef {
         current_connection_id: Arc::new(AtomicUsize::new(0)),

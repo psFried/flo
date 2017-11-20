@@ -9,8 +9,7 @@ use futures::{Sink, Async, AsyncSink, StartSend, Poll};
 use chrono::Duration;
 
 use event::ActorId;
-use self::partition::{PartitionRef, initialize_existing_partition, initialize_new_partition};
-use atomics::AtomicBoolReader;
+use self::partition::{PartitionRef, PartitionRefMut, initialize_existing_partition, initialize_new_partition};
 
 pub use self::highest_counter::HighestCounter;
 
@@ -44,7 +43,7 @@ impl EventStreamOptions {
 
 
 
-pub fn init_existing_event_stream(event_stream_storage_dir: PathBuf, options: EventStreamOptions, status_reader: AtomicBoolReader, remote: Remote) -> Result<EventStreamRef, io::Error> {
+pub fn init_existing_event_stream(event_stream_storage_dir: PathBuf, options: EventStreamOptions, remote: Remote) -> Result<EventStreamRefMut, io::Error> {
 
     debug!("Starting initialization of existing event stream with: {:?}", &options);
     let partition_numbers = determine_existing_partition_dirs(&event_stream_storage_dir)?;
@@ -54,34 +53,34 @@ pub fn init_existing_event_stream(event_stream_storage_dir: PathBuf, options: Ev
 
     let mut partition_refs = Vec::with_capacity(partition_numbers.len());
     for partition_num in partition_numbers {
-        let partition_ref = initialize_existing_partition(partition_num, &event_stream_storage_dir, &options, status_reader.clone(), highest_counter.clone())?;
+        let partition_ref = initialize_existing_partition(partition_num, &event_stream_storage_dir, &options, highest_counter.clone())?;
         partition_refs.push(partition_ref);
     }
 
     partition_refs.sort_by_key(|part| part.partition_num());
 
     let tick_interval = options.get_tick_interval();
-    let event_stream = EventStreamRef {
+    let event_stream = EventStreamRefMut {
         name: options.name,
         partitions: partition_refs,
     };
 
-    start_tick_timer(remote, event_stream.clone(), tick_interval);
+    start_tick_timer(remote, event_stream.clone_ref(), tick_interval);
 
     Ok(event_stream)
 }
 
-pub fn init_new_event_stream(event_stream_storage_dir: PathBuf, options: EventStreamOptions, status_reader: AtomicBoolReader, remote: Remote) -> Result<EventStreamRef, io::Error> {
+pub fn init_new_event_stream(event_stream_storage_dir: PathBuf, options: EventStreamOptions, remote: Remote) -> Result<EventStreamRefMut, io::Error> {
 
     debug!("Starting initialization of new event stream with: {:?}", &options);
     let partition_count = options.num_partitions;
     ::std::fs::create_dir_all(&event_stream_storage_dir)?;
 
-    let mut partition_refs: Vec<PartitionRef> = Vec::with_capacity(partition_count as usize);
+    let mut partition_refs: Vec<PartitionRefMut> = Vec::with_capacity(partition_count as usize);
     let highest_counter = HighestCounter::zero();
     for i in 0..partition_count {
         let partition_num: ActorId = i + 1;
-        let partition_ref = initialize_new_partition(partition_num, &event_stream_storage_dir, &options, status_reader.clone(), highest_counter.clone())?;
+        let partition_ref = initialize_new_partition(partition_num, &event_stream_storage_dir, &options, highest_counter.clone())?;
 
         // We're appending these in order so that they can be indexed up by partition number later
         partition_refs.push(partition_ref);
@@ -90,11 +89,11 @@ pub fn init_new_event_stream(event_stream_storage_dir: PathBuf, options: EventSt
     let tick_interval = options.get_tick_interval();
     let EventStreamOptions{name, ..} = options;
     debug!("Finished initializing {} partitions for event stream: '{}'", partition_count, &name);
-    let event_stream = EventStreamRef {
+    let event_stream = EventStreamRefMut {
         name: name,
         partitions: partition_refs,
     };
-    start_tick_timer(remote, event_stream.clone(), tick_interval);
+    start_tick_timer(remote, event_stream.clone_ref(), tick_interval);
     Ok(event_stream)
 }
 
@@ -124,6 +123,23 @@ fn determine_existing_partition_dirs(event_stream_dir: &Path) -> io::Result<Vec<
     Ok(partition_numbers)
 }
 
+#[derive(Debug)]
+pub struct EventStreamRefMut {
+    name: String,
+    partitions: Vec<PartitionRefMut>
+}
+
+impl EventStreamRefMut {
+    pub fn clone_ref(&self) -> EventStreamRef {
+        let name = self.name.clone();
+        let partitions = self.partitions.iter().map(|part| part.clone_ref()).collect::<Vec<PartitionRef>>();
+
+        EventStreamRef {
+            name,
+            partitions
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct EventStreamRef {
