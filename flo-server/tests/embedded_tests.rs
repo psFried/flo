@@ -123,7 +123,7 @@ fn oldest_events_are_dropped_from_beginning_of_stream_after_time_based_expiratio
         }
 
         let start_time = ::std::time::Instant::now();
-        let until_all_expired = (retention_duration + segment_duration + chrono::Duration::milliseconds(250)).to_std().unwrap();
+        let until_all_expired = (retention_duration + segment_duration + chrono::Duration::milliseconds(750)).to_std().unwrap();
         let mut first_event_id = FloEventId::new(1, 0);
         let mut vv = VersionVector::new();
         vv.set(first_event_id);
