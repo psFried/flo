@@ -13,4 +13,9 @@ os:
 matrix:
   allow_failures:
     - rust: nightly
+  exclude:
+    - rust: beta
+      os: osx
+    - rust: nightly
+      os: osx
 script: cargo test --all --no-fail-fast
