@@ -124,6 +124,7 @@ impl Debug for ConnectionHandler {
 #[cfg(test)]
 mod test {
     use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
     use tokio_core::reactor::Core;
 
     use super::*;
@@ -132,6 +133,7 @@ mod test {
     use engine::event_stream::EventStreamRef;
     use engine::event_stream::partition::*;
     use engine::ClientReceiver;
+    use engine::controller::SystemStreamRef;
     use atomics::{AtomicCounterWriter, AtomicBoolWriter};
 
     struct Fixture {
@@ -156,10 +158,11 @@ mod test {
                                              counter_writer.reader(),
                                              primary.reader(),
                                              tx);
-            let stream = EventStreamRef::new(system_stream_name(), vec![part_ref]);
-            let mut streams = HashMap::new();
-            streams.insert(system_stream_name(), stream);
-            let engine = EngineRef::new(streams);
+
+            let system_stream = SystemStreamRef::new(part_ref);
+
+            let streams = Arc::new(Mutex::new(HashMap::new()));
+            let engine = EngineRef::new(system_stream, streams);
 
             let subject = ConnectionHandler::new(456, client_sender, engine.clone(), reactor.handle());
 

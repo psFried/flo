@@ -25,6 +25,8 @@ pub struct ConnectionState {
 impl ConnectionState {
     pub fn new(connection_id: ConnectionId, client_sender: ClientSender, engine: EngineRef, reactor: Handle) -> ConnectionState {
         let event_stream = engine.get_default_stream();
+        debug!("Starting connection_id: {} with event_stream: {}", connection_id, event_stream.name());
+
         ConnectionState {
             client_name: None,
             connection_id,

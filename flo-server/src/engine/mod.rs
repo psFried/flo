@@ -11,7 +11,7 @@ use protocol::ProtocolMessage;
 use event::OwnedFloEvent;
 use self::event_stream::EventStreamRef;
 
-pub use self::controller::{ControllerOptions, start_controller};
+pub use self::controller::{ControllerOptions, SystemStreamRef, start_controller};
 pub use self::connection_handler::{ConnectionHandler, ConnectionHandlerResult};
 
 pub type ConnectionId = usize;
@@ -40,6 +40,7 @@ pub fn system_stream_name() -> String {
 #[derive(Clone, Debug)]
 pub struct EngineRef {
     current_connection_id: Arc<AtomicUsize>,
+    system_stream: SystemStreamRef,
     event_streams: Arc<Mutex<HashMap<String, EventStreamRef>>>
 }
 
@@ -50,14 +51,11 @@ pub enum ConnectError {
 }
 
 impl EngineRef {
-    pub fn new(streams: HashMap<String, EventStreamRef>) -> EngineRef {
-        if !streams.contains_key(SYSTEM_STREAM_NAME) {
-            panic!("Cannot create engine ref without a default stream");
-        }
-
+    pub fn new(system_stream: SystemStreamRef, event_streams: Arc<Mutex<HashMap<String, EventStreamRef>>>) -> EngineRef {
         EngineRef {
             current_connection_id: Arc::new(AtomicUsize::new(0)),
-            event_streams: Arc::new(Mutex::new(streams))
+            system_stream,
+            event_streams
         }
     }
 
@@ -76,8 +74,13 @@ impl EngineRef {
     }
 
     pub fn get_default_stream(&self) -> EventStreamRef {
-        let guard = self.event_streams.lock().unwrap();
-        guard.get(SYSTEM_STREAM_NAME).unwrap().clone()
+        let stream = {
+            let guard = self.event_streams.lock().unwrap();
+            guard.values().next().map(|stream| stream.clone())
+        };
+        stream.unwrap_or_else(|| {
+            self.system_stream.to_event_stream()
+        })
     }
 }
 

@@ -13,7 +13,7 @@ use self::partition::{PartitionRef, PartitionRefMut, initialize_existing_partiti
 
 pub use self::highest_counter::HighestCounter;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct EventStreamOptions {
     pub name: String,
     pub num_partitions: u16,
@@ -130,6 +130,10 @@ pub struct EventStreamRefMut {
 }
 
 impl EventStreamRefMut {
+    pub fn get_name(&self) -> &str {
+        &self.name
+    }
+
     pub fn clone_ref(&self) -> EventStreamRef {
         let name = self.name.clone();
         let partitions = self.partitions.iter().map(|part| part.clone_ref()).collect::<Vec<PartitionRef>>();
