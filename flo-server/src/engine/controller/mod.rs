@@ -49,7 +49,10 @@ impl FloController {
                event_streams: HashMap<String, EventStreamRefMut>,
                storage_dir: PathBuf,
                default_stream_options: EventStreamOptions) -> FloController {
-        let stream_refs = to_stream_refs(&event_streams);
+
+        let stream_refs = event_streams.iter().map(|(k, v)| {
+            (k.to_owned(), v.clone_ref())
+        }).collect::<HashMap<String, EventStreamRef>>();
 
         FloController {
             shared_event_stream_refs: Arc::new(Mutex::new(stream_refs)),
@@ -72,12 +75,6 @@ impl FloController {
     fn get_shared_streams(&self) -> Arc<Mutex<HashMap<String, EventStreamRef>>> {
         self.shared_event_stream_refs.clone()
     }
-}
-
-fn to_stream_refs(mut_refs: &HashMap<String, EventStreamRefMut>) -> HashMap<String, EventStreamRef> {
-    mut_refs.iter().map(|(k, v)| {
-        (k.to_owned(), v.clone_ref())
-    }).collect::<HashMap<String, EventStreamRef>>()
 }
 
 

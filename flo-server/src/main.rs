@@ -144,6 +144,7 @@ fn main() {
     let run_finished = server::run(server_options);
     if let Some(err) = run_finished.err() {
         error!("IO Error: {}", err);
+        ::std::process::exit(1);
     }
     info!("Shutdown server");
 }
