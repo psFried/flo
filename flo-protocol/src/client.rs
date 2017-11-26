@@ -242,7 +242,9 @@ pub struct ClientAnnounce {
 pub enum ProtocolMessage<E: FloEvent> {
     /// Always the first message sent by the client to the server
     Announce(ClientAnnounce),
-    /// Contains basic information about the status of an event stream
+    /// Always the first message sent by a server to another server
+    PeerAnnounce(EventStreamStatus),
+    /// Sent in response to an Announce message. Contains basic information about the status of an event stream
     StreamStatus(EventStreamStatus),
     /// Set the event stream that the client will work with
     SetEventStream(SetEventStream),
@@ -301,15 +303,35 @@ named!{parse_partition_status<PartitionStatus>,
 named!{parse_event_stream_status<ProtocolMessage<OwnedFloEvent>>,
     chain!(
         _tag: tag!(&[EVENT_STREAM_STATUS]) ~
+        status: parse_event_stream_status_struct,
+        || {
+            ProtocolMessage::StreamStatus(status)
+        }
+    )
+}
+
+named!{parse_peer_announce<ProtocolMessage<OwnedFloEvent>>,
+    chain!(
+        _tag: tag!(&[PEER_ANNOUNCE]) ~
+        status: parse_event_stream_status_struct,
+        || {
+            ProtocolMessage::PeerAnnounce(status)
+        }
+    )
+}
+
+
+named!{parse_event_stream_status_struct<EventStreamStatus>,
+    chain!(
         op_id: be_u32 ~
         name: parse_str ~
         partitions: length_count!(be_u16, parse_partition_status),
         || {
-            ProtocolMessage::StreamStatus(EventStreamStatus {
+            EventStreamStatus {
                 op_id: op_id,
                 name: name,
                 partitions: partitions,
-            })
+            }
         }
     )
 }
@@ -524,7 +546,8 @@ named!{pub parse_any<ProtocolMessage<OwnedFloEvent>>, alt!(
         parse_new_start_consuming |
         parse_set_event_stream |
         parse_event_stream_status |
-        parse_client_announce
+        parse_client_announce |
+        parse_peer_announce
 )}
 
 fn serialize_new_produce_header(header: &ProduceEvent, buf: &mut [u8]) -> usize {
@@ -571,9 +594,9 @@ fn serialize_receive_event_header<E: FloEvent>(event: &E, buf: &mut [u8]) -> usi
             .finish()
 }
 
-fn serialize_event_stream_status(status: &EventStreamStatus, buf: &mut [u8]) -> usize {
+fn serialize_event_stream_status(header: u8, status: &EventStreamStatus, buf: &mut [u8]) -> usize {
     Serializer::new(buf)
-            .write_u8(EVENT_STREAM_STATUS)
+            .write_u8(header)
             .write_u32(status.op_id)
             .write_string(&status.name)
             .write_u16(status.partitions.len() as u16)
@@ -599,8 +622,11 @@ impl <E: FloEvent> ProtocolMessage<E> {
                         .write_u32(announce.consume_batch_size.unwrap_or(0))
                         .finish()
             }
+            ProtocolMessage::PeerAnnounce(ref status) => {
+                serialize_event_stream_status(PEER_ANNOUNCE, status, buf)
+            }
             ProtocolMessage::StreamStatus(ref status) => {
-                serialize_event_stream_status(status, buf)
+                serialize_event_stream_status(EVENT_STREAM_STATUS, status, buf)
             }
             ProtocolMessage::SetEventStream(ref set_stream) => {
                 Serializer::new(buf)
@@ -742,6 +768,22 @@ mod test {
             consume_batch_size: Some(456),
         };
         test_serialize_then_deserialize(&ProtocolMessage::Announce(announce));
+    }
+
+    #[test]
+    fn peer_announce() {
+        let status = EventStreamStatus {
+            op_id: 1,
+            name: "system".to_owned(),
+            partitions: vec![
+                PartitionStatus {
+                    partition_num: 1,
+                    head: 638,
+                    primary: true,
+                }
+            ],
+        };
+        test_serialize_then_deserialize(&ProtocolMessage::PeerAnnounce(status));
     }
 
     #[test]

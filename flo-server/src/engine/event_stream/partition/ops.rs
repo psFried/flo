@@ -2,11 +2,13 @@
 use std::io;
 use std::fmt::{self, Debug};
 use std::time::Instant;
+use std::net::SocketAddr;
 
 use futures::sync::oneshot;
 
 use engine::event_stream::partition::{EventFilter, PartitionReader};
 use engine::ConnectionId;
+use engine::system_stream::SystemOp;
 use protocol::ProduceEvent;
 use event::{FloEventId, EventCounter};
 
@@ -59,6 +61,7 @@ pub enum OpType {
     Consume(ConsumeOperation),
     StopConsumer,
     Tick,
+    System(SystemOp)
 }
 
 
@@ -70,6 +73,19 @@ pub struct Operation {
 }
 
 impl Operation {
+
+    fn new(connection_id: ConnectionId, op_type: OpType) -> Operation {
+        Operation {
+            connection_id,
+            client_message_recv_time: Instant::now(),
+            op_type
+        }
+    }
+
+    fn system(connection_id: ConnectionId, system_op: SystemOp) -> Operation {
+        Operation::new(connection_id, OpType::System(system_op))
+    }
+
     pub fn consume(connection_id: ConnectionId, notifier: Box<ConsumerNotifier>, filter: EventFilter, start_exclusive: EventCounter) -> (Operation, ConsumeResponseReceiver) {
         let (tx, rx) = oneshot::channel();
         let consume = ConsumeOperation {
@@ -78,20 +94,12 @@ impl Operation {
             start_exclusive: start_exclusive,
             notifier: notifier,
         };
-        let op = Operation {
-            connection_id: connection_id,
-            client_message_recv_time: Instant::now(),
-            op_type: OpType::Consume(consume)
-        };
+        let op = Operation::new(connection_id, OpType::Consume(consume));
         (op, rx)
     }
 
     pub fn stop_consumer(connection_id: ConnectionId) -> Operation {
-        Operation {
-            connection_id: connection_id,
-            client_message_recv_time: Instant::now(),
-            op_type: OpType::StopConsumer
-        }
+        Operation::new(connection_id, OpType::StopConsumer)
     }
 
     pub fn produce(connection_id: ConnectionId, op_id: u32, events: Vec<ProduceEvent>) -> (Operation, ProduceResponseReceiver) {
@@ -101,20 +109,16 @@ impl Operation {
             op_id: op_id,
             events: events
         };
-        let op = Operation {
-            connection_id: connection_id,
-            client_message_recv_time: Instant::now(),
-            op_type: OpType::Produce(produce),
-        };
+        let op = Operation::new(connection_id, OpType::Produce(produce));
         (op, rx)
     }
 
     pub fn tick() -> Operation {
-        Operation {
-            connection_id: 0,
-            client_message_recv_time: Instant::now(),
-            op_type: OpType::Tick,
-        }
+        Operation::new(0, OpType::Tick)
+    }
+
+    pub fn outgoing_connection_failed(connection_id: ConnectionId, socket_addr: SocketAddr) -> Operation {
+        Operation::system(connection_id, SystemOp::OutgoingConnectionFailed(socket_addr))
     }
 }
 

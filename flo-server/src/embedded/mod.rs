@@ -66,6 +66,7 @@ fn message_to_owned(server_msg: SendProtocolMessage) -> ClientProtocolMessage {
         ProtocolMessage::CursorCreated(op) => ProtocolMessage::CursorCreated(op),
         ProtocolMessage::Announce(op) => ProtocolMessage::Announce(op),
         ProtocolMessage::SetEventStream(op) => ProtocolMessage::SetEventStream(op),
+        ProtocolMessage::PeerAnnounce(op) => ProtocolMessage::PeerAnnounce(op),
     }
 }
 

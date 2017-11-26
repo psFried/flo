@@ -1,3 +1,5 @@
+mod cluster_state;
+mod outgoing_io;
 mod system_stream;
 mod initialization;
 
@@ -15,7 +17,7 @@ use engine::event_stream::partition::controller::PartitionImpl;
 use atomics::AtomicBoolWriter;
 
 
-pub use self::initialization::{start_controller, ControllerOptions};
+pub use self::initialization::{start_controller, ControllerOptions, ClusterOptions};
 pub use self::system_stream::SystemStreamRef;
 
 
@@ -48,6 +50,7 @@ impl FloController {
                system_primary_setter: AtomicBoolWriter,
                event_streams: HashMap<String, EventStreamRefMut>,
                storage_dir: PathBuf,
+               cluster_options: Option<ClusterOptions>,
                default_stream_options: EventStreamOptions) -> FloController {
 
         let stream_refs = event_streams.iter().map(|(k, v)| {

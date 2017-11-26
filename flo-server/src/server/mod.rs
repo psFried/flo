@@ -1,4 +1,3 @@
-mod flo_io;
 mod server_options;
 
 use futures::{Stream, Sink, Future};
@@ -13,20 +12,32 @@ pub use self::server_options::{ServerOptions, MemoryLimit, MemoryUnit};
 
 
 
-pub fn run(options: ServerOptions) -> io::Result<()> {
+pub fn run(mut options: ServerOptions) -> io::Result<()> {
     #[allow(deprecated)]
     use tokio_core::io::Io;
     use engine::{ControllerOptions,
+                     ClusterOptions,
                      start_controller,
                      system_stream_name,
                      create_client_channels,
                      ConnectionHandler};
     use engine::event_stream::EventStreamOptions;
-    use self::flo_io::{ProtocolMessageStream, ServerMessageStream};
+    use flo_io::{ProtocolMessageStream, ServerMessageStream};
 
     const ONE_GB: usize = 1024 * 1024 * 1024;
 
     let (join_handle, mut event_loop_handles) = event_loops::spawn_event_loop_threads(options.max_io_threads).unwrap();
+
+    let this_address = options.this_instance_address.take();
+    let peer_addresses = options.cluster_addresses.take();
+
+    let cluster_options = this_address.map(|server_addr| {
+        let peers = peer_addresses.unwrap();
+        ClusterOptions {
+            this_instance_address: server_addr,
+            peer_addresses: peers,
+        }
+    });
 
     let controller_options = ControllerOptions {
         storage_dir: options.data_dir.clone(),
@@ -37,6 +48,7 @@ pub fn run(options: ServerOptions) -> io::Result<()> {
             max_segment_duration: options.event_eviction_period,
             segment_max_size_bytes: ONE_GB,
         },
+        cluster_options,
     };
 
     let engine_ref = start_controller(controller_options, event_loop_handles.next_handle())?;

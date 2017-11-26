@@ -12,6 +12,7 @@ extern crate log;
 use std::fmt::Debug;
 use std::thread;
 use std::time::Duration;
+use std::net::SocketAddr;
 
 use tokio_core::reactor::Core;
 use futures::{Stream, Future};
@@ -40,6 +41,7 @@ fn integration_test<F>(test_name: &'static str, stream_opts: EventStreamOptions,
     let controller_options = ControllerOptions {
         storage_dir: tmp_dir.path().to_owned(),
         default_stream_options: stream_opts,
+        cluster_options: None,
     };
     let reactor = Core::new().expect("failed to create reactor");
     let embedded_server = run_embedded_server(controller_options, reactor.remote()).expect("failed to run embedded server");

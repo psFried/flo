@@ -152,6 +152,10 @@ impl PartitionImpl {
                 self.expire_old_events();
                 Ok(())
             }
+            other @ _ => {
+                warn!("received unexpected OpType: {:?}", other);
+                Ok(())
+            }
         }
     }
 

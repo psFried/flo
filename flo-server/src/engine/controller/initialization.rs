@@ -2,6 +2,7 @@ use std::path::{PathBuf, Path};
 use std::collections::HashMap;
 use std::fs::DirEntry;
 use std::io;
+use std::net::SocketAddr;
 
 use tokio_core::reactor::Remote;
 
@@ -27,11 +28,18 @@ use super::{FloController, SystemStreamRef};
 pub struct ControllerOptions {
     pub storage_dir: PathBuf,
     pub default_stream_options: EventStreamOptions,
+    pub cluster_options: Option<ClusterOptions>,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct ClusterOptions {
+    pub this_instance_address: SocketAddr,
+    pub peer_addresses: Vec<SocketAddr>,
 }
 
 pub fn start_controller(options: ControllerOptions, remote: Remote) -> io::Result<EngineRef> {
     debug!("Starting Flo Controller with: {:?}", options);
-    let ControllerOptions{storage_dir, default_stream_options} = options;
+    let ControllerOptions{storage_dir, default_stream_options, cluster_options} = options;
 
     // TODO: initialize system primary status to false once clustering works
     let system_primary_writer = AtomicBoolWriter::with_value(true);
@@ -51,6 +59,7 @@ pub fn start_controller(options: ControllerOptions, remote: Remote) -> io::Resul
                                                     system_primary_writer,
                                                     user_streams,
                                                     storage_dir,
+                                                    cluster_options,
                                                     default_stream_options);
 
             let (system_partition_tx, system_partition_rx) = create_partition_channels();

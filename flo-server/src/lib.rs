@@ -16,7 +16,8 @@ extern crate clap;
 extern crate log4rs;
 extern crate num_cpus;
 extern crate byteorder;
-
+extern crate serde;
+extern crate serde_json;
 
 #[cfg(test)]
 extern crate env_logger;
@@ -24,6 +25,7 @@ extern crate env_logger;
 extern crate tempdir;
 
 
+pub mod flo_io;
 pub mod logging;
 pub mod server;
 pub mod embedded;

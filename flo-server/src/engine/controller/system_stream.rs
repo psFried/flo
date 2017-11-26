@@ -1,6 +1,8 @@
+use std::net::SocketAddr;
 
-use engine::event_stream::partition::{PartitionRef};
+use engine::event_stream::partition::{PartitionRef, Operation};
 use engine::event_stream::EventStreamRef;
+use engine::ConnectionId;
 
 
 
@@ -22,6 +24,12 @@ impl SystemStreamRef {
         let partition_ref = vec![self.inner.clone()];
         EventStreamRef::new(name, partition_ref)
     }
+
+    pub fn outgoing_connection_failed(&mut self, connection_id: ConnectionId, socket_addr: SocketAddr) {
+        let op = Operation::outgoing_connection_failed(connection_id, socket_addr);
+        self.inner.send(op).expect("System Stream has shutdown");
+    }
+
 }
 
 

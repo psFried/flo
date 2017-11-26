@@ -1,4 +1,5 @@
 pub mod event_stream;
+pub mod system_stream;
 
 mod controller;
 mod connection_handler;
@@ -11,7 +12,7 @@ use protocol::ProtocolMessage;
 use event::OwnedFloEvent;
 use self::event_stream::EventStreamRef;
 
-pub use self::controller::{ControllerOptions, SystemStreamRef, start_controller};
+pub use self::controller::{ControllerOptions, ClusterOptions, SystemStreamRef, start_controller};
 pub use self::connection_handler::{ConnectionHandler, ConnectionHandlerResult};
 
 pub type ConnectionId = usize;
@@ -59,6 +60,10 @@ impl EngineRef {
         }
     }
 
+    pub fn system_stream(&mut self) -> &mut SystemStreamRef {
+        &mut self.system_stream
+    }
+
     pub fn next_connection_id(&self) -> ConnectionId {
         let old = self.current_connection_id.fetch_add(1, ::std::sync::atomic::Ordering::SeqCst);
         old + 1
@@ -81,6 +86,10 @@ impl EngineRef {
         stream.unwrap_or_else(|| {
             self.system_stream.to_event_stream()
         })
+    }
+
+    pub fn get_system_stream(&self) -> SystemStreamRef {
+        self.system_stream.clone()
     }
 }
 

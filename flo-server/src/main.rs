@@ -77,17 +77,18 @@ fn app_args() -> App<'static, 'static> {
                     .default_value("512")
                     .help("Maximum amount of memory in megabytes to use for the event cache"))
             .arg(Arg::with_name("join-cluster-address")
-                    .requires("actor-id")
+                    .requires("server-addr")
                     .long("peer-addr")
                     .short("P")
                     .multiple(true)
                     .value_name("HOST:PORT")
                     .help("address of another Flo instance to join a cluster; this argument may be supplied multiple times"))
-            .arg(Arg::with_name("actor-id")
-                    .long("actor-id")
+            .arg(Arg::with_name("server-addr")
+                    .requires("join-cluster-address")
+                    .long("server-addr")
                     .short("A")
                     .takes_value(true)
-                    .help("The id to assign to this node in the cluster. This MUST be unique within the cluster. Will be removed once cluster support doesn't suck so bad"))
+                    .help("The socket address that this server is reachable at. Will be removed once cluster support doesn't suck so bad"))
             .arg(Arg::with_name("max-io-threads")
                     .long("max-io-threads")
                     .takes_value(true)
@@ -105,7 +106,11 @@ fn main() {
     let data_dir = PathBuf::from(args.value_of("data-dir").unwrap_or("."));
     let max_cache_memory = get_max_cache_mem_amount(&args);
     let cluster_addresses = get_cluster_addresses(&args);
-    let actor_id = args.value_of("actor-id").unwrap_or("1").parse::<ActorId>().expect("ActorId must be an unsigned 16 bit integer");
+    let this_address = args.value_of("server-addr").map(|addr_string| {
+        SocketAddr::from_str(addr_string).map_err(|err| {
+            format!("Cannot parse server-addr argument: {}", err)
+        }).or_bail()
+    });
     let max_io_threads = args.value_of("max-io-threads").map(|value| {
         value.parse::<usize>().map_err(|_| {
             format!("Invalid max-io-threads argument: '{}' value must be a positive integer", value)
@@ -134,8 +139,8 @@ fn main() {
         port: port,
         data_dir: data_dir,
         max_cache_memory: max_cache_memory,
+        this_instance_address: this_address,
         cluster_addresses: cluster_addresses,
-        actor_id: actor_id,
         max_io_threads: max_io_threads,
     };
 

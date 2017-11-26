@@ -5,6 +5,8 @@ use protocol::*;
 
 use engine::{ConnectionId, ClientSender, EngineRef, SendProtocolMessage};
 use engine::event_stream::EventStreamRef;
+use engine::system_stream::SystemOp;
+use engine::controller::SystemStreamRef;
 
 use super::ConnectionHandlerResult;
 
@@ -51,7 +53,7 @@ impl ConnectionState {
     }
 
     pub fn send_stream_status(&mut self, op_id: u32) -> ConnectionHandlerResult {
-        let status = create_stream_status(op_id, &self.event_stream);
+        let status = self.get_current_stream_status(op_id);
         self.send_to_client(ProtocolMessage::StreamStatus(status)).map_err(|err| {
             format!("Error sending message to client: {:?}", err)
         })
@@ -63,7 +65,7 @@ impl ConnectionState {
         match self.engine.get_stream(&name) {
             Ok(new_stream) => {
                 debug!("Setting event stream to '{}' for {:?}", new_stream.name(), self);
-                let stream_status = create_stream_status(op_id, &new_stream);
+                let stream_status = self.get_current_stream_status(op_id);
                 self.event_stream = new_stream;
                 self.send_to_client(ProtocolMessage::StreamStatus(stream_status))
             }
@@ -86,32 +88,47 @@ impl ConnectionState {
         }
     }
 
+    pub fn set_to_system_stream(&mut self) {
+        debug!("Setting connection_id: {} to system stream", self.connection_id);
+        if self.event_stream.name() != ::engine::SYSTEM_STREAM_NAME {
+            let system_stream = self.engine.get_system_stream().to_event_stream();
+            self.event_stream = system_stream;
+        }
+    }
+
+    pub fn get_current_stream_status(&self, op_id: u32) -> EventStreamStatus {
+        let stream_ref = &self.event_stream;
+        let mut partition_statuses = Vec::with_capacity(stream_ref.get_partition_count() as usize);
+
+        for partition in stream_ref.partitions() {
+            let num = partition.partition_num();
+            let head = partition.get_highest_event_counter();
+            let primary = partition.is_primary();
+            let part_status = PartitionStatus {
+                partition_num: num,
+                head: head,
+                primary: primary,
+            };
+            partition_statuses.push(part_status);
+        }
+
+        EventStreamStatus {
+            op_id: op_id,
+            name: stream_ref.name().to_owned(),
+            partitions: partition_statuses,
+        }
+    }
+
     pub fn send_to_client(&self, message: SendProtocolMessage) -> ConnectionHandlerResult {
+        trace!("Sending to connection_id: {}, message: {:?}", self.connection_id, message);
         self.client_sender.unbounded_send(message).map_err(|e| {
             format!("Error sending outgoing message for connection_id: {}, message: {:?}", self.connection_id, e.into_inner())
         })
     }
-}
 
-fn create_stream_status(op_id: u32, stream_ref: &EventStreamRef) -> EventStreamStatus {
-    let mut partition_statuses = Vec::with_capacity(stream_ref.get_partition_count() as usize);
-
-    for partition in stream_ref.partitions() {
-        let num = partition.partition_num();
-        let head = partition.get_highest_event_counter();
-        let primary = partition.is_primary();
-        let part_status = PartitionStatus {
-            partition_num: num,
-            head: head,
-            primary: primary,
-        };
-        partition_statuses.push(part_status);
-    }
-
-    EventStreamStatus {
-        op_id: op_id,
-        name: stream_ref.name().to_owned(),
-        partitions: partition_statuses,
+    pub fn get_system_stream(&mut self) -> &mut SystemStreamRef {
+        self.engine.system_stream()
     }
 }
+
 

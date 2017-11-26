@@ -18,6 +18,9 @@ futures = "0.1.16"
 glob = "0.2"
 chrono = "^0.2"
 memmap = "0.5.2"
+libc = "0.2.33"
+serde = "0.9.15"
+serde_json = "0.9.10"
 
 [dev-dependencies]
 env_logger = "*"

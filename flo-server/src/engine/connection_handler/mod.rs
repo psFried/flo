@@ -1,6 +1,7 @@
 pub mod connection_state;
 mod consumer;
 mod producer;
+mod peer;
 
 use std::fmt::{self, Debug};
 use std::io;
@@ -14,12 +15,14 @@ use engine::{ConnectionId, ClientSender, EngineRef, ReceivedProtocolMessage};
 use self::connection_state::ConnectionState;
 use self::consumer::ConsumerConnectionState;
 use self::producer::ProducerConnectionState;
+use self::peer::PeerConnectionState;
 
 
 pub struct ConnectionHandler {
     common_state: ConnectionState,
     consumer_state: ConsumerConnectionState,
     producer_state: ProducerConnectionState,
+    peer_state: PeerConnectionState,
 }
 
 
@@ -31,7 +34,15 @@ impl ConnectionHandler {
             common_state: ConnectionState::new(connection, client_sender, engine, handle),
             consumer_state: ConsumerConnectionState::new(),
             producer_state: ProducerConnectionState::new(),
+            peer_state: PeerConnectionState::Init,
         }
+    }
+
+    pub fn upgrade_to_outgoing_peer(&mut self) {
+        debug!("upgrading connection_id: {} to outgoing peer connection", self.common_state.connection_id);
+        let ConnectionHandler{ref mut common_state, ref mut peer_state, .. } = *self;
+
+        peer_state.initiate_outgoing_peer_connection(common_state);
     }
 
     pub fn can_process(&self, _message: &ReceivedProtocolMessage) -> bool {
@@ -41,7 +52,7 @@ impl ConnectionHandler {
     pub fn handle_incoming_message(&mut self, message: ReceivedProtocolMessage) -> ConnectionHandlerResult {
         trace!("client: {:?}, received message: {:?}", self.common_state, message);
 
-        let ConnectionHandler{ref mut common_state, ref mut consumer_state, ref mut producer_state } = *self;
+        let ConnectionHandler{ref mut common_state, ref mut consumer_state, ref mut producer_state, .. } = *self;
 
         match message {
             ProtocolMessage::SetEventStream(SetEventStream{op_id, name}) => {
@@ -87,7 +98,7 @@ impl Sink for ConnectionHandler {
     }
 
     fn poll_complete(&mut self) -> Poll<(), Self::SinkError> {
-        let ConnectionHandler {ref mut common_state, ref mut consumer_state, ref mut producer_state} = *self;
+        let ConnectionHandler {ref mut common_state, ref mut consumer_state, ref mut producer_state, ..} = *self;
 
         if producer_state.requires_poll_complete() {
             producer_state.poll_produce_complete(common_state)

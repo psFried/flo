@@ -45,8 +45,8 @@ pub struct ServerOptions {
     pub event_retention_duration: Duration,
     pub event_eviction_period: Duration,
     pub max_cache_memory: MemoryLimit,
+    pub this_instance_address: Option<SocketAddr>,
     pub cluster_addresses: Option<Vec<SocketAddr>>,
-    pub actor_id: ActorId,
     pub max_io_threads: Option<usize>,
 }
 

@@ -227,7 +227,7 @@ impl PartitionRef {
         self.send(Operation::tick())
     }
 
-    fn send(&mut self, op: Operation) -> PartitionSendResult {
+    pub fn send(&mut self, op: Operation) -> PartitionSendResult {
         self.sender.send(op).map_err(|err| {
             PartitionSendError(err.0)
         })
