@@ -11,6 +11,7 @@ use futures::{Future, Stream, Sink};
 use event_loops::LoopHandles;
 use engine::{EngineRef, create_client_channels, ReceivedProtocolMessage};
 
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub struct CreateOutgoingConnection(SocketAddr);
 
 impl CreateOutgoingConnection {
@@ -23,10 +24,20 @@ impl CreateOutgoingConnection {
     }
 }
 
-pub struct OutgoingConnectionCreator(::futures::sync::mpsc::UnboundedSender<CreateOutgoingConnection>);
+pub trait OutgoingConnectionCreator {
+    fn establish_connection(&mut self, create: CreateOutgoingConnection);
+}
+
+pub struct OutgoingConnectionCreatorImpl(::futures::sync::mpsc::UnboundedSender<CreateOutgoingConnection>);
+
+impl OutgoingConnectionCreator for OutgoingConnectionCreatorImpl {
+    fn establish_connection(&mut self, create: CreateOutgoingConnection) {
+        self.0.unbounded_send(create).expect("Failed to send message to OutgoingConnectionCreator channel");
+    }
+}
 
 
-pub fn start_outgoing_io(mut event_loops: LoopHandles, engine_ref: EngineRef) -> OutgoingConnectionCreator {
+pub fn start_outgoing_io(mut event_loops: LoopHandles, engine_ref: EngineRef) -> OutgoingConnectionCreatorImpl {
     let (tx, rx) = ::futures::sync::mpsc::unbounded::<CreateOutgoingConnection>();
 
     let remote = event_loops.next_handle();
@@ -35,7 +46,7 @@ pub fn start_outgoing_io(mut event_loops: LoopHandles, engine_ref: EngineRef) ->
     let future = rx.for_each( move |create_outgoing| {
 
         let engine = engine_ref.clone();
-        event_loops.next_handle().spawn(|handle| {
+        event_loops.next_handle().spawn(move |handle| {
             handle_outgoing_connection(handle.clone(), create_outgoing, engine)
         });
         Ok(())
@@ -45,7 +56,7 @@ pub fn start_outgoing_io(mut event_loops: LoopHandles, engine_ref: EngineRef) ->
         future
     });
 
-    OutgoingConnectionCreator(tx)
+    OutgoingConnectionCreatorImpl(tx)
 }
 
 
