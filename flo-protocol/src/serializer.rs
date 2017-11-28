@@ -1,3 +1,4 @@
+use std::net::{SocketAddr, SocketAddrV4};
 use byteorder::{ByteOrder, BigEndian};
 
 pub struct Serializer<'a> {
@@ -71,6 +72,19 @@ impl <'a> Serializer<'a> {
             serializer = fun(serializer, item);
         }
         serializer
+    }
+
+    pub fn write_socket_addr(mut self, addr: SocketAddr) -> Self {
+        match addr {
+            SocketAddr::V4(v4) => {
+                self.write_u8(4u8)
+                        .write_bytes(v4.ip().octets())
+                        .write_u16(v4.port())
+            }
+            SocketAddr::V6(v6) => {
+                unimplemented!()
+            }
+        }
     }
 
     pub fn finish(self) -> usize {
