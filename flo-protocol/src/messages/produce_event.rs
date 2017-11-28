@@ -1,5 +1,5 @@
 
-use nom::{be_u64, be_u32, be_u16};
+use nom::{be_u32, be_u16};
 use event::{OwnedFloEvent, FloEventId, ActorId};
 use serializer::Serializer;
 use super::{ProtocolMessage, parse_str, parse_event_id};

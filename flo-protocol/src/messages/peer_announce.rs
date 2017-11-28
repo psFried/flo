@@ -34,7 +34,8 @@ named!{pub parse_peer_announce<ProtocolMessage<OwnedFloEvent>>,
 pub fn serialize_peer_announce(announce: &PeerAnnounce, buf: &mut [u8]) -> usize {
     Serializer::new(buf)
             .write_u8(PEER_ANNOUNCE)
-            .write_socket_addr(announce.peer_address)
+            .write_u32(announce.protocol_version)
             .write_u32(announce.op_id)
+            .write_socket_addr(announce.peer_address)
             .finish()
 }

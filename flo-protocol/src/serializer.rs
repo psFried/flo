@@ -1,4 +1,4 @@
-use std::net::{SocketAddr, SocketAddrV4};
+use std::net::SocketAddr;
 use byteorder::{ByteOrder, BigEndian};
 
 pub struct Serializer<'a> {
@@ -74,7 +74,7 @@ impl <'a> Serializer<'a> {
         serializer
     }
 
-    pub fn write_socket_addr(mut self, addr: SocketAddr) -> Self {
+    pub fn write_socket_addr(self, addr: SocketAddr) -> Self {
         match addr {
             SocketAddr::V4(v4) => {
                 self.write_u8(4u8)
@@ -82,7 +82,10 @@ impl <'a> Serializer<'a> {
                         .write_u16(v4.port())
             }
             SocketAddr::V6(v6) => {
-                unimplemented!()
+                // TODO: would it be correct to also serialize flowinfo and scope_id for ipv6 addresses?
+                self.write_u8(6)
+                        .write_bytes(v6.ip().octets())
+                        .write_u16(v6.port())
             }
         }
     }
@@ -181,5 +184,32 @@ mod test {
         let subject = Serializer::new(&mut buffer[..]);
         let result = subject.write_u16(987).write_u64(23).write_string("bacon").finish();
         assert_eq!(17, result);
+    }
+
+    fn address(addr: &str) -> SocketAddr {
+        ::std::str::FromStr::from_str(addr).unwrap()
+    }
+
+    #[test]
+    fn ipv4_socket_address_is_written() {
+        let mut buffer = [0; 64];
+        let result = {
+            let subject = Serializer::new(&mut buffer[..]);
+            subject.write_socket_addr(address("123.45.67.8:80")).finish()
+        };
+        let expected = [4, 123, 45, 67, 8, 0, 80];
+        assert_eq!(&expected, &buffer[..result]);
+    }
+
+    #[test]
+    fn ipv6_address_is_written() {
+        let mut buffer = [0; 64];
+        let result = {
+            let subject = Serializer::new(&mut buffer[..]);
+            let addr = address("[2001:db8::1]:8080");
+            subject.write_socket_addr(addr).finish()
+        };
+        let expected = [6, 32,1, 13,184, 0,0, 0,0, 0,0, 0,0, 0,0, 0,1, 31,144];
+        assert_eq!(&expected, &buffer[..result]);
     }
 }

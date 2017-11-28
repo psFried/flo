@@ -22,7 +22,7 @@ mod set_event_stream;
 mod receive_event;
 
 use nom::{be_u64, be_u32, be_u16, be_u8};
-use event::{time, OwnedFloEvent, FloEvent, FloEventId, ActorId, EventCounter, Timestamp};
+use event::{time, OwnedFloEvent, FloEvent, FloEventId, Timestamp};
 use serializer::Serializer;
 use std::net::SocketAddr;
 
