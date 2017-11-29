@@ -85,8 +85,6 @@ pub enum ProtocolMessage<E: FloEvent> {
     CursorCreated(CursorInfo),
     /// sent by a client to a server to tell the server to stop sending events. This is required in order to reuse the connection for multiple queries
     StopConsuming(u32),
-    /// Sent by the client to set the batch size to use for consuming. It is an error to send this message while consuming.
-    SetBatchSize(u32),
     /// Sent by the client to tell the server that it is ready for the next batch
     NextBatch,
     /// Sent by the server to notify a consumer that it has reached the end of a batch and that more events can be sent
@@ -173,14 +171,6 @@ named!{parse_version_vec<Vec<FloEventId>>,
 
 named!{parse_awaiting_events<ProtocolMessage<OwnedFloEvent>>, map!(tag!(&[AWAITING_EVENTS]), |_| {ProtocolMessage::AwaitingEvents})}
 
-named!{parse_set_batch_size<ProtocolMessage<OwnedFloEvent>>, chain!(
-    _tag: tag!(&[SET_BATCH_SIZE]) ~
-    batch_size: be_u32,
-    || {
-        ProtocolMessage::SetBatchSize(batch_size)
-    }
-)}
-
 named!{parse_next_batch<ProtocolMessage<OwnedFloEvent>>, map!(tag!(&[NEXT_BATCH]), |_| {ProtocolMessage::NextBatch})}
 
 named!{parse_end_of_batch<ProtocolMessage<OwnedFloEvent>>, map!(tag!(&[END_OF_BATCH]), |_| {ProtocolMessage::EndOfBatch})}
@@ -200,7 +190,6 @@ named!{pub parse_any<ProtocolMessage<OwnedFloEvent>>, alt!(
         parse_error_message |
         parse_awaiting_events |
         parse_new_producer_event |
-        parse_set_batch_size |
         parse_next_batch |
         parse_end_of_batch |
         parse_stop_consuming |
@@ -255,11 +244,6 @@ impl <E: FloEvent> ProtocolMessage<E> {
             }
             ProtocolMessage::Error(ref err_message) => {
                 serialize_error_message(err_message, buf)
-            }
-            ProtocolMessage::SetBatchSize(batch_size) => {
-                Serializer::new(buf).write_u8(SET_BATCH_SIZE)
-                                    .write_u32(batch_size)
-                                    .finish()
             }
             ProtocolMessage::NextBatch => {
                 buf[0] = NEXT_BATCH;
@@ -465,11 +449,6 @@ mod test {
     #[test]
     fn end_of_batch_is_serialized_and_parsed() {
         test_serialize_then_deserialize(&ProtocolMessage::EndOfBatch);
-    }
-
-    #[test]
-    fn set_batch_size_is_serialized_and_parsed() {
-        test_serialize_then_deserialize(&ProtocolMessage::SetBatchSize(1234567));
     }
 
     #[test]

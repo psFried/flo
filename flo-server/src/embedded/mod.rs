@@ -61,7 +61,6 @@ fn message_to_owned(server_msg: SendProtocolMessage) -> ClientProtocolMessage {
         ProtocolMessage::ProduceEvent(op) => ProtocolMessage::ProduceEvent(op),
         ProtocolMessage::NextBatch => ProtocolMessage::NextBatch,
         ProtocolMessage::EndOfBatch => ProtocolMessage::EndOfBatch,
-        ProtocolMessage::SetBatchSize(op) => ProtocolMessage::SetBatchSize(op),
         ProtocolMessage::NewStartConsuming(op) => ProtocolMessage::NewStartConsuming(op),
         ProtocolMessage::CursorCreated(op) => ProtocolMessage::CursorCreated(op),
         ProtocolMessage::Announce(op) => ProtocolMessage::Announce(op),
