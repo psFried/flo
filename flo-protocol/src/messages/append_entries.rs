@@ -4,10 +4,9 @@ use std::net::SocketAddr;
 use nom::{be_u64, be_u32, be_u8};
 use serializer::Serializer;
 use event::{EventCounter, OwnedFloEvent};
-use super::{FloInstanceId, ProtocolMessage};
+use super::{FloInstanceId, ProtocolMessage, Term};
 use super::flo_instance_id::parse_flo_instance_id;
 
-pub type Term = u64;
 
 pub const APPEND_ENTRIES_CALL_HEADER: u8 = 30;
 pub const APPEND_ENTRIES_RESPONSE_HEADER: u8 = 31;

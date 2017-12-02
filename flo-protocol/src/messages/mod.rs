@@ -21,6 +21,7 @@ mod event_stream_status;
 mod set_event_stream;
 mod receive_event;
 mod append_entries;
+mod request_vote;
 mod flo_instance_id;
 
 use nom::{be_u64, be_u32, be_u16, be_u8};
@@ -39,6 +40,7 @@ use self::event_stream_status::{parse_event_stream_status, serialize_event_strea
 use self::set_event_stream::{serialize_set_event_stream, parse_set_event_stream};
 use self::receive_event::{serialize_receive_event_header, parse_receive_event_header};
 use self::append_entries::{serialize_append_entries, parse_append_entries_call, serialize_append_response, parse_append_entries_response};
+use self::request_vote::{serialize_request_vote_call, parse_request_vote_call, serialize_request_vote_response, parse_request_vote_response};
 
 pub use self::client_announce::ClientAnnounce;
 pub use self::peer_announce::PeerAnnounce;
@@ -50,7 +52,10 @@ pub use self::cursor_info::CursorInfo;
 pub use self::event_stream_status::{EventStreamStatus, PartitionStatus};
 pub use self::set_event_stream::SetEventStream;
 pub use self::append_entries::{AppendEntriesCall, AppendEntriesResponse};
+pub use self::request_vote::{RequestVoteCall, RequestVoteResponse};
 pub use self::flo_instance_id::FloInstanceId;
+
+pub type Term = u64;
 
 pub mod headers {
     pub const CLIENT_AUTH: u8 = 1;
@@ -103,6 +108,8 @@ pub enum ProtocolMessage<E: FloEvent> {
     StopConsuming(u32),
     SystemAppendCall(AppendEntriesCall),
     SystemAppendResponse(AppendEntriesResponse),
+    RequestVote(RequestVoteCall),
+    VoteResponse(RequestVoteResponse),
 }
 
 named!{parse_str<String>,
@@ -194,6 +201,7 @@ named!{parse_version_vec<Vec<FloEventId>>,
     length_count!(be_u16, parse_zeroable_event_id)
 }
 
+named!{parse_bool<bool>, map!(::nom::be_u8, |val| { val == 1 } )}
 
 named!{parse_awaiting_events<ProtocolMessage<OwnedFloEvent>>, map!(tag!(&[AWAITING_EVENTS]), |_| {ProtocolMessage::AwaitingEvents})}
 
@@ -226,7 +234,9 @@ named!{pub parse_any<ProtocolMessage<OwnedFloEvent>>, alt!(
         parse_client_announce |
         parse_peer_announce |
         parse_append_entries_call |
-        parse_append_entries_response
+        parse_append_entries_response |
+        parse_request_vote_call |
+        parse_request_vote_response
 )}
 
 
@@ -286,6 +296,12 @@ impl <E: FloEvent> ProtocolMessage<E> {
             }
             ProtocolMessage::SystemAppendResponse(ref response) => {
                 serialize_append_response(response, buf)
+            }
+            ProtocolMessage::RequestVote(ref request) => {
+                serialize_request_vote_call(request, buf)
+            }
+            ProtocolMessage::VoteResponse(ref response) => {
+                serialize_request_vote_response(response, buf)
             }
         }
     }
@@ -358,6 +374,28 @@ mod test {
             }
         }
 
+    }
+
+    #[test]
+    fn serde_request_vote_response() {
+        let response = RequestVoteResponse {
+            op_id: 456,
+            term: 577,
+            vote_granted: true,
+        };
+        test_serialize_then_deserialize(&ProtocolMessage::VoteResponse(response));
+    }
+
+    #[test]
+    fn serde_request_vote_call() {
+        let request = RequestVoteCall {
+            op_id: 3,
+            term: 4,
+            candidate_id: FloInstanceId::generate_new(),
+            last_log_index: 567,
+            last_log_term: 8910,
+        };
+        test_serialize_then_deserialize(&ProtocolMessage::RequestVote(request));
     }
 
     #[test]
