@@ -20,6 +20,8 @@ mod cursor_info;
 mod event_stream_status;
 mod set_event_stream;
 mod receive_event;
+mod append_entries;
+mod flo_instance_id;
 
 use nom::{be_u64, be_u32, be_u16, be_u8};
 use event::{time, OwnedFloEvent, FloEvent, FloEventId, Timestamp};
@@ -36,16 +38,19 @@ use self::cursor_info::{parse_cursor_created, serialize_cursor_created};
 use self::event_stream_status::{parse_event_stream_status, serialize_event_stream_status};
 use self::set_event_stream::{serialize_set_event_stream, parse_set_event_stream};
 use self::receive_event::{serialize_receive_event_header, parse_receive_event_header};
+use self::append_entries::{serialize_append_entries, parse_append_entries_call, serialize_append_response, parse_append_entries_response};
 
 pub use self::client_announce::ClientAnnounce;
 pub use self::peer_announce::PeerAnnounce;
 pub use self::error::{ErrorMessage, ErrorKind};
 pub use self::produce_event::ProduceEvent;
 pub use self::event_ack::EventAck;
-pub use self::consume_start::NewConsumerStart;
+pub use self::consume_start::{NewConsumerStart, CONSUME_UNLIMITED};
 pub use self::cursor_info::CursorInfo;
 pub use self::event_stream_status::{EventStreamStatus, PartitionStatus};
 pub use self::set_event_stream::SetEventStream;
+pub use self::append_entries::{AppendEntriesCall, AppendEntriesResponse};
+pub use self::flo_instance_id::FloInstanceId;
 
 pub mod headers {
     pub const CLIENT_AUTH: u8 = 1;
@@ -65,37 +70,39 @@ use self::headers::*;
 /// Defines all the distinct messages that can be sent over the wire between client and server.
 #[derive(Debug, PartialEq, Clone)]
 pub enum ProtocolMessage<E: FloEvent> {
-    /// Always the first message sent by the client to the server
-    Announce(ClientAnnounce),
-    /// Always the first message sent by a server to another server
-    PeerAnnounce(PeerAnnounce),
-    /// Sent in response to an Announce message. Contains basic information about the status of an event stream
-    StreamStatus(EventStreamStatus),
-    /// Set the event stream that the client will work with
-    SetEventStream(SetEventStream),
-    /// Signals a client's intent to publish a new event. The server will respond with either an `EventAck` or an `ErrorMessage`
-    ProduceEvent(ProduceEvent),
-    /// This is a complete event as serialized over the wire. This message is sent to to both consumers as well as other servers
-    ReceiveEvent(E),
     /// Sent from the server to client to acknowledge that an event was persisted successfully.
     AckEvent(EventAck),
-    /// New message sent by a client to start reading events from the stream
-    NewStartConsuming(NewConsumerStart),
-    /// send by the server to a client in response to a StartConsuming message to indicate the start of a series of events
-    CursorCreated(CursorInfo),
-    /// sent by a client to a server to tell the server to stop sending events. This is required in order to reuse the connection for multiple queries
-    StopConsuming(u32),
-    /// Sent by the client to tell the server that it is ready for the next batch
-    NextBatch,
-    /// Sent by the server to notify a consumer that it has reached the end of a batch and that more events can be sent
-    /// upon receipt of a `NextBatch` message by the server.
-    EndOfBatch,
     /// Sent by the server to an active consumer to indicate that it has reached the end of the stream. The server will
     /// continue to send events as more come in, but this just lets the client know that it may be some time before more
     /// events are available. This message will only be sent at most once to a given consumer.
     AwaitingEvents,
+    /// Always the first message sent by the client to the server
+    Announce(ClientAnnounce),
+    /// send by the server to a client in response to a StartConsuming message to indicate the start of a series of events
+    CursorCreated(CursorInfo),
+    /// Sent by the server to notify a consumer that it has reached the end of a batch and that more events can be sent
+    /// upon receipt of a `NextBatch` message by the server.
+    EndOfBatch,
     /// Represents an error response to any other message
     Error(ErrorMessage),
+    /// New message sent by a client to start reading events from the stream
+    NewStartConsuming(NewConsumerStart),
+    /// Sent by the client to tell the server that it is ready for the next batch
+    NextBatch,
+    /// Signals a client's intent to publish a new event. The server will respond with either an `EventAck` or an `ErrorMessage`
+    ProduceEvent(ProduceEvent),
+    /// Always the first message sent by a server to another server
+    PeerAnnounce(PeerAnnounce),
+    /// This is a complete event as serialized over the wire. This message is sent to to both consumers as well as other servers
+    ReceiveEvent(E),
+    /// Set the event stream that the client will work with
+    SetEventStream(SetEventStream),
+    /// Sent in response to an Announce message. Contains basic information about the status of an event stream
+    StreamStatus(EventStreamStatus),
+    /// sent by a client to a server to tell the server to stop sending events. This is required in order to reuse the connection for multiple queries
+    StopConsuming(u32),
+    SystemAppendCall(AppendEntriesCall),
+    SystemAppendResponse(AppendEntriesResponse),
 }
 
 named!{parse_str<String>,
@@ -109,7 +116,7 @@ named!{parse_str<String>,
 
 
 
-named!{parse_socket_addr<SocketAddr>, alt!(parse_socket_addr_v4)}
+named!{parse_socket_addr<SocketAddr>, alt!(parse_socket_addr_v4 | parse_socket_addr_v6)}
 
 named!{parse_socket_addr_v4<SocketAddr>,
     chain!(
@@ -123,6 +130,25 @@ named!{parse_socket_addr_v4<SocketAddr>,
             let ip = ::std::net::Ipv4Addr::new(one, two, three, four);
             let addr = ::std::net::SocketAddrV4::new(ip, port);
             SocketAddr::V4(addr)
+        }
+    )
+}
+
+named!{parse_socket_addr_v6<SocketAddr>,
+    chain!(
+        _tag: tag!(&[6u8]) ~
+        a: be_u16 ~
+        b: be_u16 ~
+        c: be_u16 ~
+        d: be_u16 ~
+        e: be_u16 ~
+        f: be_u16 ~
+        g: be_u16 ~
+        h: be_u16 ~
+        port: be_u16,
+        || {
+            let ip = ::std::net::Ipv6Addr::new(a, b, c, d, e, f, g, h);
+            ::std::net::SocketAddrV6::new(ip, port, 0, 0).into()
         }
     )
 }
@@ -198,7 +224,9 @@ named!{pub parse_any<ProtocolMessage<OwnedFloEvent>>, alt!(
         parse_set_event_stream |
         parse_event_stream_status |
         parse_client_announce |
-        parse_peer_announce
+        parse_peer_announce |
+        parse_append_entries_call |
+        parse_append_entries_response
 )}
 
 
@@ -252,6 +280,12 @@ impl <E: FloEvent> ProtocolMessage<E> {
             ProtocolMessage::EndOfBatch => {
                 buf[0] = END_OF_BATCH;
                 1
+            }
+            ProtocolMessage::SystemAppendCall(ref append) => {
+                serialize_append_entries(append, buf)
+            }
+            ProtocolMessage::SystemAppendResponse(ref response) => {
+                serialize_append_response(response, buf)
             }
         }
     }
@@ -327,6 +361,32 @@ mod test {
     }
 
     #[test]
+    fn serde_append_entries_response() {
+        let response = AppendEntriesResponse {
+            op_id: 45,
+            from_peer: FloInstanceId::generate_new(),
+            term: 345,
+            success: false,
+        };
+        test_serialize_then_deserialize(&ProtocolMessage::SystemAppendResponse(response));
+    }
+
+    #[test]
+    fn serde_append_entries_call() {
+        let append = AppendEntriesCall {
+            op_id: 345,
+            leader_id: FloInstanceId::generate_new(),
+            term: 987,
+            prev_entry_term: 986,
+            prev_entry_index: 134,
+            leader_commit_index: 131,
+            entry_count: 567,
+        };
+
+        test_serialize_then_deserialize(&ProtocolMessage::SystemAppendCall(append));
+    }
+
+    #[test]
     fn serde_client_announce() {
         let announce = ClientAnnounce {
             protocol_version: 1,
@@ -338,7 +398,18 @@ mod test {
     }
 
     #[test]
-    fn serde_peer_announce() {
+    fn serde_peer_announce_with_ipv6_address() {
+        let addr = ::std::str::FromStr::from_str("[1:3:5::2]:4321").unwrap();
+        let announce = PeerAnnounce {
+            protocol_version: 9,
+            peer_address: addr,
+            op_id: 6543,
+        };
+        test_serialize_then_deserialize(&ProtocolMessage::PeerAnnounce(announce));
+    }
+
+    #[test]
+    fn serde_peer_announce_with_ipv4_address() {
         let addr = ::std::str::FromStr::from_str("123.234.12.1:4321").unwrap();
         let announce = PeerAnnounce {
             protocol_version: 9,

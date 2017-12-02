@@ -1,6 +1,10 @@
 use std::net::SocketAddr;
 use byteorder::{ByteOrder, BigEndian};
 
+pub trait FloSerialize {
+    fn serialize<'a>(&'a self, serializer: Serializer<'a>) -> Serializer<'a>;
+}
+
 pub struct Serializer<'a> {
     buffer: &'a mut [u8],
     position: usize,
@@ -13,6 +17,10 @@ impl <'a> Serializer<'a> {
             buffer: buffer,
             position: 0,
         }
+    }
+
+    pub fn write<T: FloSerialize>(self, value: &'a T) -> Self {
+        value.serialize(self)
     }
 
     pub fn write_bool(self, value: bool) -> Self {
@@ -82,7 +90,6 @@ impl <'a> Serializer<'a> {
                         .write_u16(v4.port())
             }
             SocketAddr::V6(v6) => {
-                // TODO: would it be correct to also serialize flowinfo and scope_id for ipv6 addresses?
                 self.write_u8(6)
                         .write_bytes(v6.ip().octets())
                         .write_u16(v6.port())

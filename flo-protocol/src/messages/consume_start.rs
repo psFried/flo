@@ -8,6 +8,7 @@ use super::{ProtocolMessage, parse_str, parse_version_vec};
 
 pub const NEW_START_CONSUMING: u8 = 17;
 
+pub const CONSUME_UNLIMITED: u64 = 0;
 
 /// New message sent from client to server to begin reading events from the stream
 #[derive(Debug, PartialEq, Clone)]

@@ -6,6 +6,8 @@ extern crate log;
 
 extern crate flo_event as event;
 extern crate byteorder;
+extern crate chrono;
+extern crate rand;
 
 pub mod serializer;
 mod messages;
