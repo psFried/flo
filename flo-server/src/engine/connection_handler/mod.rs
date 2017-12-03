@@ -2,6 +2,7 @@ pub mod connection_state;
 mod consumer;
 mod producer;
 mod peer;
+mod input;
 
 use std::fmt::{self, Debug};
 use std::io;
@@ -17,6 +18,7 @@ use self::consumer::ConsumerConnectionState;
 use self::producer::ProducerConnectionState;
 use self::peer::PeerConnectionState;
 
+pub use self::input::{ConnectionHandlerInput, ConnectionControl};
 
 pub struct ConnectionHandler {
     common_state: ConnectionState,
@@ -47,6 +49,17 @@ impl ConnectionHandler {
 
     pub fn can_process(&self, _message: &ReceivedProtocolMessage) -> bool {
         !self.producer_state.requires_poll_complete() && !self.consumer_state.requires_poll_complete()
+    }
+
+    pub fn handle_control(&mut self, control: ConnectionControl) -> ConnectionHandlerResult {
+        debug!("client: {:?} processing control: {:?}", self.common_state, control);
+
+        match control {
+            ConnectionControl::InitiateOutgoingSystemConnection => {
+                self.upgrade_to_outgoing_peer()
+            }
+        }
+        Ok(())
     }
 
     pub fn handle_incoming_message(&mut self, message: ReceivedProtocolMessage) -> ConnectionHandlerResult {
@@ -82,15 +95,23 @@ impl ConnectionHandler {
 
 
 impl Sink for ConnectionHandler {
-    type SinkItem = ReceivedProtocolMessage;
+    type SinkItem = ConnectionHandlerInput;
     type SinkError = io::Error;
 
     fn start_send(&mut self, item: Self::SinkItem) -> StartSend<Self::SinkItem, Self::SinkError> {
-        if !self.can_process(&item) {
-            return Ok(AsyncSink::NotReady(item));
-        }
+        match item {
+            ConnectionHandlerInput::IncomingMessage(message) => {
+                if !self.can_process(&message) {
+                    return Ok(AsyncSink::NotReady(message.into()));
+                }
 
-        self.handle_incoming_message(item).map(|()| {
+                self.handle_incoming_message(message)
+            }
+            ConnectionHandlerInput::Control(control) => {
+                self.handle_control(control)
+            }
+
+        }.map(|()| {
             AsyncSink::Ready
         }).map_err(|err_string| {
             io::Error::new(io::ErrorKind::Other, err_string)

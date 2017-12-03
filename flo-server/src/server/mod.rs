@@ -88,7 +88,8 @@ pub fn run(mut options: ServerOptions) -> io::Result<()> {
 
                 let server_to_client = ServerMessageStream::new(connection_id, client_rx, tcp_writer);
 
-                let client_message_stream = ProtocolMessageStream::new(connection_id, tcp_reader);
+                let client_message_stream = ProtocolMessageStream::new(connection_id, tcp_reader)
+                        .map(|proto_message| proto_message.into());
                 let connection_handler = ConnectionHandler::new(
                     connection_id,
                     client_tx.clone(),

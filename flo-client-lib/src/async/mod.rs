@@ -485,12 +485,14 @@ mod test {
                 PartitionStatus {
                     partition_num: 1,
                     head: 7,
-                    primary: true
+                    primary: true,
+                    primary_server_address: None,
                 },
                 PartitionStatus {
                     partition_num: 2,
                     head: 5,
                     primary: false,
+                    primary_server_address: None,
                 }
             ],
         })];
@@ -508,11 +510,13 @@ mod test {
                     partition_num: 1,
                     head: 7,
                     writable: true,
+                    primary_server_addr: None,
                 },
                 PartitionState {
                     partition_num: 2,
                     head: 5,
-                    writable: false
+                    writable: false,
+                    primary_server_addr: None,
                 }
             ]
         };

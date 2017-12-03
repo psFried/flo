@@ -6,7 +6,7 @@ use std::fmt::Debug;
 use std::io;
 
 use tokio_core::reactor::{Handle, Remote};
-use futures::Stream;
+use futures::{Stream, Sink, StartSend, AsyncSink, Async, Poll};
 
 use protocol::ProtocolMessage;
 use flo_client_lib::async::{AsyncConnection, MessageReceiver, MessageSender, ClientProtocolMessage};
@@ -34,6 +34,9 @@ impl EmbeddedFloServer {
                                                             client_sender.clone(),
                                                             engine_ref,
                                                              handle);
+        let embedded_connection = EmbeddedConnectionHandler {
+            inner: connection_handler
+        };
 
         let receiver = client_receiver.map(|message| {
             message_to_owned(message)
@@ -41,7 +44,7 @@ impl EmbeddedFloServer {
             io::Error::new(io::ErrorKind::UnexpectedEof, format!("Error reading from channel: {:?}", recv_err))
         });
         let recv = Box::new(receiver) as MessageReceiver;
-        let send = Box::new(connection_handler) as MessageSender;
+        let send = Box::new(embedded_connection) as MessageSender;
 
         AsyncConnection::new(name, send, recv, codec)
     }
@@ -81,3 +84,25 @@ pub fn run_embedded_server(options: ControllerOptions, remote: Remote) -> io::Re
     })
 }
 
+struct EmbeddedConnectionHandler {
+    inner: ConnectionHandler
+}
+
+impl Sink for EmbeddedConnectionHandler {
+    type SinkItem = ClientProtocolMessage;
+    type SinkError = io::Error;
+
+    fn start_send(&mut self, item: Self::SinkItem) -> StartSend<Self::SinkItem, Self::SinkError> {
+        self.inner.start_send(item.into()).map(|async_sink| {
+            async_sink.map(|input| input.unwrap_protocol_message())
+        })
+    }
+
+    fn poll_complete(&mut self) -> Poll<(), Self::SinkError> {
+        self.inner.poll_complete()
+    }
+
+    fn close(&mut self) -> Poll<(), Self::SinkError> {
+        self.inner.close()
+    }
+}
