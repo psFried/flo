@@ -1,3 +1,4 @@
+use std::sync::{Arc, RwLock};
 use std::path::{PathBuf, Path};
 use std::collections::HashMap;
 use std::fs::DirEntry;
@@ -43,6 +44,8 @@ pub fn start_controller(options: ControllerOptions, remote: Remote) -> io::Resul
 
     // TODO: initialize system primary status to false once clustering works
     let system_primary_writer = AtomicBoolWriter::with_value(true);
+    let system_primary_server_addr = Arc::new(RwLock::new(None));
+
     let partition_result = init_system_partition(&storage_dir,
                                                  system_primary_writer.reader(),
                                                  &default_stream_options);
@@ -57,13 +60,14 @@ pub fn start_controller(options: ControllerOptions, remote: Remote) -> io::Resul
 
             let flo_controller = FloController::new(system_partition,
                                                     system_primary_writer,
+                                                    system_primary_server_addr.clone(),
                                                     user_streams,
                                                     storage_dir,
                                                     cluster_options,
                                                     default_stream_options);
 
             let (system_partition_tx, system_partition_rx) = create_partition_channels();
-            let engine_ref = create_engine_ref(&flo_controller, system_highest_counter, system_primary_reader, system_partition_tx);
+            let engine_ref = create_engine_ref(&flo_controller, system_highest_counter, system_primary_reader, system_primary_server_addr, system_partition_tx);
 
             run_controller_impl(flo_controller, system_partition_rx);
             engine_ref
@@ -95,17 +99,20 @@ fn init_system_partition(storage_dir: &Path, system_primary_reader: AtomicBoolRe
 fn create_engine_ref(controller: &FloController,
                      system_highest_counter: AtomicCounterReader,
                      system_primary_reader: AtomicBoolReader,
+                     system_primary_addr: Arc<RwLock<Option<SocketAddr>>>,
                      system_sender: PartitionSender) -> EngineRef {
 
     let system_partition_ref = PartitionRef::new(system_stream_name(),
                                                  1,
                                                  system_highest_counter,
                                                  system_primary_reader,
-                                                 system_sender);
+                                                 system_sender,
+                                                 system_primary_addr);
 
     let system_stream_ref = SystemStreamRef::new(system_partition_ref);
     let shared_stream_refs = controller.get_shared_streams();
-    EngineRef::new(system_stream_ref, shared_stream_refs)
+    let this_addr = controller.get_this_instance_address();
+    EngineRef::new(this_addr, system_stream_ref, shared_stream_refs)
 }
 
 

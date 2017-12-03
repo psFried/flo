@@ -1,3 +1,4 @@
+use std::net::SocketAddr;
 
 use event::{ActorId, EventCounter};
 
@@ -6,6 +7,7 @@ pub struct PartitionState {
     pub partition_num: ActorId,
     pub head: EventCounter,
     pub writable: bool,
+    pub primary_server_addr: Option<SocketAddr>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -16,12 +18,13 @@ pub struct CurrentStreamState {
 
 impl From<::protocol::PartitionStatus> for PartitionState {
     fn from(status: ::protocol::PartitionStatus) -> Self {
-        let ::protocol::PartitionStatus { partition_num, head, primary } = status;
+        let ::protocol::PartitionStatus { partition_num, head, primary, primary_server_address } = status;
 
         PartitionState {
             partition_num: partition_num,
             head: head,
             writable: primary,
+            primary_server_addr: primary_server_address,
         }
     }
 }

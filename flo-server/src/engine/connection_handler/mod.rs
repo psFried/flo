@@ -135,7 +135,7 @@ impl Debug for ConnectionHandler {
 #[cfg(test)]
 mod test {
     use std::collections::HashMap;
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, Mutex, RwLock};
     use tokio_core::reactor::Core;
 
     use super::*;
@@ -162,18 +162,20 @@ mod test {
             let (client_sender, client_rx) = ::futures::sync::mpsc::unbounded();
             let counter_writer = AtomicCounterWriter::zero();
             let primary = AtomicBoolWriter::with_value(true);
+            let primary_addr = Arc::new(RwLock::new(None));
 
             let (tx, rx) = create_partition_channels();
             let part_ref = PartitionRef::new(system_stream_name(),
                                              1,
                                              counter_writer.reader(),
                                              primary.reader(),
-                                             tx);
+                                             tx,
+                                             primary_addr);
 
             let system_stream = SystemStreamRef::new(part_ref);
 
             let streams = Arc::new(Mutex::new(HashMap::new()));
-            let engine = EngineRef::new(system_stream, streams);
+            let engine = EngineRef::new(None, system_stream, streams);
 
             let subject = ConnectionHandler::new(456, client_sender, engine.clone(), reactor.handle());
 
@@ -202,12 +204,14 @@ mod test {
                 let partition_num = i + 1;
                 let counter_writer = AtomicCounterWriter::zero();
                 let primary = AtomicBoolWriter::with_value(true);
+                let primary_addr = Arc::new(RwLock::new(None));
                 let (tx, rx) = create_partition_channels();
                 let part_ref = PartitionRef::new(name.to_owned(),
                                                  partition_num,
                                                  counter_writer.reader(),
                                                  primary.reader(),
-                                                 tx);
+                                                 tx,
+                                                 primary_addr);
                 partition_refs.push(part_ref);
                 self.partition_receivers.insert((name.to_owned(), partition_num), rx);
             }
@@ -274,16 +278,19 @@ mod test {
                     partition_num: 1,
                     head: 0,
                     primary: true,
+                    primary_server_address: None,
                 },
                 PartitionStatus {
                     partition_num: 2,
                     head: 0,
                     primary: true,
+                    primary_server_address: None,
                 },
                 PartitionStatus {
                     partition_num: 3,
                     head: 0,
                     primary: true,
+                    primary_server_address: None,
                 },
             ],
         };

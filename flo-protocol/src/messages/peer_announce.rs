@@ -15,6 +15,8 @@ pub struct PeerAnnounce {
     pub op_id: u32,
 }
 
+
+
 named!{pub parse_peer_announce<ProtocolMessage<OwnedFloEvent>>,
     chain!(
         _tag: tag!(&[PEER_ANNOUNCE]) ~

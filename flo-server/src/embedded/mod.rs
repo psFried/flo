@@ -66,6 +66,10 @@ fn message_to_owned(server_msg: SendProtocolMessage) -> ClientProtocolMessage {
         ProtocolMessage::Announce(op) => ProtocolMessage::Announce(op),
         ProtocolMessage::SetEventStream(op) => ProtocolMessage::SetEventStream(op),
         ProtocolMessage::PeerAnnounce(op) => ProtocolMessage::PeerAnnounce(op),
+        ProtocolMessage::SystemAppendCall(op) => ProtocolMessage::SystemAppendCall(op),
+        ProtocolMessage::SystemAppendResponse(op) => ProtocolMessage::SystemAppendResponse(op),
+        ProtocolMessage::RequestVote(op) => ProtocolMessage::RequestVote(op),
+        ProtocolMessage::VoteResponse(op) => ProtocolMessage::VoteResponse(op),
     }
 }
 

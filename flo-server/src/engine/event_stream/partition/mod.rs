@@ -4,6 +4,7 @@ mod event_reader;
 mod ops;
 pub mod controller;
 
+use std::net::SocketAddr;
 use std::fmt::{self, Debug, Display};
 use std::path::{Path, PathBuf};
 use std::collections::VecDeque;
@@ -179,17 +180,19 @@ pub struct PartitionRef {
     partition_num: ActorId,
     highest_event_counter: AtomicCounterReader,
     primary: AtomicBoolReader,
+    primary_server_address: Arc<RwLock<Option<SocketAddr>>>,
     sender: PartitionSender,
 }
 
 impl PartitionRef {
-    pub fn new(event_stream_name: String, partition_num: ActorId, highest_event_counter: AtomicCounterReader, primary: AtomicBoolReader, sender: PartitionSender) -> PartitionRef {
+    pub fn new(event_stream_name: String, partition_num: ActorId, highest_event_counter: AtomicCounterReader, primary: AtomicBoolReader, sender: PartitionSender, primary_server_address: Arc<RwLock<Option<SocketAddr>>>) -> PartitionRef {
         PartitionRef {
-            event_stream_name: event_stream_name,
-            partition_num: partition_num,
-            highest_event_counter: highest_event_counter,
-            primary: primary,
-            sender: sender,
+            event_stream_name,
+            partition_num,
+            highest_event_counter,
+            primary,
+            sender,
+            primary_server_address,
         }
     }
     pub fn partition_num(&self) -> ActorId {
@@ -202,6 +205,11 @@ impl PartitionRef {
 
     pub fn is_primary(&self) -> bool {
         self.primary.get_relaxed()
+    }
+
+    pub fn get_primary_server_addr(&self) -> Option<SocketAddr> {
+        let value_ref = self.primary_server_address.read().unwrap();
+        value_ref.clone()
     }
 
     pub fn event_stream_name(&self) -> &str {
@@ -241,11 +249,14 @@ pub fn initialize_existing_partition(partition_num: ActorId,
                                      event_stream_options: &EventStreamOptions,
                                      highest_counter: HighestCounter) -> io::Result<PartitionRefMut> {
 
+    // TODO: for now we are starting every partition as primary. This will need to change once we have a raft implementation
     let status_writer = AtomicBoolWriter::with_value(true);
+    let primary_addr = Arc::new(RwLock::new(None));
+
     let partition_data_dir = get_partition_data_dir(event_stream_data_dir, partition_num);
     let partition_impl = PartitionImpl::init_existing(partition_num, partition_data_dir, event_stream_options, status_writer.reader(), highest_counter)?;
 
-    run_partition(partition_impl).map(|partition_ref| {
+    run_partition(partition_impl, primary_addr).map(|partition_ref| {
         PartitionRefMut {
             status_writer,
             partition_ref,
@@ -260,9 +271,11 @@ pub fn initialize_new_partition(partition_num: ActorId,
 
     // TODO: for now we are starting every partition as primary. This will need to change once we have a raft implementation
     let status_writer = AtomicBoolWriter::with_value(true);
+    let primary_addr = Arc::new(RwLock::new(None));
+
     let partition_data_dir = get_partition_data_dir(event_stream_data_dir, partition_num);
     let partition_impl = PartitionImpl::init_new(partition_num, partition_data_dir, &event_stream_options, status_writer.reader(), highest_counter)?;
-    run_partition(partition_impl).map(|partition_ref| {
+    run_partition(partition_impl, primary_addr).map(|partition_ref| {
         PartitionRefMut {
             status_writer,
             partition_ref,
@@ -271,7 +284,7 @@ pub fn initialize_new_partition(partition_num: ActorId,
 
 }
 
-pub fn run_partition(partition_impl: PartitionImpl) -> io::Result<PartitionRef> {
+pub fn run_partition(partition_impl: PartitionImpl, primary_server_addr: Arc<RwLock<Option<SocketAddr>>>) -> io::Result<PartitionRef> {
     let partition_num = partition_impl.partition_num();
     let event_counter_reader = partition_impl.event_counter_reader();
     let primary_status_reader = partition_impl.primary_status_reader();
@@ -303,7 +316,13 @@ pub fn run_partition(partition_impl: PartitionImpl) -> io::Result<PartitionRef> 
               fsync_result);
     })?;
 
-    Ok(PartitionRef::new(event_stream_name, partition_num, event_counter_reader, primary_status_reader,tx))
+    let partition = PartitionRef::new(event_stream_name,
+                                      partition_num,
+                                      event_counter_reader,
+                                      primary_status_reader,
+                                      tx,
+                                      primary_server_addr);
+    Ok(partition)
 }
 
 fn get_partition_thread_name(event_stream_name: &str, partition_num: ActorId) -> String {

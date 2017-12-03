@@ -5,7 +5,6 @@ use protocol::*;
 
 use engine::{ConnectionId, ClientSender, EngineRef, SendProtocolMessage};
 use engine::event_stream::EventStreamRef;
-use engine::system_stream::SystemOp;
 use engine::controller::SystemStreamRef;
 
 use super::ConnectionHandlerResult;
@@ -65,8 +64,8 @@ impl ConnectionState {
         match self.engine.get_stream(&name) {
             Ok(new_stream) => {
                 debug!("Setting event stream to '{}' for {:?}", new_stream.name(), self);
-                let stream_status = self.get_current_stream_status(op_id);
                 self.event_stream = new_stream;
+                let stream_status = self.get_current_stream_status(op_id);
                 self.send_to_client(ProtocolMessage::StreamStatus(stream_status))
             }
             Err(ConnectError::NoStream) => {
@@ -104,10 +103,12 @@ impl ConnectionState {
             let num = partition.partition_num();
             let head = partition.get_highest_event_counter();
             let primary = partition.is_primary();
+            let primary_address = partition.get_primary_server_addr();
             let part_status = PartitionStatus {
                 partition_num: num,
                 head: head,
                 primary: primary,
+                primary_server_address: primary_address
             };
             partition_statuses.push(part_status);
         }

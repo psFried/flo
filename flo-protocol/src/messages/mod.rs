@@ -96,7 +96,7 @@ pub enum ProtocolMessage<E: FloEvent> {
     NextBatch,
     /// Signals a client's intent to publish a new event. The server will respond with either an `EventAck` or an `ErrorMessage`
     ProduceEvent(ProduceEvent),
-    /// Always the first message sent by a server to another server
+    /// Always the first message sent by a server to another server for a system stream connection
     PeerAnnounce(PeerAnnounce),
     /// This is a complete event as serialized over the wire. This message is sent to to both consumers as well as other servers
     ReceiveEvent(E),
@@ -376,6 +376,10 @@ mod test {
 
     }
 
+    fn addr(addr_string: &str) -> SocketAddr {
+        ::std::str::FromStr::from_str(addr_string).unwrap()
+    }
+
     #[test]
     fn serde_request_vote_response() {
         let response = RequestVoteResponse {
@@ -467,16 +471,19 @@ mod test {
                     partition_num: 1,
                     head: 638,
                     primary: true,
+                    primary_server_address: Some(addr("173.255.32.4:876")),
                 },
                 PartitionStatus {
                     partition_num: 2,
                     head: 0,
                     primary: false,
+                    primary_server_address: Some(addr("[56:78::1]:9001")),
                 },
                 PartitionStatus {
                     partition_num: 3,
                     head: 638,
                     primary: true,
+                    primary_server_address: None,
                 },
             ],
         };

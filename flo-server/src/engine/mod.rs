@@ -1,5 +1,4 @@
 pub mod event_stream;
-pub mod system_stream;
 
 mod controller;
 mod connection_handler;
@@ -7,6 +6,7 @@ mod connection_handler;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicUsize};
+use std::net::SocketAddr;
 
 use protocol::ProtocolMessage;
 use event::OwnedFloEvent;
@@ -40,6 +40,8 @@ pub fn system_stream_name() -> String {
 
 #[derive(Clone, Debug)]
 pub struct EngineRef {
+    /// only known if this instance was started in clustering mode
+    this_instance_address: Option<SocketAddr>,
     current_connection_id: Arc<AtomicUsize>,
     system_stream: SystemStreamRef,
     event_streams: Arc<Mutex<HashMap<String, EventStreamRef>>>
@@ -52,8 +54,9 @@ pub enum ConnectError {
 }
 
 impl EngineRef {
-    pub fn new(system_stream: SystemStreamRef, event_streams: Arc<Mutex<HashMap<String, EventStreamRef>>>) -> EngineRef {
+    pub fn new(this_address: Option<SocketAddr>, system_stream: SystemStreamRef, event_streams: Arc<Mutex<HashMap<String, EventStreamRef>>>) -> EngineRef {
         EngineRef {
+            this_instance_address: this_address,
             current_connection_id: Arc::new(AtomicUsize::new(0)),
             system_stream,
             event_streams
@@ -90,6 +93,11 @@ impl EngineRef {
 
     pub fn get_system_stream(&self) -> SystemStreamRef {
         self.system_stream.clone()
+    }
+
+    /// Returns the address that this intance is reachable at. This will be `None` if the server was started started in non-clustered mode
+    pub fn get_this_instance_address(&self) -> Option<SocketAddr> {
+        self.this_instance_address
     }
 }
 

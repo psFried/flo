@@ -8,7 +8,6 @@ use futures::sync::oneshot;
 
 use engine::event_stream::partition::{EventFilter, PartitionReader};
 use engine::ConnectionId;
-use engine::system_stream::SystemOp;
 use protocol::ProduceEvent;
 use event::{FloEventId, EventCounter};
 
@@ -61,7 +60,12 @@ pub enum OpType {
     Consume(ConsumeOperation),
     StopConsumer,
     Tick,
-    System(SystemOp)
+    System(SystemOp),
+}
+
+#[derive(Debug)]
+pub enum SystemOp {
+    OutgoingConnectionFailed(SocketAddr),
 }
 
 

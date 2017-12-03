@@ -1,11 +1,11 @@
 mod cluster_state;
-mod outgoing_io;
 mod system_stream;
 mod initialization;
 
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::collections::HashMap;
+use std::net::SocketAddr;
 
 
 use engine::event_stream::{EventStreamRef,
@@ -43,11 +43,19 @@ pub struct FloController {
     /// used to set the status of the system stream. There is only ever at most one instance in a cluster
     /// where this variable is true ...if things actually work correctly ;)
     system_primary_status_writer: AtomicBoolWriter,
+
+    /// The address of the cluster's primary server, if one exists and it is known
+    system_primary_server_addr: Arc<RwLock<Option<SocketAddr>>>,
+
+    /// cluster parameters that this instance was started with. We'll almost certainly want to replace this field later on
+    /// with something that can deal with more complexity
+    cluster_options: Option<ClusterOptions>,
 }
 
 impl FloController {
     pub fn new(system_partition: PartitionImpl,
                system_primary_setter: AtomicBoolWriter,
+               system_primary_address: Arc<RwLock<Option<SocketAddr>>>,
                event_streams: HashMap<String, EventStreamRefMut>,
                storage_dir: PathBuf,
                cluster_options: Option<ClusterOptions>,
@@ -64,6 +72,8 @@ impl FloController {
             storage_dir,
             default_stream_options,
             system_primary_status_writer: system_primary_setter,
+            system_primary_server_addr: system_primary_address,
+            cluster_options,
         }
     }
 
@@ -77,6 +87,10 @@ impl FloController {
 
     fn get_shared_streams(&self) -> Arc<Mutex<HashMap<String, EventStreamRef>>> {
         self.shared_event_stream_refs.clone()
+    }
+
+    fn get_this_instance_address(&self) -> Option<SocketAddr> {
+        self.cluster_options.as_ref().map(|opts| opts.this_instance_address)
     }
 }
 

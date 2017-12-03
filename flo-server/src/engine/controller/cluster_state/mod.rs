@@ -1,10 +1,9 @@
 
 use std::net::SocketAddr;
-use std::time::{Instant, Duration};
+use std::time::{Instant};
 
 use event::EventCounter;
-use engine::controller::outgoing_io::OutgoingConnectionCreator;
-use engine::system_stream::FloInstanceId;
+use protocol::FloInstanceId;
 
 
 #[derive(Debug, PartialEq, Clone)]

@@ -2,8 +2,6 @@ use std::path::PathBuf;
 use chrono::Duration;
 use std::net::SocketAddr;
 
-use event::ActorId;
-
 
 #[derive(Copy, Clone, PartialEq, Debug)]
 #[allow(dead_code)]
