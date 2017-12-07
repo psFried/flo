@@ -187,13 +187,11 @@ fn get_parent_id(args: &ArgMatches, context: &Context) -> Option<FloEventId> {
 
 fn get_event_data(args: &ArgMatches) -> Vec<Vec<u8>> {
     args.values_of(args::EVENT_DATA).map(|values| {
-        let mut vec = values.map(|str_val| {
-            str_val.as_bytes().to_owned()
-        }).collect::<Vec<Vec<u8>>>();
 
-        // work around some weird bug where we keep getting an extra value that is an empty string
-        vec.pop();
-        vec
+        values.map(|str_val| {
+            str_val.as_bytes().to_owned()
+        }).collect::<Vec<Vec<u8>>>()
+
     }).unwrap_or(Vec::new())
 }
 

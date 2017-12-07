@@ -65,6 +65,10 @@ impl Context {
         }
     }
 
+    pub fn debug<M: Display>(&self, message: M) {
+        self.println(message, Verbosity::Debug)
+    }
+
     pub fn verbose<M: Display>(&self, message: M) {
         self.println(message, Verbosity::Verbose);
     }

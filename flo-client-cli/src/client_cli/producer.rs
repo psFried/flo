@@ -21,11 +21,11 @@ impl FloCliCommand for Producer {
 
     fn run(ProduceOptions{host, port, partition, namespace, event_data, parent_id}: ProduceOptions, output: &Context) -> Result<(), Self::Error> {
         let server_address = format!("{}:{}", host, port);
-        output.verbose(format!("Attempting connection to: {:?}", &server_address));
+        output.verbose(format!("Attempting connection to: {:?} to produce {} events", &server_address, event_data.len()));
         SyncConnection::connect_from_str(&server_address, "flo-client-cli", RawCodec, None).map_err(|handshake_err| {
             format!("Error establishing connection to flo server: {}", handshake_err)
         }).and_then(|mut connection| {
-            output.verbose(format!("connected to {}", &server_address));
+            output.debug(format!("connected to {}", &server_address));
 
             event_data.into_iter().fold(Ok(0), |events_produced, event_data| {
                 events_produced.and_then(|count| {
