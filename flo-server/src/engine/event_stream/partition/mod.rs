@@ -15,6 +15,7 @@ use std::io;
 use atomics::{AtomicCounterReader, AtomicBoolReader, AtomicBoolWriter};
 use engine::ConnectionId;
 use engine::event_stream::{EventStreamOptions, HighestCounter};
+use engine::controller::SystemPartitionSender;
 use protocol::{ProduceEvent};
 use event::{EventCounter, ActorId};
 use self::segment::SegmentReader;
@@ -42,7 +43,7 @@ pub fn create_partition_channels() -> (PartitionSender, PartitionReceiver) {
 }
 
 #[derive(Debug)]
-pub struct PartitionSendError(pub Operation);
+pub struct PartitionSendError;
 
 pub type PartitionSendResult = Result<(), PartitionSendError>;
 
@@ -174,6 +175,12 @@ impl PartitionRefMut {
     }
 }
 
+#[derive(Debug, Clone)]
+enum SenderType {
+    Normal(PartitionSender),
+    System(SystemPartitionSender)
+}
+
 #[derive(Clone, Debug)]
 pub struct PartitionRef {
     event_stream_name: String,
@@ -181,7 +188,7 @@ pub struct PartitionRef {
     highest_event_counter: AtomicCounterReader,
     primary: AtomicBoolReader,
     primary_server_address: Arc<RwLock<Option<SocketAddr>>>,
-    sender: PartitionSender,
+    sender: SenderType,
 }
 
 impl PartitionRef {
@@ -191,10 +198,22 @@ impl PartitionRef {
             partition_num,
             highest_event_counter,
             primary,
-            sender,
+            sender: SenderType::Normal(sender),
             primary_server_address,
         }
     }
+
+    pub fn system(event_stream_name: String, partition_num: ActorId, highest_event_counter: AtomicCounterReader, primary: AtomicBoolReader, sender: SystemPartitionSender, primary_server_address: Arc<RwLock<Option<SocketAddr>>>) -> PartitionRef {
+        PartitionRef {
+            event_stream_name,
+            partition_num,
+            highest_event_counter,
+            primary,
+            sender: SenderType::System(sender),
+            primary_server_address,
+        }
+    }
+
     pub fn partition_num(&self) -> ActorId {
         self.partition_num
     }
@@ -236,9 +255,19 @@ impl PartitionRef {
     }
 
     pub fn send(&mut self, op: Operation) -> PartitionSendResult {
-        self.sender.send(op).map_err(|err| {
-            PartitionSendError(err.0)
-        })
+        match self.sender {
+            SenderType::Normal(ref mut sender) => {
+                sender.send(op).map_err(|_| {
+                    PartitionSendError
+                })
+            }
+            SenderType::System(ref mut sender) => {
+                sender.send(op.into()).map_err(|_| {
+                    PartitionSendError
+                })
+            }
+        }
+
     }
 }
 

@@ -1,7 +1,7 @@
 pub mod event_stream;
+pub mod connection_handler;
 
 mod controller;
-mod connection_handler;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};

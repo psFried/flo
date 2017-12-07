@@ -1,6 +1,7 @@
 mod cluster_state;
 mod system_stream;
 mod initialization;
+mod controller_messages;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
@@ -19,7 +20,14 @@ use atomics::AtomicBoolWriter;
 
 pub use self::initialization::{start_controller, ControllerOptions, ClusterOptions};
 pub use self::system_stream::SystemStreamRef;
+pub use self::controller_messages::{SystemOperation, SystemOpType, ConnectionRef};
 
+pub type SystemPartitionSender = ::std::sync::mpsc::Sender<SystemOperation>;
+pub type SystemPartitionReceiver = ::std::sync::mpsc::Receiver<SystemOperation>;
+
+pub fn create_system_partition_channels() -> (SystemPartitionSender, SystemPartitionReceiver) {
+    ::std::sync::mpsc::channel()
+}
 
 /// A specialized event stream that always has exactly one partition and manages the cluster state and consensus
 /// Of course there is no cluster state and thus no consensus at the moment, but we'll just leave this here...
@@ -77,8 +85,10 @@ impl FloController {
         }
     }
 
-    fn process(&mut self, _operation: Operation) {
-        unimplemented!()
+    fn process(&mut self, operation: SystemOperation) {
+        debug!("Processing: {:?}", operation);
+
+        //TODO: handle system operations
     }
 
     fn shutdown(&mut self) {

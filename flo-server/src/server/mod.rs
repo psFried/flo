@@ -1,28 +1,22 @@
 mod server_options;
 
-use futures::{Stream, Sink, Future};
-use tokio_core::net::{TcpStream, TcpListener};
-
-use event_loops;
 
 use std::net::{SocketAddr, Ipv4Addr, SocketAddrV4};
 use std::io;
+use tokio_core::net::{TcpStream, TcpListener};
+use futures::{Stream, Future};
+
+use engine::{ControllerOptions,
+             ClusterOptions,
+             start_controller,
+             system_stream_name};
+use engine::event_stream::EventStreamOptions;
+use flo_io::spawn_connection_handler;
+use event_loops;
 
 pub use self::server_options::{ServerOptions, MemoryLimit, MemoryUnit};
 
-
-
 pub fn run(mut options: ServerOptions) -> io::Result<()> {
-    #[allow(deprecated)]
-    use tokio_core::io::Io;
-    use engine::{ControllerOptions,
-                     ClusterOptions,
-                     start_controller,
-                     system_stream_name,
-                     create_client_channels,
-                     ConnectionHandler};
-    use engine::event_stream::EventStreamOptions;
-    use flo_io::{ProtocolMessageStream, ServerMessageStream};
 
     const ONE_GB: usize = 1024 * 1024 * 1024;
 
@@ -74,40 +68,10 @@ pub fn run(mut options: ServerOptions) -> io::Result<()> {
                 ()
             })?;
             let client_engine_ref = engine_ref.clone();
-            let connection_id = client_engine_ref.next_connection_id();
             let remote_handle = event_loop_handles.next_handle();
 
-            let (client_tx, client_rx) = create_client_channels();
-
-            info!("Opened connection_id: {} to address: {}", connection_id, client_addr);
-
             remote_handle.spawn(move |client_handle| {
-
-                #[allow(deprecated)]
-                let (tcp_reader, tcp_writer) = tcp_stream.split();
-
-                let server_to_client = ServerMessageStream::new(connection_id, client_rx, tcp_writer);
-
-                let client_message_stream = ProtocolMessageStream::new(connection_id, tcp_reader)
-                        .map(|proto_message| proto_message.into());
-                let connection_handler = ConnectionHandler::new(
-                    connection_id,
-                    client_tx.clone(),
-                    client_engine_ref,
-                     client_handle.clone());
-
-                let client_to_server = connection_handler
-                        .send_all(client_message_stream)
-                        .map(|_| ());
-
-                client_to_server.select(server_to_client).then(move |res| {
-                    if let Err((err, _)) = res {
-                        warn!("Closing connection: {} due to err: {:?}", connection_id, err);
-                    }
-                    info!("Closed connection_id: {} to address: {}", connection_id, client_addr);
-                    Ok(())
-                })
-
+                spawn_connection_handler(client_handle.clone(), client_engine_ref, client_addr, tcp_stream)
             });
 
             Ok(())
@@ -117,4 +81,5 @@ pub fn run(mut options: ServerOptions) -> io::Result<()> {
     join_handle.join();
     Ok(())
 }
+
 

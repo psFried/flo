@@ -33,8 +33,8 @@ impl ProducerConnectionState {
 
         let receiver = {
             let partition = common_state.event_stream.get_partition(produce.partition).unwrap();
-            partition.produce(connection_id, op_id, vec![produce]).map_err(|err| {
-                format!("Failed to send operation: {:?}", err.0)
+            partition.produce(connection_id, op_id, vec![produce]).map_err(|_| {
+                format!("Failed to send produce operation with op_id: {}", op_id)
             })?
         };
 

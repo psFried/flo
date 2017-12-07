@@ -171,6 +171,7 @@ mod test {
     struct Fixture {
         #[allow(dead_code)] // TODO: add more connection handler tests
         partition_receivers: HashMap<(String, ActorId), PartitionReceiver>,
+        system_receiver: ::engine::controller::SystemPartitionReceiver,
         client_receiver: Option<ClientReceiver>,
         engine: EngineRef,
         reactor: Core,
@@ -185,26 +186,24 @@ mod test {
             let primary = AtomicBoolWriter::with_value(true);
             let primary_addr = Arc::new(RwLock::new(None));
 
-            let (tx, rx) = create_partition_channels();
-            let part_ref = PartitionRef::new(system_stream_name(),
+            let (tx, rx) = ::engine::controller::create_system_partition_channels();
+            let part_ref = PartitionRef::system(system_stream_name(),
                                              1,
                                              counter_writer.reader(),
                                              primary.reader(),
-                                             tx,
+                                             tx.clone(),
                                              primary_addr);
 
-            let system_stream = SystemStreamRef::new(part_ref);
+            let system_stream = SystemStreamRef::new(part_ref, tx);
 
             let streams = Arc::new(Mutex::new(HashMap::new()));
             let engine = EngineRef::new(None, system_stream, streams);
 
             let subject = ConnectionHandler::new(456, client_sender, engine.clone(), reactor.handle());
 
-            let mut partition_receivers = HashMap::new();
-            partition_receivers.insert((system_stream_name(), 1), rx);
-
             let fixture = Fixture {
-                partition_receivers: partition_receivers,
+                partition_receivers: HashMap::new(),
+                system_receiver: rx,
                 client_receiver: Some(client_rx),
                 engine: engine,
                 reactor: reactor

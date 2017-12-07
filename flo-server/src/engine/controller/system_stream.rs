@@ -2,19 +2,22 @@ use std::net::SocketAddr;
 
 use engine::event_stream::partition::{PartitionRef, Operation};
 use engine::event_stream::EventStreamRef;
+use engine::controller::SystemPartitionSender;
 use engine::ConnectionId;
 
 
 
 #[derive(Clone, Debug)]
 pub struct SystemStreamRef {
+    system_sender: SystemPartitionSender,
     inner: PartitionRef,
 }
 
 impl SystemStreamRef {
 
-    pub fn new(partition_ref: PartitionRef) -> SystemStreamRef {
+    pub fn new(partition_ref: PartitionRef, system_sender: SystemPartitionSender) -> SystemStreamRef {
         SystemStreamRef {
+            system_sender,
             inner: partition_ref,
         }
     }

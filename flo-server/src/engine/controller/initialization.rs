@@ -8,6 +8,7 @@ use std::net::SocketAddr;
 use tokio_core::reactor::Remote;
 
 use engine::{EngineRef, system_stream_name, SYSTEM_STREAM_NAME};
+use engine::controller::{SystemPartitionSender, SystemPartitionReceiver, SystemOperation};
 use engine::event_stream::{EventStreamRefMut,
                            EventStreamOptions,
                            init_existing_event_stream,
@@ -66,7 +67,7 @@ pub fn start_controller(options: ControllerOptions, remote: Remote) -> io::Resul
                                                     cluster_options,
                                                     default_stream_options);
 
-            let (system_partition_tx, system_partition_rx) = create_partition_channels();
+            let (system_partition_tx, system_partition_rx) = ::engine::controller::create_system_partition_channels();
             let engine_ref = create_engine_ref(&flo_controller, system_highest_counter, system_primary_reader, system_primary_server_addr, system_partition_tx);
 
             run_controller_impl(flo_controller, system_partition_rx);
@@ -100,16 +101,16 @@ fn create_engine_ref(controller: &FloController,
                      system_highest_counter: AtomicCounterReader,
                      system_primary_reader: AtomicBoolReader,
                      system_primary_addr: Arc<RwLock<Option<SocketAddr>>>,
-                     system_sender: PartitionSender) -> EngineRef {
+                     system_partition_sender: SystemPartitionSender) -> EngineRef {
 
-    let system_partition_ref = PartitionRef::new(system_stream_name(),
+    let system_partition_ref = PartitionRef::system(system_stream_name(),
                                                  1,
                                                  system_highest_counter,
                                                  system_primary_reader,
-                                                 system_sender,
+                                                 system_partition_sender.clone(),
                                                  system_primary_addr);
+    let system_stream_ref = SystemStreamRef::new(system_partition_ref, system_partition_sender);
 
-    let system_stream_ref = SystemStreamRef::new(system_partition_ref);
     let shared_stream_refs = controller.get_shared_streams();
     let this_addr = controller.get_this_instance_address();
     EngineRef::new(this_addr, system_stream_ref, shared_stream_refs)
@@ -151,7 +152,7 @@ fn is_user_event_stream(dir_entry: &DirEntry) -> io::Result<bool> {
 }
 
 
-fn run_controller_impl(mut controller: FloController, system_partition_rx: PartitionReceiver) {
+fn run_controller_impl(mut controller: FloController, system_partition_rx: SystemPartitionReceiver) {
     ::std::thread::spawn(move || {
         debug!("Starting FloController processing");
         while let Ok(operation) = system_partition_rx.recv() {
