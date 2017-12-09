@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 
 use engine::event_stream::partition::{PartitionRef, Operation};
 use engine::event_stream::EventStreamRef;
-use engine::controller::SystemPartitionSender;
+use engine::controller::{SystemPartitionSender, SystemOperation, ConnectionRef};
 use engine::ConnectionId;
 
 
@@ -28,11 +28,18 @@ impl SystemStreamRef {
         EventStreamRef::new(name, partition_ref)
     }
 
-    pub fn outgoing_connection_failed(&mut self, connection_id: ConnectionId, socket_addr: SocketAddr) {
-        let op = Operation::outgoing_connection_failed(connection_id, socket_addr);
-        self.inner.send(op).expect("System Stream has shutdown");
+    pub fn incomming_connection_accepted(&mut self, connection_ref: ConnectionRef) {
+        let op = SystemOperation::incoming_connection_established(connection_ref);
+        self.send(op);
     }
 
+    pub fn outgoing_connection_failed(&mut self, connection_id: ConnectionId, socket_addr: SocketAddr) {
+        unimplemented!()
+    }
+
+    fn send(&mut self, op: SystemOperation) {
+        self.system_sender.send(op).expect("Failed to send to flo controller. System must have shut down");
+    }
 }
 
 

@@ -20,6 +20,13 @@ use self::peer::PeerConnectionState;
 
 pub use self::input::{ConnectionHandlerInput, ConnectionControl};
 
+pub type ConnectionControlSender = ::futures::sync::mpsc::UnboundedSender<ConnectionControl>;
+pub type ConnectionControlReceiver = ::futures::sync::mpsc::UnboundedReceiver<ConnectionControl>;
+
+pub fn create_connection_control_channels() -> (ConnectionControlSender, ConnectionControlReceiver) {
+    ::futures::sync::mpsc::unbounded()
+}
+
 pub struct ConnectionHandler {
     common_state: ConnectionState,
     consumer_state: ConsumerConnectionState,

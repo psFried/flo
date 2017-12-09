@@ -4,14 +4,14 @@ use std::time::Instant;
 use futures::sync::mpsc::UnboundedSender;
 
 use engine::event_stream::partition::{self, Operation};
-use engine::connection_handler::ConnectionControl;
+use engine::connection_handler::{ConnectionControl, ConnectionControlSender};
 use engine::ConnectionId;
 
 #[derive(Debug)]
 pub struct ConnectionRef {
     pub connection_id: ConnectionId,
     pub remote_address: SocketAddr,
-    pub control_sender: UnboundedSender<ConnectionControl>,
+    pub control_sender: ConnectionControlSender,
 }
 
 #[derive(Debug)]
@@ -30,6 +30,10 @@ pub struct SystemOperation {
 }
 
 impl SystemOperation {
+
+    pub fn incoming_connection_established(connection: ConnectionRef) -> SystemOperation {
+        SystemOperation::new(connection.connection_id, SystemOpType::IncomingConnectionEstablished(connection))
+    }
 
     pub fn outgoing_connection_failed(addr: SocketAddr) -> SystemOperation {
         SystemOperation::new(0, SystemOpType::OutgoingConnectionFailed(addr))

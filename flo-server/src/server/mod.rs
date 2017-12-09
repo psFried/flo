@@ -3,22 +3,26 @@ mod server_options;
 
 use std::net::{SocketAddr, Ipv4Addr, SocketAddrV4};
 use std::io;
+use tokio_core::reactor::Remote;
 use tokio_core::net::{TcpStream, TcpListener};
 use futures::{Stream, Future};
 
 use engine::{ControllerOptions,
+             EngineRef,
              ClusterOptions,
              start_controller,
              system_stream_name};
+use engine::connection_handler::create_connection_control_channels;
+use engine::controller::ConnectionRef;
 use engine::event_stream::EventStreamOptions;
-use flo_io::spawn_connection_handler;
+use flo_io::create_connection_handler;
 use event_loops;
 
 pub use self::server_options::{ServerOptions, MemoryLimit, MemoryUnit};
 
-pub fn run(mut options: ServerOptions) -> io::Result<()> {
+const ONE_GB: usize = 1024 * 1024 * 1024;
 
-    const ONE_GB: usize = 1024 * 1024 * 1024;
+pub fn run(mut options: ServerOptions) -> io::Result<()> {
 
     let (join_handle, mut event_loop_handles) = event_loops::spawn_event_loop_threads(options.max_io_threads).unwrap();
 
@@ -63,18 +67,8 @@ pub fn run(mut options: ServerOptions) -> io::Result<()> {
         incoming.map_err(|io_err| {
             error!("Error creating new connection: {:?}", io_err);
         }).for_each(move |(tcp_stream, client_addr): (TcpStream, SocketAddr)| {
-            tcp_stream.set_nodelay(true).map_err(|io_err| {
-                error!("Error setting NODELAY. Nagle yet lives!: {:?}", io_err);
-                ()
-            })?;
-            let client_engine_ref = engine_ref.clone();
-            let remote_handle = event_loop_handles.next_handle();
 
-            remote_handle.spawn(move |client_handle| {
-                spawn_connection_handler(client_handle.clone(), client_engine_ref, client_addr, tcp_stream)
-            });
-
-            Ok(())
+            handle_incoming_connection(&engine_ref, event_loop_handles.next_handle(), tcp_stream, client_addr)
         })
     });
 
@@ -82,4 +76,26 @@ pub fn run(mut options: ServerOptions) -> io::Result<()> {
     Ok(())
 }
 
+fn handle_incoming_connection(engine_ref: &EngineRef, remote_handle: Remote, tcp_stream: TcpStream, client_addr: SocketAddr) -> Result<(), ()> {
+    tcp_stream.set_nodelay(true).map_err(|io_err| {
+        error!("Error setting NODELAY. Nagle yet lives!: {:?}", io_err);
+        ()
+    })?;
+
+    let mut client_engine_ref = engine_ref.clone();
+    let connection_id = client_engine_ref.next_connection_id();
+    let (control_tx, control_rx) = create_connection_control_channels();
+    let connection_ref = ConnectionRef {
+        connection_id,
+        remote_address: client_addr,
+        control_sender: control_tx,
+    };
+    client_engine_ref.system_stream().incomming_connection_accepted(connection_ref);
+
+    remote_handle.spawn(move |client_handle| {
+        create_connection_handler(client_handle.clone(), client_engine_ref, connection_id, client_addr, tcp_stream, control_rx)
+    });
+
+    Ok(())
+}
 

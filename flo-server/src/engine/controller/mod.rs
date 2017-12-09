@@ -2,6 +2,7 @@ mod cluster_state;
 mod system_stream;
 mod initialization;
 mod controller_messages;
+mod peer_connection;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};

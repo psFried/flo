@@ -11,16 +11,21 @@ use tokio_core::net::TcpStream;
 use futures::{Stream, Sink, Future};
 
 use engine::{create_client_channels, ConnectionHandler};
-use engine::connection_handler::ConnectionHandlerInput;
-use engine::EngineRef;
+use engine::connection_handler::{ConnectionHandlerInput, ConnectionControlReceiver};
+use engine::{EngineRef, ConnectionId};
 
 pub use self::client_message_stream::ProtocolMessageStream;
 pub use self::server_message_stream::ServerMessageStream;
 
 
 
-pub fn spawn_connection_handler(client_handle: Handle, client_engine_ref: EngineRef, client_addr: SocketAddr, tcp_stream: TcpStream) -> Box<Future<Item=(), Error=()>> {
-    let connection_id = client_engine_ref.next_connection_id();
+pub fn create_connection_handler(client_handle: Handle,
+                                 client_engine_ref: EngineRef,
+                                 connection_id: ConnectionId,
+                                 client_addr: SocketAddr,
+                                 tcp_stream: TcpStream,
+                                 control_receiver: ConnectionControlReceiver) -> Box<Future<Item=(), Error=()>>  {
+
     info!("Opened connection_id: {} to address: {}", connection_id, client_addr);
     let (client_tx, client_rx) = create_client_channels();
 
@@ -32,9 +37,7 @@ pub fn spawn_connection_handler(client_handle: Handle, client_engine_ref: Engine
     let client_message_stream = ProtocolMessageStream::new(connection_id, tcp_reader)
             .map(|proto_message| proto_message.into());
 
-    let (control_tx, control_rx) = ::futures::sync::mpsc::unbounded::<ConnectionHandlerInput>();
-
-    let joint_stream = control_rx
+    let joint_stream = control_receiver
             .map(|control| control.into())
             .map_err(|recv_err| {
                 io::Error::new(io::ErrorKind::Other, format!("Error receiving from control channel: {:?}", recv_err))
