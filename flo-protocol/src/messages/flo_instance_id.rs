@@ -8,8 +8,16 @@ pub struct FloInstanceId(u64);
 
 impl FloInstanceId {
 
+    pub fn null() -> FloInstanceId {
+        FloInstanceId(0)
+    }
+
     pub fn generate_new() -> FloInstanceId {
-        FloInstanceId(::rand::random())
+        let mut value = 0;
+        while value == 0 {
+            value = ::rand::random();
+        }
+        FloInstanceId(value)
     }
 
     pub fn as_bytes(&self) -> [u8; 8] {
@@ -43,3 +51,11 @@ impl FloSerialize for FloInstanceId {
 }
 
 named!{pub parse_flo_instance_id<FloInstanceId>, map!(::nom::be_u64, |val| {FloInstanceId(val) } )}
+
+named!{pub parse_optional_flo_instance_id<Option<FloInstanceId>>, map!(::nom::be_u64, |val| {
+    if val > 0 {
+        Some(FloInstanceId(val))
+    } else {
+        None
+    }
+} )}

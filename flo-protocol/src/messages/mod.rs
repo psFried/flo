@@ -43,7 +43,7 @@ use self::append_entries::{serialize_append_entries, parse_append_entries_call, 
 use self::request_vote::{serialize_request_vote_call, parse_request_vote_call, serialize_request_vote_response, parse_request_vote_response};
 
 pub use self::client_announce::ClientAnnounce;
-pub use self::peer_announce::PeerAnnounce;
+pub use self::peer_announce::{PeerAnnounce, ClusterMember};
 pub use self::error::{ErrorMessage, ErrorKind};
 pub use self::produce_event::ProduceEvent;
 pub use self::event_ack::EventAck;
@@ -441,11 +441,26 @@ mod test {
 
     #[test]
     fn serde_peer_announce_with_ipv6_address() {
-        let addr = ::std::str::FromStr::from_str("[1:3:5::2]:4321").unwrap();
         let announce = PeerAnnounce {
             protocol_version: 9,
-            peer_address: addr,
             op_id: 6543,
+            instance_id: FloInstanceId::generate_new(),
+            peer_address: addr("[1:3:5::2]:4321"),
+            system_primary_id: Some(FloInstanceId::generate_new()),
+            cluster_members: vec![
+                ClusterMember {
+                    id: FloInstanceId::generate_new(),
+                    address: addr("1.2.3.4:5")
+                },
+                ClusterMember {
+                    id: FloInstanceId::generate_new(),
+                    address: addr("127.0.0.1:2456")
+                },
+                ClusterMember {
+                    id: FloInstanceId::generate_new(),
+                    address: addr("192.168.1.1:443")
+                },
+            ]
         };
         test_serialize_then_deserialize(&ProtocolMessage::PeerAnnounce(announce));
     }
@@ -455,8 +470,11 @@ mod test {
         let addr = ::std::str::FromStr::from_str("123.234.12.1:4321").unwrap();
         let announce = PeerAnnounce {
             protocol_version: 9,
+            instance_id: FloInstanceId::generate_new(),
             peer_address: addr,
             op_id: 6543,
+            system_primary_id: None,
+            cluster_members: Vec::new(),
         };
         test_serialize_then_deserialize(&ProtocolMessage::PeerAnnounce(announce));
     }
