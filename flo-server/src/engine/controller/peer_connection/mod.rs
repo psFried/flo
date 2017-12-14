@@ -1,4 +1,3 @@
-mod replication;
 mod system;
 
 use std::fmt::Debug;
@@ -13,7 +12,6 @@ use engine::connection_handler::{create_connection_control_channels, ConnectionC
 use event_loops::LoopHandles;
 use flo_io::create_connection_handler;
 
-pub use self::replication::PeerReplicationConnection;
 pub use self::system::PeerSystemConnection;
 
 pub type ConnectionSendResult<T> = Result<(), T>;
@@ -22,7 +20,6 @@ pub type ConnectionSendResult<T> = Result<(), T>;
 /// Trait for creating outgoing connections (clever name, I know).
 pub trait OutgoingConnectionCreator {
     fn establish_system_connection(&mut self, address: SocketAddr) -> Box<PeerSystemConnection>;
-    fn establish_replication_connection(&mut self, address: SocketAddr, event_stream: String) -> Box<PeerReplicationConnection>;
 }
 
 pub struct OutgoingConnectionCreatorImpl {
@@ -32,10 +29,6 @@ pub struct OutgoingConnectionCreatorImpl {
 
 impl OutgoingConnectionCreator for OutgoingConnectionCreatorImpl {
     fn establish_system_connection(&mut self, address: SocketAddr) -> Box<PeerSystemConnection> {
-        unimplemented!()
-    }
-
-    fn establish_replication_connection(&mut self, address: SocketAddr, event_stream: String) -> Box<PeerReplicationConnection> {
         unimplemented!()
     }
 }
