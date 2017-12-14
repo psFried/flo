@@ -7,6 +7,7 @@ use event::{FloEvent, ActorId};
 use engine::ConnectionId;
 use engine::event_stream::partition::{SharedReaderRefs, SegmentNum};
 use engine::event_stream::partition::segment::{SegmentReader, PersistentEvent};
+use atomics::AtomicCounterReader;
 
 pub use self::namespace::NamespaceGlob;
 
@@ -38,6 +39,7 @@ pub struct PartitionReader {
     connection_id: ConnectionId,
     partition_num: ActorId,
     filter: EventFilter,
+    commit_index_reader: AtomicCounterReader,
     current_segment_reader: Option<SegmentReader>,
     segment_readers_ref: SharedReaderRefs,
     returned_error: bool,
@@ -46,23 +48,34 @@ pub struct PartitionReader {
 
 impl PartitionReader {
 
-    pub fn new(connection_id: ConnectionId, partition_num: ActorId, filter: EventFilter, current_reader: Option<SegmentReader>, segment_refs: SharedReaderRefs) -> PartitionReader {
+    pub fn new(connection_id: ConnectionId,
+               partition_num: ActorId,
+               filter: EventFilter,
+               current_reader: Option<SegmentReader>,
+               segment_refs: SharedReaderRefs,
+               commit_index_reader: AtomicCounterReader) -> PartitionReader {
+
         PartitionReader {
-            connection_id: connection_id,
-            partition_num: partition_num,
-            filter: filter,
+            connection_id,
+            partition_num,
+            filter,
+            commit_index_reader,
             current_segment_reader: current_reader,
             segment_readers_ref: segment_refs,
             returned_error: false,
         }
     }
 
-    pub fn next_matching(&mut self) -> Option<io::Result<PersistentEvent>> {
+    pub fn read_next_uncommitted(&mut self) -> Option<io::Result<PersistentEvent>> {
         let mut next = self.read_next();
         while self.should_skip(&next) {
             next = self.read_next();
         }
         next
+    }
+
+    pub fn read_next_committed(&mut self) -> Option<io::Result<PersistentEvent>> {
+        unimplemented!()
     }
 
     fn should_skip(&self, result: &Option<Result<PersistentEvent, io::Error>>) -> bool {
@@ -116,7 +129,7 @@ impl Iterator for PartitionReader {
     type Item = io::Result<PersistentEvent>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.next_matching()
+        self.read_next_uncommitted()
     }
 }
 

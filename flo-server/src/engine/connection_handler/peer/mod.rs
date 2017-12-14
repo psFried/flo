@@ -1,3 +1,4 @@
+mod peer_follower;
 
 use protocol::{ProtocolMessage, PeerAnnounce, EventStreamStatus};
 use engine::{ReceivedProtocolMessage, ConnectionId};

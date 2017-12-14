@@ -56,7 +56,7 @@ struct PartReaderInternal {
 impl PartReaderInternal {
     fn advance(&mut self) {
         if self.next_val.is_none() {
-            let next = self.reader.next_matching();
+            let next = self.reader.read_next_uncommitted();
             self.next_val = next;
         }
     }

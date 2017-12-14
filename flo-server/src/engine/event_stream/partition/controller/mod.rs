@@ -1,5 +1,6 @@
 mod util;
 mod consumer_manager;
+mod commit_manager;
 
 use std::io;
 use std::collections::VecDeque;
@@ -29,7 +30,7 @@ pub struct PartitionImpl {
     segments: VecDeque<Segment>,
     index: PartitionIndex,
     event_stream_highest_counter: HighestCounter,
-    partition_highest_counter: AtomicCounterWriter,
+    partition_highest_committed: AtomicCounterWriter,
     primary: AtomicBoolReader,
 
     /// new segments each have a reader added here. The readers are then accessed as needed by the EventReader
@@ -61,6 +62,8 @@ impl PartitionImpl {
             initialized_segments.push_front(segment);
             reader_refs.add(reader);
         }
+
+        //TODO: differentiate between highest committed and highest uncommitted when initializing existing partition
         let current_greatest_id = index.greatest_event_counter();
         highest_counter.set_if_greater(current_greatest_id);
         let partition_id_counter = AtomicCounterWriter::with_value(current_greatest_id as usize);
@@ -84,7 +87,7 @@ impl PartitionImpl {
             segments: initialized_segments,
             index: index,
             event_stream_highest_counter: highest_counter,
-            partition_highest_counter: partition_id_counter,
+            partition_highest_committed: partition_id_counter,
             primary: status_reader,
             reader_refs: reader_refs,
             consumer_manager: ConsumerManager::new(),
@@ -108,7 +111,7 @@ impl PartitionImpl {
             segments: VecDeque::with_capacity(4),
             index: PartitionIndex::new(partition_num),
             event_stream_highest_counter: highest_counter,
-            partition_highest_counter: AtomicCounterWriter::zero(),
+            partition_highest_committed: AtomicCounterWriter::zero(),
             primary: status_reader,
             reader_refs: SharedReaderRefsMut::new(),
             consumer_manager: ConsumerManager::new(),
@@ -120,7 +123,7 @@ impl PartitionImpl {
     }
 
     pub fn event_counter_reader(&self) -> AtomicCounterReader {
-        self.partition_highest_counter.reader()
+        self.partition_highest_committed.reader()
     }
 
     pub fn primary_status_reader(&self) -> AtomicBoolReader {
@@ -211,8 +214,9 @@ impl PartitionImpl {
             self.append(&event)?;
         }
         debug!("partition: {} finished appending {} events ending with counter: {}", self.partition_num, event_count, event_counter);
-        // now increment our counter and notify consumers
-        self.partition_highest_counter.increment_and_get_relaxed(event_count);
+
+        // fence to make sure that events are actually done being saved prior to the notify, since
+        // consumers may then immediately read that region of memory
         ::std::sync::atomic::fence(::std::sync::atomic::Ordering::SeqCst);
         self.consumer_manager.notify_uncommitted();
         Ok(FloEventId::new(self.partition_num, event_counter))
@@ -321,7 +325,13 @@ impl PartitionImpl {
             }
         };
 
-        PartitionReader::new(connection_id, self.partition_num, filter, current_segment, self.reader_refs.get_reader_refs())
+        let commit_index_reader = self.partition_highest_committed.reader();
+        PartitionReader::new(connection_id,
+                             self.partition_num,
+                             filter,
+                             current_segment,
+                             self.reader_refs.get_reader_refs(),
+                             commit_index_reader)
     }
 
 
@@ -425,9 +435,9 @@ mod test {
             partition.handle_produce(produce).unwrap();
 
             let mut reader: PartitionReader = partition.create_reader(CONNECTION, EventFilter::All, 0);
-            let event = reader.next_matching().expect("read_next returned None").expect("read_next returned error");
+            let event = reader.read_next_uncommitted().expect("read_next returned None").expect("read_next returned error");
             assert_eq!(b"the quick", event.data());
-            let event2 = reader.next_matching().expect("read_next returned None").expect("read_next returned error");
+            let event2 = reader.read_next_uncommitted().expect("read_next returned None").expect("read_next returned error");
             assert_eq!(b"brown fox", event2.data());
             assert!(reader.next().is_none());
 

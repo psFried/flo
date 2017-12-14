@@ -1,8 +1,8 @@
+pub mod controller;
 mod segment;
 mod index;
 mod event_reader;
 mod ops;
-pub mod controller;
 
 use std::net::SocketAddr;
 use std::fmt::{self, Debug, Display};

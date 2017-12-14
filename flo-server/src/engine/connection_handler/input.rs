@@ -1,4 +1,6 @@
 
+use protocol::{FloInstanceId, Term};
+use event::EventCounter;
 use engine::ReceivedProtocolMessage;
 
 #[derive(Debug)]
@@ -34,4 +36,10 @@ impl From<ConnectionControl> for ConnectionHandlerInput {
     fn from(control: ConnectionControl) -> Self {
         ConnectionHandlerInput::Control(control)
     }
+}
+
+pub struct SendAppendEntries {
+    pub current_term: Term,
+    pub prev_entry_index: EventCounter,
+    pub prev_entry_term: Term,
 }

@@ -83,6 +83,7 @@ impl Segment {
         trace!("creating range iter starting at offset: {}", start);
         SegmentReader {
             segment_id: self.segment_num,
+            last_read_id: 0,
             reader: self.appender.reader(start)
         }
     }
@@ -153,12 +154,17 @@ impl Segment {
 #[derive(Clone, Debug)]
 pub struct SegmentReader {
     pub segment_id: SegmentNum,
+    last_read_id: EventCounter,
     reader: MmapReader,
 }
 
 impl SegmentReader {
     pub fn read_next(&mut self) -> Option<io::Result<PersistentEvent>> {
-        self.reader.read_next()
+        let result = self.reader.read_next();
+        if let Some(&Ok(ref event)) = result.as_ref() {
+            self.last_read_id = event.id().event_counter;
+        }
+        result
     }
 
     pub fn is_exhausted(&self) -> bool {
