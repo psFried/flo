@@ -44,6 +44,7 @@ pub fn create_connection_handler(client_handle: Handle,
             })
             .select(client_message_stream);
 
+    let mut system_stream_ref = client_engine_ref.get_system_stream();
     let connection_handler = ConnectionHandler::new(
         connection_id,
         client_tx.clone(),
@@ -59,6 +60,7 @@ pub fn create_connection_handler(client_handle: Handle,
             warn!("Closing connection: {} due to err: {:?}", connection_id, err);
         }
         info!("Closed connection_id: {} to address: {}", connection_id, client_addr);
+        system_stream_ref.connection_closed(connection_id);
         Ok(())
     });
     Box::new(future)

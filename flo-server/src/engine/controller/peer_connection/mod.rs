@@ -48,7 +48,7 @@ fn create_outgoing_connection(loops: &mut LoopHandles, client_addr: SocketAddr, 
         TcpStream::connect(&addr, handle).map_err( move |io_err| {
 
             error!("Failed to create outgoing connection to address: {:?}: {:?}", addr, io_err);
-            system_stream.outgoing_connection_failed(0, addr);
+            system_stream.outgoing_connection_failed(addr);
 
         }).and_then( move |tcp_stream| {
             let connection_id = engine_ref.next_connection_id();

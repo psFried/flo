@@ -172,7 +172,7 @@ mod test {
     use engine::event_stream::EventStreamRef;
     use engine::event_stream::partition::*;
     use engine::ClientReceiver;
-    use engine::controller::SystemStreamRef;
+    use engine::controller::{SystemStreamRef, SharedClusterState};
     use atomics::{AtomicCounterWriter, AtomicBoolWriter};
 
     struct Fixture {
@@ -201,10 +201,16 @@ mod test {
                                              tx.clone(),
                                              primary_addr);
 
-            let system_stream = SystemStreamRef::new(part_ref, tx);
+            let cluster_state = SharedClusterState {
+                this_instance_id: FloInstanceId::generate_new(),
+                this_address: None,
+                system_primary: None,
+                peers: Vec::new(),
+            };
+            let system_stream = SystemStreamRef::new(part_ref, tx, Arc::new(RwLock::new(cluster_state)));
 
             let streams = Arc::new(Mutex::new(HashMap::new()));
-            let engine = EngineRef::new(None, system_stream, streams);
+            let engine = EngineRef::new(system_stream, streams);
 
             let subject = ConnectionHandler::new(456, client_sender, engine.clone(), reactor.handle());
 

@@ -1,4 +1,4 @@
-mod cluster_state;
+pub mod cluster_state;
 mod system_stream;
 mod initialization;
 mod controller_messages;
@@ -17,11 +17,13 @@ use engine::event_stream::{EventStreamRef,
 use engine::event_stream::partition::Operation;
 use engine::event_stream::partition::controller::PartitionImpl;
 use atomics::AtomicBoolWriter;
+use self::cluster_state::ClusterState;
 
 
 pub use self::initialization::{start_controller, ControllerOptions, ClusterOptions};
 pub use self::system_stream::SystemStreamRef;
 pub use self::controller_messages::{SystemOperation, SystemOpType, ConnectionRef};
+pub use self::cluster_state::{SharedClusterState, Peer, ClusterStateReader};
 
 pub type SystemPartitionSender = ::std::sync::mpsc::Sender<SystemOperation>;
 pub type SystemPartitionReceiver = ::std::sync::mpsc::Receiver<SystemOperation>;
@@ -49,25 +51,14 @@ pub struct FloController {
     /// the partition that persists system events. Used as the RAFT log
     system_partition: PartitionImpl,
 
-    /// used to set the status of the system stream. There is only ever at most one instance in a cluster
-    /// where this variable is true ...if things actually work correctly ;)
-    system_primary_status_writer: AtomicBoolWriter,
-
-    /// The address of the cluster's primary server, if one exists and it is known
-    system_primary_server_addr: Arc<RwLock<Option<SocketAddr>>>,
-
-    /// cluster parameters that this instance was started with. We'll almost certainly want to replace this field later on
-    /// with something that can deal with more complexity
-    cluster_options: Option<ClusterOptions>,
+    cluster_state: ClusterState,
 }
 
 impl FloController {
     pub fn new(system_partition: PartitionImpl,
-               system_primary_setter: AtomicBoolWriter,
-               system_primary_address: Arc<RwLock<Option<SocketAddr>>>,
                event_streams: HashMap<String, EventStreamRefMut>,
                storage_dir: PathBuf,
-               cluster_options: Option<ClusterOptions>,
+               cluster_state: ClusterState,
                default_stream_options: EventStreamOptions) -> FloController {
 
         let stream_refs = event_streams.iter().map(|(k, v)| {
@@ -80,14 +71,12 @@ impl FloController {
             system_partition,
             storage_dir,
             default_stream_options,
-            system_primary_status_writer: system_primary_setter,
-            system_primary_server_addr: system_primary_address,
-            cluster_options,
+            cluster_state,
         }
     }
 
     fn process(&mut self, operation: SystemOperation) {
-        debug!("Processing: {:?}", operation);
+        warn!("Ignoring SystemOperation: {:?}", operation);
 
         //TODO: handle system operations
     }
@@ -100,8 +89,8 @@ impl FloController {
         self.shared_event_stream_refs.clone()
     }
 
-    fn get_this_instance_address(&self) -> Option<SocketAddr> {
-        self.cluster_options.as_ref().map(|opts| opts.this_instance_address)
+    fn get_cluster_state_reader(&self) -> ClusterStateReader {
+        self.cluster_state.reader()
     }
 }
 

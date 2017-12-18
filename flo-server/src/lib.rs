@@ -16,6 +16,9 @@ extern crate clap;
 extern crate log4rs;
 extern crate num_cpus;
 extern crate byteorder;
+
+#[macro_use]
+extern crate serde_derive;
 extern crate serde;
 extern crate serde_json;
 

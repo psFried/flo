@@ -35,6 +35,10 @@ impl SystemOperation {
         SystemOperation::new(connection.connection_id, SystemOpType::IncomingConnectionEstablished(connection))
     }
 
+    pub fn connection_closed(connection_id: ConnectionId) -> SystemOperation {
+        SystemOperation::new(connection_id, SystemOpType::ConnectionClosed(connection_id))
+    }
+
     pub fn outgoing_connection_failed(addr: SocketAddr) -> SystemOperation {
         SystemOperation::new(0, SystemOpType::OutgoingConnectionFailed(addr))
     }
