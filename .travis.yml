@@ -2,7 +2,6 @@ language: rust
 env:
   global:
     - RUST_BACKTRACE=1
-    - RUST_LOG=flo=debug
 rust:
   - stable
   - beta
