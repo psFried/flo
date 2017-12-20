@@ -75,8 +75,11 @@ pub fn start_controller(options: ControllerOptions, remote: Remote) -> io::Resul
                                        system_primary_server_addr,
                                        system_partition_tx,
                                         shared_cluster_state);
+    let system_stream_ref = engine_ref.get_system_stream();
 
     run_controller_impl(flo_controller, system_partition_rx);
+
+    ::engine::controller::tick_generator::spawn_tick_generator(remote, system_stream_ref);
 
     Ok(engine_ref)
 }
@@ -169,3 +172,5 @@ fn run_controller_impl(mut controller: FloController, system_partition_rx: Syste
         controller.shutdown();
     });
 }
+
+

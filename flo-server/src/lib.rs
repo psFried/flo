@@ -16,6 +16,7 @@ extern crate clap;
 extern crate log4rs;
 extern crate num_cpus;
 extern crate byteorder;
+extern crate rand;
 
 #[macro_use]
 extern crate serde_derive;

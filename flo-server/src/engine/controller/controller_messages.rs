@@ -16,6 +16,7 @@ pub struct ConnectionRef {
 
 #[derive(Debug)]
 pub enum SystemOpType {
+    Tick,
     PartitionOp(partition::OpType),
     IncomingConnectionEstablished(ConnectionRef),
     ConnectionUpgradeToPeer,
@@ -46,6 +47,10 @@ impl SystemOperation {
 
     pub fn outgoing_connection_failed(addr: SocketAddr) -> SystemOperation {
         SystemOperation::new(0, SystemOpType::OutgoingConnectionFailed(addr))
+    }
+
+    pub fn tick() -> SystemOperation {
+        SystemOperation::new(0, SystemOpType::Tick)
     }
 
     fn new(connection_id: ConnectionId, op_type: SystemOpType) -> SystemOperation {

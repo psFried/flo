@@ -36,6 +36,16 @@ impl SystemStreamRef {
         EventStreamRef::new(name, partition_ref)
     }
 
+    pub fn tick(&mut self) -> Result<(), ()> {
+        let op = SystemOperation::tick();
+        self.system_sender.send(op).map_err(|_| ())
+    }
+
+    pub fn tick_error(&mut self) {
+        // TODO: send a message to the system partition to let it know that there was an error so that it can resign as primary
+        unimplemented!()
+    }
+
     pub fn incomming_connection_accepted(&mut self, connection_ref: ConnectionRef) {
         let op = SystemOperation::incoming_connection_established(connection_ref);
         self.send(op);
@@ -57,6 +67,7 @@ impl SystemStreamRef {
     }
 
     fn send(&mut self, op: SystemOperation) {
+        // TODO: change this to propagate the error so that connectionHandlers can shut down gracefully
         self.system_sender.send(op).expect("Failed to send to flo controller. System must have shut down");
     }
 }

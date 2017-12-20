@@ -3,6 +3,7 @@ mod system_stream;
 mod initialization;
 mod controller_messages;
 mod peer_connection;
+mod tick_generator;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
