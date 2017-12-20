@@ -17,7 +17,7 @@ use engine::event_stream::{EventStreamRef,
 use engine::event_stream::partition::Operation;
 use engine::event_stream::partition::controller::PartitionImpl;
 use atomics::AtomicBoolWriter;
-use self::cluster_state::ClusterState;
+use self::cluster_state::{ClusterState, ConsensusProcessor};
 
 
 pub use self::initialization::{start_controller, ControllerOptions, ClusterOptions};
@@ -51,14 +51,14 @@ pub struct FloController {
     /// the partition that persists system events. Used as the RAFT log
     system_partition: PartitionImpl,
 
-    cluster_state: ClusterState,
+    cluster_state: Box<ConsensusProcessor>,
 }
 
 impl FloController {
     pub fn new(system_partition: PartitionImpl,
                event_streams: HashMap<String, EventStreamRefMut>,
                storage_dir: PathBuf,
-               cluster_state: ClusterState,
+               cluster_state: Box<ConsensusProcessor>,
                default_stream_options: EventStreamOptions) -> FloController {
 
         let stream_refs = event_streams.iter().map(|(k, v)| {
@@ -87,10 +87,6 @@ impl FloController {
 
     fn get_shared_streams(&self) -> Arc<Mutex<HashMap<String, EventStreamRef>>> {
         self.shared_event_stream_refs.clone()
-    }
-
-    fn get_cluster_state_reader(&self) -> ClusterStateReader {
-        self.cluster_state.reader()
     }
 }
 

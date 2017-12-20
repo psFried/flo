@@ -9,7 +9,8 @@ use tokio_core::reactor::Remote;
 
 use engine::{EngineRef, system_stream_name, SYSTEM_STREAM_NAME};
 use engine::controller::{SystemPartitionSender, SystemPartitionReceiver, SystemOperation};
-use engine::controller::cluster_state::{init_cluster_state, ClusterState};
+use engine::controller::cluster_state::{init_consensus_processor, ClusterState, ClusterStateReader};
+use engine::controller::peer_connection::OutgoingConnectionCreatorImpl;
 use engine::event_stream::{EventStreamRefMut,
                            EventStreamOptions,
                            init_existing_event_stream,
@@ -21,33 +22,34 @@ use engine::event_stream::partition::{PartitionSender,
                                       create_partition_channels};
 use engine::event_stream::partition::controller::PartitionImpl;
 use atomics::{AtomicBoolReader, AtomicBoolWriter, AtomicCounterReader};
+use event_loops::LoopHandles;
 
 use super::{FloController, SystemStreamRef};
 
 
 /// Options passed to the controller on startup that determine how this instance will start and behave.
 /// These options will come from the command line if this is a standalone server.
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub struct ControllerOptions {
     pub storage_dir: PathBuf,
     pub default_stream_options: EventStreamOptions,
     pub cluster_options: Option<ClusterOptions>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub struct ClusterOptions {
     pub this_instance_address: SocketAddr,
     pub peer_addresses: Vec<SocketAddr>,
+    pub event_loop_handles: LoopHandles,
 }
 
 pub fn start_controller(options: ControllerOptions, remote: Remote) -> io::Result<EngineRef> {
     debug!("Starting Flo Controller with: {:?}", options);
     let ControllerOptions{storage_dir, default_stream_options, cluster_options} = options;
-
-    let cluster_state = init_cluster_state(&storage_dir, cluster_options)?; // early return if this fails
+    let (consensus_processor, shared_cluster_state) = init_consensus_processor(&storage_dir, cluster_options)?; // early return if this fails
 
     let system_partition = init_system_partition(&storage_dir,
-                                                 cluster_state.system_primary_status_reader(),
+                                                 consensus_processor.system_primary_status_reader(),
                                                  &default_stream_options)?; // early return if this fails
     debug!("Initialized system partition");
 
@@ -55,19 +57,24 @@ pub fn start_controller(options: ControllerOptions, remote: Remote) -> io::Resul
     let user_streams = init_user_streams(&storage_dir, &default_stream_options, &remote)?;
     debug!("Initialized all {} user event streams", user_streams.len());
 
-    let system_primary_reader = cluster_state.system_primary_status_reader();
-    let system_primary_server_addr = cluster_state.system_primary_address_reader();
+    let system_primary_reader = consensus_processor.system_primary_status_reader();
+    let system_primary_server_addr = consensus_processor.system_primary_address_reader();
     let system_highest_counter = system_partition.event_counter_reader();
 
 
     let flo_controller = FloController::new(system_partition,
                                             user_streams,
                                             storage_dir,
-                                            cluster_state,
+                                            consensus_processor,
                                             default_stream_options);
 
     let (system_partition_tx, system_partition_rx) = ::engine::controller::create_system_partition_channels();
-    let engine_ref = create_engine_ref(&flo_controller, system_highest_counter, system_primary_reader, system_primary_server_addr, system_partition_tx);
+    let engine_ref = create_engine_ref(&flo_controller,
+                                       system_highest_counter,
+                                       system_primary_reader,
+                                       system_primary_server_addr,
+                                       system_partition_tx,
+                                        shared_cluster_state);
 
     run_controller_impl(flo_controller, system_partition_rx);
 
@@ -99,7 +106,8 @@ fn create_engine_ref(controller: &FloController,
                      system_highest_counter: AtomicCounterReader,
                      system_primary_reader: AtomicBoolReader,
                      system_primary_addr: Arc<RwLock<Option<SocketAddr>>>,
-                     system_partition_sender: SystemPartitionSender) -> EngineRef {
+                     system_partition_sender: SystemPartitionSender,
+                     cluster_state_reader: ClusterStateReader) -> EngineRef {
 
     let system_partition_ref = PartitionRef::system(system_stream_name(),
                                                  1,
@@ -108,7 +116,6 @@ fn create_engine_ref(controller: &FloController,
                                                  system_partition_sender.clone(),
                                                  system_primary_addr);
 
-    let cluster_state_reader = controller.get_cluster_state_reader();
     let system_stream_ref = SystemStreamRef::new(system_partition_ref, system_partition_sender, cluster_state_reader);
 
     let shared_stream_refs = controller.get_shared_streams();

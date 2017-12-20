@@ -51,6 +51,11 @@ impl SystemStreamRef {
         self.send(op);
     }
 
+    pub fn connection_upgraded_to_peer(&mut self, connection_id: ConnectionId) {
+        let op = SystemOperation::connection_upgraded_to_peer(connection_id);
+        self.send(op);
+    }
+
     fn send(&mut self, op: SystemOperation) {
         self.system_sender.send(op).expect("Failed to send to flo controller. System must have shut down");
     }

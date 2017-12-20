@@ -12,7 +12,6 @@ extern crate log;
 use std::fmt::Debug;
 use std::thread;
 use std::time::Duration;
-use std::net::SocketAddr;
 
 use tokio_core::reactor::Core;
 use futures::{Stream, Future};

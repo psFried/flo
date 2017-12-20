@@ -41,7 +41,7 @@ impl CommitManager {
         self.peers.sort_by_key(|elem| elem.1);
 
         let idx = self.min_required_for_commit;
-        let mut ack_counter = self.peers[idx as usize].1;
+        let ack_counter = self.peers[idx as usize].1;
 
         if self.commit_index.set_if_greater(ack_counter as usize) {
             Some(ack_counter)

@@ -18,7 +18,8 @@ pub struct ConnectionRef {
 pub enum SystemOpType {
     PartitionOp(partition::OpType),
     IncomingConnectionEstablished(ConnectionRef),
-    ConnectionClosed(ConnectionId),
+    ConnectionUpgradeToPeer,
+    ConnectionClosed,
     OutgoingConnectionFailed(SocketAddr),
 }
 
@@ -31,12 +32,16 @@ pub struct SystemOperation {
 
 impl SystemOperation {
 
+    pub fn connection_upgraded_to_peer(connection_id: ConnectionId) -> SystemOperation {
+        SystemOperation::new(connection_id, SystemOpType::ConnectionUpgradeToPeer)
+    }
+
     pub fn incoming_connection_established(connection: ConnectionRef) -> SystemOperation {
         SystemOperation::new(connection.connection_id, SystemOpType::IncomingConnectionEstablished(connection))
     }
 
     pub fn connection_closed(connection_id: ConnectionId) -> SystemOperation {
-        SystemOperation::new(connection_id, SystemOpType::ConnectionClosed(connection_id))
+        SystemOperation::new(connection_id, SystemOpType::ConnectionClosed)
     }
 
     pub fn outgoing_connection_failed(addr: SocketAddr) -> SystemOperation {

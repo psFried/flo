@@ -11,6 +11,7 @@ use futures::{Future, Stream, Sink};
 use protocol::{FloInstanceId, Term};
 use event::EventCounter;
 use event_loops::LoopHandles;
+use engine::ConnectionId;
 use engine::controller::SystemStreamRef;
 use engine::connection_handler::ConnectionControlSender;
 
@@ -26,13 +27,25 @@ pub struct CallAppendEntries {
 
 /// Trait representing an active peer connection, with functions to control it
 pub trait PeerSystemConnection: Debug + Send + 'static {
-
+    fn connection_id(&self) -> ConnectionId;
 }
-
-
 
 
 #[derive(Debug)]
-struct OutgoingPeerSystemConnection {
-    client_tx: ConnectionControlSender,
+pub struct PeerConnectionImpl {
+    connection_id: ConnectionId,
+    sender: ConnectionControlSender
 }
+
+impl PeerConnectionImpl {
+    pub fn new(connection_id: ConnectionId, sender: ConnectionControlSender) -> PeerConnectionImpl {
+        PeerConnectionImpl { connection_id, sender }
+    }
+}
+
+impl PeerSystemConnection for PeerConnectionImpl {
+    fn connection_id(&self) -> ConnectionId {
+        self.connection_id
+    }
+}
+

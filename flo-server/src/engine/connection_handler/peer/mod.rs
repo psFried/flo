@@ -22,9 +22,33 @@ impl PeerConnectionState {
 
         let announce = PeerConnectionState::create_peer_announce(&*state.engine.system_stream());
         let protocol_message = ProtocolMessage::PeerAnnounce(announce);
+        // safe unwrap since this is called only when creating a brand new outgoing connection
         state.send_to_client(protocol_message).expect("failed to send peer announce when establishing outgoing connection");
 
         *self = PeerConnectionState::AwaitingPeerResponse;
+    }
+
+    pub fn peer_announce_received(&mut self, state: &mut ConnectionState) -> ConnectionHandlerResult {
+        let connection_id = state.connection_id;
+        let old_state = self.set_state(connection_id, PeerConnectionState::Peer);
+
+        match old_state {
+            PeerConnectionState::Peer => {
+                // we've already gone through this, so something's wrong
+                let message = format!("received redundant PeerAnnounce for connection_id: {}, closing connection", connection_id);
+                return Err(message)
+            }
+            PeerConnectionState::Init => {
+                // This was an incoming connection, and this was the first peer message sent, so we need to respond in kind
+                let peer_announce = PeerConnectionState::create_peer_announce(state.get_system_stream());
+                state.send_to_client(ProtocolMessage::PeerAnnounce(peer_announce))?;
+            }
+            PeerConnectionState::AwaitingPeerResponse => { }
+        }
+
+        state.set_to_system_stream();
+        state.get_system_stream().connection_upgraded_to_peer(connection_id);
+        Ok(())
     }
 
     fn create_peer_announce(system_stream: &SystemStreamRef) -> PeerAnnounce {
@@ -50,27 +74,13 @@ impl PeerConnectionState {
         })
     }
 
-    pub fn message_received(&mut self, message: ReceivedProtocolMessage, state: &mut ConnectionState) -> ConnectionHandlerResult {
-
-        match message {
-            ProtocolMessage::StreamStatus(status) => {
-                self.stream_status_received(state, status);
-            }
-            other @ _ => {
-                error!("Unhandled protocol message from peer: {:?}", other);
-            }
-        }
-
-        Ok(())
-    }
-
-    fn stream_status_received(&mut self, state: &mut ConnectionState, _status: EventStreamStatus) {
-        self.set_state(state.connection_id, PeerConnectionState::Peer);
-        unimplemented!()
-    }
-
-    fn set_state(&mut self, connection_id: ConnectionId, new_state: PeerConnectionState) {
+    fn set_state(&mut self, connection_id: ConnectionId, new_state: PeerConnectionState) -> PeerConnectionState {
         debug!("Transitioning connection_id: {} from {:?} to {:?}", connection_id, self, new_state);
-        *self = new_state;
+        ::std::mem::replace(self, new_state)
     }
+}
+
+#[cfg(test)]
+mod test {
+
 }

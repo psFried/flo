@@ -7,10 +7,11 @@ use tokio_core::reactor::Handle;
 use tokio_core::net::TcpStream;
 use futures::Future;
 
-use engine::EngineRef;
+use engine::{EngineRef, ConnectionId};
 use engine::connection_handler::{create_connection_control_channels, ConnectionControlSender};
 use event_loops::LoopHandles;
 use flo_io::create_connection_handler;
+use self::system::PeerConnectionImpl;
 
 pub use self::system::PeerSystemConnection;
 
@@ -27,15 +28,27 @@ pub struct OutgoingConnectionCreatorImpl {
     engine_ref: EngineRef,
 }
 
+impl OutgoingConnectionCreatorImpl {
+    pub fn new(loops: LoopHandles, engine: EngineRef) -> OutgoingConnectionCreatorImpl {
+        OutgoingConnectionCreatorImpl {
+            event_loops: loops,
+            engine_ref: engine,
+        }
+    }
+}
+
 impl OutgoingConnectionCreator for OutgoingConnectionCreatorImpl {
     fn establish_system_connection(&mut self, address: SocketAddr) -> Box<PeerSystemConnection> {
-        unimplemented!()
+        let OutgoingConnectionCreatorImpl { ref mut event_loops, ref engine_ref } = *self;
+
+        let (sender, connection_id) = create_outgoing_connection(event_loops, address, engine_ref.clone());
+        Box::new(PeerConnectionImpl::new(connection_id, sender))
     }
 }
 
 
-fn create_outgoing_connection(loops: &mut LoopHandles, client_addr: SocketAddr, engine_ref: EngineRef) -> ConnectionControlSender {
-
+fn create_outgoing_connection(loops: &mut LoopHandles, client_addr: SocketAddr, engine_ref: EngineRef) -> (ConnectionControlSender, ConnectionId) {
+    let connection_id = engine_ref.next_connection_id();
     let client_addr_copy = client_addr.clone();
     let mut system_stream = engine_ref.get_system_stream();
 
@@ -51,7 +64,6 @@ fn create_outgoing_connection(loops: &mut LoopHandles, client_addr: SocketAddr, 
             system_stream.outgoing_connection_failed(addr);
 
         }).and_then( move |tcp_stream| {
-            let connection_id = engine_ref.next_connection_id();
 
             create_connection_handler(owned_handle,
                                       engine_ref,
@@ -62,7 +74,7 @@ fn create_outgoing_connection(loops: &mut LoopHandles, client_addr: SocketAddr, 
         })
     });
 
-    control_tx
+    (control_tx, connection_id)
 }
 
 

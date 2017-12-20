@@ -34,6 +34,7 @@ pub fn run(mut options: ServerOptions) -> io::Result<()> {
         ClusterOptions {
             this_instance_address: server_addr,
             peer_addresses: peers,
+            event_loop_handles: event_loop_handles.clone(),
         }
     });
 

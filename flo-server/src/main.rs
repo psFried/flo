@@ -24,7 +24,6 @@ extern crate tempdir;
 pub use flo_server::*;
 
 use chrono::Duration;
-use event::ActorId;
 use logging::{init_logging, LogLevelOption, LogFileOption};
 use clap::{App, Arg, ArgMatches};
 use std::str::FromStr;
