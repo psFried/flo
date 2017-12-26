@@ -25,10 +25,18 @@ pub struct CallAppendEntries {
     pub leader_commit_index: EventCounter,
 }
 
+pub trait PendingSystemConnection: Debug + Send + 'static {
+    fn connection_id(&self) -> ConnectionId;
+
+    fn complete(self: Box<Self>, id: FloInstanceId) -> Box<PeerSystemConnection>;
+}
+
 /// Trait representing an active peer connection, with functions to control it
 pub trait PeerSystemConnection: Debug + Send + 'static {
     fn connection_id(&self) -> ConnectionId;
 }
+
+
 
 
 #[derive(Debug)]

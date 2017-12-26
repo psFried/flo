@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 
 
+use engine::ConnectionId;
 use engine::event_stream::{EventStreamRef,
                                EventStreamRefMut,
                                EventStreamOptions};
@@ -18,7 +19,7 @@ use engine::event_stream::{EventStreamRef,
 use engine::event_stream::partition::Operation;
 use engine::event_stream::partition::controller::PartitionImpl;
 use atomics::AtomicBoolWriter;
-use self::cluster_state::{ClusterState, ConsensusProcessor};
+use self::cluster_state::{ClusterManager, ConsensusProcessor};
 
 
 pub use self::initialization::{start_controller, ControllerOptions, ClusterOptions};
@@ -53,42 +54,59 @@ pub struct FloController {
     system_partition: PartitionImpl,
 
     cluster_state: Box<ConsensusProcessor>,
+
+    all_connections: HashMap<ConnectionId, ConnectionRef>,
 }
 
 impl FloController {
     pub fn new(system_partition: PartitionImpl,
                event_streams: HashMap<String, EventStreamRefMut>,
+               shared_stream_refs: Arc<Mutex<HashMap<String, EventStreamRef>>>,
                storage_dir: PathBuf,
                cluster_state: Box<ConsensusProcessor>,
                default_stream_options: EventStreamOptions) -> FloController {
 
-        let stream_refs = event_streams.iter().map(|(k, v)| {
-            (k.to_owned(), v.clone_ref())
-        }).collect::<HashMap<String, EventStreamRef>>();
-
         FloController {
-            shared_event_stream_refs: Arc::new(Mutex::new(stream_refs)),
+            shared_event_stream_refs: shared_stream_refs,
             event_streams,
             system_partition,
             storage_dir,
             default_stream_options,
             cluster_state,
+            all_connections: HashMap::with_capacity(4),
         }
     }
 
     fn process(&mut self, operation: SystemOperation) {
-        warn!("Ignoring SystemOperation: {:?}", operation);
 
-        //TODO: handle system operations
+        let SystemOperation {connection_id, op_start_time, op_type } = operation;
+        trace!("Received system op: {:?}", op_type);
+        // TODO: time operation handling and record perf metrics
+
+        match op_type {
+            SystemOpType::IncomingConnectionEstablished(connection_ref) => {
+                self.all_connections.insert(connection_id, connection_ref);
+            }
+            SystemOpType::OutgoingConnectionFailed(address) => {
+                self.cluster_state.outgoing_connection_failed(address);
+            }
+            SystemOpType::ConnectionUpgradeToPeer(peer_id) => {
+                if let Some(connection_ref) = self.all_connections.get(&connection_id).cloned() {
+                    unimplemented!()
+                } else {
+                    error!("Got ConnectionUpgradeToPeer for connection_id: {}, but no connection with that id exists", connection_id);
+                }
+            }
+            other @ _ => {
+                warn!("Ignoring SystemOperation: {:?}", other);
+            }
+        }
     }
 
     fn shutdown(&mut self) {
         info!("Shutting down FloController");
     }
 
-    fn get_shared_streams(&self) -> Arc<Mutex<HashMap<String, EventStreamRef>>> {
-        self.shared_event_stream_refs.clone()
-    }
 }
 
 

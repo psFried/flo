@@ -1,5 +1,6 @@
 use std::net::SocketAddr;
 
+use protocol::FloInstanceId;
 use engine::event_stream::partition::{PartitionRef, Operation};
 use engine::event_stream::EventStreamRef;
 use engine::controller::{SystemPartitionSender, SystemOperation, ConnectionRef};
@@ -46,7 +47,7 @@ impl SystemStreamRef {
         unimplemented!()
     }
 
-    pub fn incomming_connection_accepted(&mut self, connection_ref: ConnectionRef) {
+    pub fn incoming_connection_accepted(&mut self, connection_ref: ConnectionRef) {
         let op = SystemOperation::incoming_connection_established(connection_ref);
         self.send(op);
     }
@@ -61,8 +62,8 @@ impl SystemStreamRef {
         self.send(op);
     }
 
-    pub fn connection_upgraded_to_peer(&mut self, connection_id: ConnectionId) {
-        let op = SystemOperation::connection_upgraded_to_peer(connection_id);
+    pub fn connection_upgraded_to_peer(&mut self, connection_id: ConnectionId, peer_id: FloInstanceId) {
+        let op = SystemOperation::connection_upgraded_to_peer(connection_id, peer_id);
         self.send(op);
     }
 

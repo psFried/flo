@@ -91,7 +91,7 @@ fn handle_incoming_connection(engine_ref: &EngineRef, remote_handle: Remote, tcp
         remote_address: client_addr,
         control_sender: control_tx,
     };
-    client_engine_ref.system_stream().incomming_connection_accepted(connection_ref);
+    client_engine_ref.system_stream().incoming_connection_accepted(connection_ref);
 
     remote_handle.spawn(move |client_handle| {
         create_connection_handler(client_handle.clone(), client_engine_ref, connection_id, client_addr, tcp_stream, control_rx)

@@ -72,7 +72,7 @@ impl ConnectionHandler {
     pub fn handle_incoming_message(&mut self, message: ReceivedProtocolMessage) -> ConnectionHandlerResult {
         trace!("client: {:?}, received message: {:?}", self.common_state, message);
 
-        let ConnectionHandler{ref mut common_state, ref mut consumer_state, ref mut producer_state, .. } = *self;
+        let ConnectionHandler{ref mut common_state, ref mut consumer_state, ref mut producer_state, ref mut peer_state } = *self;
 
         match message {
             ProtocolMessage::SetEventStream(SetEventStream{op_id, name}) => {
@@ -81,6 +81,9 @@ impl ConnectionHandler {
             ProtocolMessage::Announce(announce) => {
                 common_state.handle_announce_message(announce)
             },
+            ProtocolMessage::PeerAnnounce(peer_announce) => {
+                peer_state.peer_announce_received(peer_announce, common_state)
+            }
             ProtocolMessage::ProduceEvent(produce) => {
                 producer_state.handle_produce(produce, common_state)
             },

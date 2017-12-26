@@ -1,5 +1,6 @@
 mod system;
 
+use std::collections::HashMap;
 use std::fmt::Debug;
 use std::net::SocketAddr;
 use std::io;
@@ -9,20 +10,22 @@ use futures::Future;
 
 use engine::{EngineRef, ConnectionId};
 use engine::connection_handler::{create_connection_control_channels, ConnectionControlSender};
+use engine::controller::ConnectionRef;
 use event_loops::LoopHandles;
 use flo_io::create_connection_handler;
 use self::system::PeerConnectionImpl;
 
-pub use self::system::PeerSystemConnection;
+pub use self::system::{PeerSystemConnection, PendingSystemConnection};
 
 pub type ConnectionSendResult<T> = Result<(), T>;
 
 
 /// Trait for creating outgoing connections (clever name, I know).
-pub trait OutgoingConnectionCreator {
-    fn establish_system_connection(&mut self, address: SocketAddr) -> Box<PeerSystemConnection>;
+pub trait OutgoingConnectionCreator: Debug + Send + 'static {
+    fn establish_system_connection(&mut self, address: SocketAddr) -> ConnectionRef;
 }
 
+#[derive(Debug)]
 pub struct OutgoingConnectionCreatorImpl {
     event_loops: LoopHandles,
     engine_ref: EngineRef,
@@ -38,11 +41,15 @@ impl OutgoingConnectionCreatorImpl {
 }
 
 impl OutgoingConnectionCreator for OutgoingConnectionCreatorImpl {
-    fn establish_system_connection(&mut self, address: SocketAddr) -> Box<PeerSystemConnection> {
+    fn establish_system_connection(&mut self, address: SocketAddr) -> ConnectionRef {
         let OutgoingConnectionCreatorImpl { ref mut event_loops, ref engine_ref } = *self;
 
         let (sender, connection_id) = create_outgoing_connection(event_loops, address, engine_ref.clone());
-        Box::new(PeerConnectionImpl::new(connection_id, sender))
+        ConnectionRef {
+            connection_id,
+            remote_address: address,
+            control_sender: sender,
+        }
     }
 }
 

@@ -28,7 +28,7 @@ impl PeerConnectionState {
         *self = PeerConnectionState::AwaitingPeerResponse;
     }
 
-    pub fn peer_announce_received(&mut self, state: &mut ConnectionState) -> ConnectionHandlerResult {
+    pub fn peer_announce_received(&mut self, announce: PeerAnnounce, state: &mut ConnectionState) -> ConnectionHandlerResult {
         let connection_id = state.connection_id;
         let old_state = self.set_state(connection_id, PeerConnectionState::Peer);
 
@@ -42,12 +42,15 @@ impl PeerConnectionState {
                 // This was an incoming connection, and this was the first peer message sent, so we need to respond in kind
                 let peer_announce = PeerConnectionState::create_peer_announce(state.get_system_stream());
                 state.send_to_client(ProtocolMessage::PeerAnnounce(peer_announce))?;
+
             }
-            PeerConnectionState::AwaitingPeerResponse => { }
+            PeerConnectionState::AwaitingPeerResponse => {
+
+            }
         }
 
         state.set_to_system_stream();
-        state.get_system_stream().connection_upgraded_to_peer(connection_id);
+        state.get_system_stream().connection_upgraded_to_peer(connection_id, announce.instance_id);
         Ok(())
     }
 

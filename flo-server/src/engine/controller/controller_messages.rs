@@ -3,11 +3,12 @@ use std::time::Instant;
 
 use futures::sync::mpsc::UnboundedSender;
 
+use protocol::FloInstanceId;
 use engine::event_stream::partition::{self, Operation};
 use engine::connection_handler::{ConnectionControl, ConnectionControlSender};
 use engine::ConnectionId;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ConnectionRef {
     pub connection_id: ConnectionId,
     pub remote_address: SocketAddr,
@@ -19,7 +20,7 @@ pub enum SystemOpType {
     Tick,
     PartitionOp(partition::OpType),
     IncomingConnectionEstablished(ConnectionRef),
-    ConnectionUpgradeToPeer,
+    ConnectionUpgradeToPeer(FloInstanceId),
     ConnectionClosed,
     OutgoingConnectionFailed(SocketAddr),
 }
@@ -33,8 +34,8 @@ pub struct SystemOperation {
 
 impl SystemOperation {
 
-    pub fn connection_upgraded_to_peer(connection_id: ConnectionId) -> SystemOperation {
-        SystemOperation::new(connection_id, SystemOpType::ConnectionUpgradeToPeer)
+    pub fn connection_upgraded_to_peer(connection_id: ConnectionId, peer_id: FloInstanceId) -> SystemOperation {
+        SystemOperation::new(connection_id, SystemOpType::ConnectionUpgradeToPeer(peer_id))
     }
 
     pub fn incoming_connection_established(connection: ConnectionRef) -> SystemOperation {
