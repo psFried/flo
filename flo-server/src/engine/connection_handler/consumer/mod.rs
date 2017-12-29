@@ -41,6 +41,7 @@ impl ConsumerConnectionState {
     }
 
     pub fn shutdown(&mut self, connection: &mut ConnectionState) {
+        debug!("Shutting down connection_id: {}", connection.connection_id);
         if let Some(ref mut consumer) = self.consumer_ref.take() {
             // tell the active consumer to stop sending events
             consumer.status_setter.set(ConsumerStatus::Stop);

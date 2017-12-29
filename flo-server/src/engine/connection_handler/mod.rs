@@ -141,12 +141,14 @@ impl Sink for ConnectionHandler {
     }
 
     fn close(&mut self) -> Poll<(), Self::SinkError> {
-        let _ = try_ready!(self.poll_complete());
+        Ok(Async::Ready(()))
+    }
+}
 
+impl Drop for ConnectionHandler {
+    fn drop(&mut self) {
         let ConnectionHandler {ref mut common_state, ref mut consumer_state, ..} = *self;
         consumer_state.shutdown(common_state);
-
-        Ok(Async::Ready(()))
     }
 }
 
