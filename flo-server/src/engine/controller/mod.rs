@@ -1,9 +1,9 @@
 pub mod cluster_state;
+pub mod tick_generator;
 mod system_stream;
 mod initialization;
 mod controller_messages;
 mod peer_connection;
-mod tick_generator;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
@@ -24,8 +24,8 @@ use self::cluster_state::{ClusterManager, ConsensusProcessor};
 
 pub use self::initialization::{start_controller, ControllerOptions, ClusterOptions};
 pub use self::system_stream::SystemStreamRef;
-pub use self::controller_messages::{SystemOperation, SystemOpType, ConnectionRef};
-pub use self::cluster_state::{SharedClusterState, Peer, ClusterStateReader};
+pub use self::controller_messages::{SystemOperation, SystemOpType, ConnectionRef, Peer, PeerUpgrade};
+pub use self::cluster_state::{SharedClusterState, ClusterStateReader};
 
 pub type SystemPartitionSender = ::std::sync::mpsc::Sender<SystemOperation>;
 pub type SystemPartitionReceiver = ::std::sync::mpsc::Receiver<SystemOperation>;
@@ -88,14 +88,16 @@ impl FloController {
                 self.all_connections.insert(connection_id, connection_ref);
             }
             SystemOpType::OutgoingConnectionFailed(address) => {
-                self.cluster_state.outgoing_connection_failed(address);
+                self.all_connections.remove(&connection_id);
+                self.cluster_state.outgoing_connection_failed(connection_id, address);
             }
-            SystemOpType::ConnectionUpgradeToPeer(peer_id) => {
-                if let Some(connection_ref) = self.all_connections.get(&connection_id).cloned() {
-                    unimplemented!()
-                } else {
-                    error!("Got ConnectionUpgradeToPeer for connection_id: {}, but no connection with that id exists", connection_id);
-                }
+            SystemOpType::ConnectionUpgradeToPeer(upgrade) => {
+                let FloController{ref mut cluster_state, ref mut all_connections, ..} = *self;
+                cluster_state.peer_connection_established(upgrade, connection_id, all_connections);
+            }
+            SystemOpType::Tick => {
+                let FloController{ref mut cluster_state, ref mut all_connections, ..} = *self;
+                cluster_state.tick(op_start_time, all_connections);
             }
             other @ _ => {
                 warn!("Ignoring SystemOperation: {:?}", other);

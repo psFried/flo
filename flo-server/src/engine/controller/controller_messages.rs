@@ -15,12 +15,26 @@ pub struct ConnectionRef {
     pub control_sender: ConnectionControlSender,
 }
 
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+pub struct Peer {
+    pub id: FloInstanceId,
+    pub address: SocketAddr,
+}
+
+#[derive(Debug, Clone)]
+pub struct PeerUpgrade {
+    pub peer_id: FloInstanceId,
+    pub system_primary: Option<Peer>,
+    pub cluster_members: Vec<Peer>,
+}
+
+
 #[derive(Debug)]
 pub enum SystemOpType {
     Tick,
     PartitionOp(partition::OpType),
     IncomingConnectionEstablished(ConnectionRef),
-    ConnectionUpgradeToPeer(FloInstanceId),
+    ConnectionUpgradeToPeer(PeerUpgrade),
     ConnectionClosed,
     OutgoingConnectionFailed(SocketAddr),
 }
@@ -34,8 +48,13 @@ pub struct SystemOperation {
 
 impl SystemOperation {
 
-    pub fn connection_upgraded_to_peer(connection_id: ConnectionId, peer_id: FloInstanceId) -> SystemOperation {
-        SystemOperation::new(connection_id, SystemOpType::ConnectionUpgradeToPeer(peer_id))
+    pub fn connection_upgraded_to_peer(connection_id: ConnectionId, peer_id: FloInstanceId, system_primary: Option<Peer>, cluster_members: Vec<Peer>) -> SystemOperation {
+        let upgrade = PeerUpgrade {
+            peer_id,
+            system_primary,
+            cluster_members
+        };
+        SystemOperation::new(connection_id, SystemOpType::ConnectionUpgradeToPeer(upgrade))
     }
 
     pub fn incoming_connection_established(connection: ConnectionRef) -> SystemOperation {
@@ -46,8 +65,8 @@ impl SystemOperation {
         SystemOperation::new(connection_id, SystemOpType::ConnectionClosed)
     }
 
-    pub fn outgoing_connection_failed(addr: SocketAddr) -> SystemOperation {
-        SystemOperation::new(0, SystemOpType::OutgoingConnectionFailed(addr))
+    pub fn outgoing_connection_failed(connection_id: ConnectionId, addr: SocketAddr) -> SystemOperation {
+        SystemOperation::new(connection_id, SystemOpType::OutgoingConnectionFailed(addr))
     }
 
     pub fn tick() -> SystemOperation {

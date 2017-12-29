@@ -3,6 +3,7 @@ mod peer_follower;
 use protocol::{ProtocolMessage, PeerAnnounce, EventStreamStatus, ClusterMember};
 use engine::{ReceivedProtocolMessage, ConnectionId};
 use engine::controller::SystemStreamRef;
+use engine::controller::Peer;
 use super::connection_state::ConnectionState;
 use super::ConnectionHandlerResult;
 
@@ -48,9 +49,23 @@ impl PeerConnectionState {
 
             }
         }
-
         state.set_to_system_stream();
-        state.get_system_stream().connection_upgraded_to_peer(connection_id, announce.instance_id);
+
+        let PeerAnnounce {instance_id, system_primary_id, cluster_members, ..} = announce;
+        let primary = system_primary_id.and_then(|primary_id| {
+            cluster_members.iter().find(|member| {
+                member.id == primary_id
+            }).map(|member| {
+                Peer {
+                    id: member.id,
+                    address: member.address,
+                }
+            })
+        });
+        let peers = cluster_members.into_iter().map(|member| {
+            member_to_peer(member)
+        }).collect();
+        state.get_system_stream().connection_upgraded_to_peer(connection_id, announce.instance_id, primary, peers);
         Ok(())
     }
 
@@ -81,6 +96,10 @@ impl PeerConnectionState {
         debug!("Transitioning connection_id: {} from {:?} to {:?}", connection_id, self, new_state);
         ::std::mem::replace(self, new_state)
     }
+}
+
+fn member_to_peer(ClusterMember{id, address}: ClusterMember) -> Peer {
+    Peer { id, address }
 }
 
 #[cfg(test)]

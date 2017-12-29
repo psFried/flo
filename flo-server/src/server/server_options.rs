@@ -45,6 +45,8 @@ pub struct ServerOptions {
     pub max_cache_memory: MemoryLimit,
     pub this_instance_address: Option<SocketAddr>,
     pub cluster_addresses: Option<Vec<SocketAddr>>,
+    pub election_timeout_millis: u64,
+    pub heartbeat_interval_millis: u64,
     pub max_io_threads: Option<usize>,
 }
 

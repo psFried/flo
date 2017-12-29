@@ -88,6 +88,14 @@ fn app_args() -> App<'static, 'static> {
                     .short("A")
                     .takes_value(true)
                     .help("The socket address that this server is reachable at. Will be removed once cluster support doesn't suck so bad"))
+            .arg(Arg::with_name("election-timeout")
+                    .long("election-timeout")
+                    .takes_value(true)
+                    .help("Trigger an election after this number of milliseconds. Defaults to a random number between 150-300"))
+            .arg(Arg::with_name("heartbeat-interval")
+                    .long("heartbeat-interval")
+                    .takes_value(true)
+                    .help("Number of milliseconds to go in between sending heartbeats. Defaults to 1/3 of the election timeout"))
             .arg(Arg::with_name("max-io-threads")
                     .long("max-io-threads")
                     .takes_value(true)
@@ -132,6 +140,10 @@ fn main() {
     let default_eviction_period = ::std::cmp::min(retention_duration.num_hours() / 6, MAX_SEGMENT_PERIOD_HOURS);
     let eviction_period_hours = parse_arg_or_exit(&args, "eviction-period", default_eviction_period);
 
+    let default_election_timeout = ::engine::controller::tick_generator::get_election_timeout_millis();
+    let election_timeout = parse_arg_or_exit(&args, "election-timeout", default_election_timeout);
+    let heartbeat_interval = parse_arg_or_exit(&args, "heartbeat-interval", election_timeout / 3);
+
     let server_options = ServerOptions {
         event_retention_duration: retention_duration,
         event_eviction_period: Duration::hours(eviction_period_hours),
@@ -140,6 +152,8 @@ fn main() {
         max_cache_memory: max_cache_memory,
         this_instance_address: this_address,
         cluster_addresses: cluster_addresses,
+        election_timeout_millis: election_timeout,
+        heartbeat_interval_millis: heartbeat_interval,
         max_io_threads: max_io_threads,
     };
 

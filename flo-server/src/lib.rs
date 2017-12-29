@@ -37,3 +37,6 @@ pub mod engine;
 pub mod event_loops;
 pub mod channels;
 pub mod atomics;
+
+#[cfg(test)]
+pub mod test_utils;

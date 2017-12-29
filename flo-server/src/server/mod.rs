@@ -32,6 +32,8 @@ pub fn run(mut options: ServerOptions) -> io::Result<()> {
     let cluster_options = this_address.map(|server_addr| {
         let peers = peer_addresses.unwrap();
         ClusterOptions {
+            election_timeout_millis: options.election_timeout_millis,
+            heartbeat_interval_millis: options.heartbeat_interval_millis,
             this_instance_address: server_addr,
             peer_addresses: peers,
             event_loop_handles: event_loop_handles.clone(),

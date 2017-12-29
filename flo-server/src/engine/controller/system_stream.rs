@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 use protocol::FloInstanceId;
 use engine::event_stream::partition::{PartitionRef, Operation};
 use engine::event_stream::EventStreamRef;
-use engine::controller::{SystemPartitionSender, SystemOperation, ConnectionRef};
+use engine::controller::{SystemPartitionSender, SystemOperation, ConnectionRef, Peer};
 use engine::controller::cluster_state::{SharedClusterState, ClusterStateReader};
 use engine::ConnectionId;
 use atomics::AtomicBoolReader;
@@ -57,13 +57,13 @@ impl SystemStreamRef {
         self.send(op);
     }
 
-    pub fn outgoing_connection_failed(&mut self, socket_addr: SocketAddr) {
-        let op = SystemOperation::outgoing_connection_failed(socket_addr);
+    pub fn outgoing_connection_failed(&mut self, connection_id: ConnectionId, socket_addr: SocketAddr) {
+        let op = SystemOperation::outgoing_connection_failed(connection_id, socket_addr);
         self.send(op);
     }
 
-    pub fn connection_upgraded_to_peer(&mut self, connection_id: ConnectionId, peer_id: FloInstanceId) {
-        let op = SystemOperation::connection_upgraded_to_peer(connection_id, peer_id);
+    pub fn connection_upgraded_to_peer(&mut self, connection_id: ConnectionId, peer_id: FloInstanceId, system_primary: Option<Peer>, cluster_members: Vec<Peer>) {
+        let op = SystemOperation::connection_upgraded_to_peer(connection_id, peer_id, system_primary, cluster_members);
         self.send(op);
     }
 

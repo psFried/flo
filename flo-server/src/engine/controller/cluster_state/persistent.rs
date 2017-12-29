@@ -4,17 +4,18 @@ use std::fs::{File, OpenOptions};
 use std::io::{self, Seek};
 
 use protocol::{FloInstanceId, Term};
-use super::{Peer, ClusterOptions, SharedClusterState};
+use engine::controller::controller_messages::Peer;
+use super::{ClusterOptions, SharedClusterState};
 
 /// Holds all the cluster state that we want to survive a reboot.
 /// We always persist the `FloInstanceId` because we prefer that to be stable across reboots. We do _not_ want to persist
 /// the `SocketAddr` for the server, though, since that may well change after a restart, depending on environment.
 #[derive(Debug, PartialEq, Clone)]
 pub struct PersistentClusterState {
-    current_term: Term,
-    voted_for: Option<FloInstanceId>,
-    this_instance_id: FloInstanceId,
-    cluster_members: Vec<Peer>,
+    pub current_term: Term,
+    pub voted_for: Option<FloInstanceId>,
+    pub this_instance_id: FloInstanceId,
+    pub cluster_members: Vec<Peer>,
 }
 
 impl PersistentClusterState {

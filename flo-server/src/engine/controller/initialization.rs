@@ -44,6 +44,8 @@ pub struct ControllerOptions {
 
 #[derive(Debug)]
 pub struct ClusterOptions {
+    pub election_timeout_millis: u64,
+    pub heartbeat_interval_millis: u64,
     pub this_instance_address: SocketAddr,
     pub peer_addresses: Vec<SocketAddr>,
     pub event_loop_handles: LoopHandles,
@@ -96,6 +98,9 @@ pub fn start_controller(options: ControllerOptions, remote: Remote) -> io::Resul
         let persistent_state = file_cluster_state.unwrap();
         let cluster_opts = cluster_options.unwrap();
 
+        let system_stream_ref = engine_ref.get_system_stream();
+        ::engine::controller::tick_generator::spawn_tick_generator(cluster_opts.heartbeat_interval_millis, remote, system_stream_ref);
+
         init_cluster_consensus_processor(persistent_state,
                                          cluster_opts,
                                          engine_ref.clone(),
@@ -114,8 +119,6 @@ pub fn start_controller(options: ControllerOptions, remote: Remote) -> io::Resul
                                             default_stream_options);
 
     run_controller_impl(flo_controller, system_partition_rx);
-    let system_stream_ref = engine_ref.get_system_stream();
-    ::engine::controller::tick_generator::spawn_tick_generator(remote, system_stream_ref);
     Ok(engine_ref)
 }
 

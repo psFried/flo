@@ -68,7 +68,7 @@ fn create_outgoing_connection(loops: &mut LoopHandles, client_addr: SocketAddr, 
         TcpStream::connect(&addr, handle).map_err( move |io_err| {
 
             error!("Failed to create outgoing connection to address: {:?}: {:?}", addr, io_err);
-            system_stream.outgoing_connection_failed(addr);
+            system_stream.outgoing_connection_failed(connection_id, addr);
 
         }).and_then( move |tcp_stream| {
 
@@ -84,5 +84,57 @@ fn create_outgoing_connection(loops: &mut LoopHandles, client_addr: SocketAddr, 
     (control_tx, connection_id)
 }
 
+#[cfg(test)]
+pub use self::test::MockOutgoingConnectionCreator;
 
+#[cfg(test)]
+mod test {
+    use super::*;
+    use engine::connection_handler::ConnectionControlReceiver;
+
+    #[derive(Debug)]
+    pub struct MockOutgoingConnectionCreator {
+        current_connection_id: ConnectionId,
+        to_return: Vec<(SocketAddr, ConnectionRef)>,
+        calls: Vec<SocketAddr>,
+    }
+
+    impl MockOutgoingConnectionCreator {
+        pub fn new() -> MockOutgoingConnectionCreator {
+            MockOutgoingConnectionCreator {
+                current_connection_id: 0,
+                to_return: Vec::new(),
+                calls: Vec::new()
+            }
+        }
+
+        pub fn stub(&mut self, expected_address: SocketAddr) -> (ConnectionRef, ConnectionControlReceiver) {
+            let (tx, rx) = ::engine::connection_handler::create_connection_control_channels();
+
+            self.current_connection_id += 1;
+            let connection_ref = ConnectionRef {
+                connection_id: self.current_connection_id,
+                remote_address: expected_address,
+                control_sender: tx,
+            };
+            self.to_return.push((expected_address, connection_ref.clone()));
+            (connection_ref, rx)
+        }
+
+        pub fn boxed(self) -> Box<OutgoingConnectionCreator> {
+            Box::new(self)
+        }
+    }
+
+    impl OutgoingConnectionCreator for MockOutgoingConnectionCreator {
+        fn establish_system_connection(&mut self, address: SocketAddr) -> ConnectionRef {
+            let stub_idx = self.to_return.iter().position(|stub| stub.0 == address);
+            if stub_idx.is_none() {
+                panic!("Missing stub for address: {:?}", address);
+            }
+            self.calls.push(address);
+            self.to_return.remove(stub_idx.unwrap()).1
+        }
+    }
+}
 
