@@ -46,7 +46,9 @@ impl PeerConnections {
         let PeerConnections {ref mut disconnected_peers, ref mut outgoing_connection_creator, ..} = *self;
         for (address, attempt) in disconnected_peers.iter_mut() {
             if attempt.should_try_connect(now) {
+                debug!("Making outgoing connection attempt #{} to address: {}", attempt.attempt_count + 1, address);
                 let connection_ref = outgoing_connection_creator.establish_system_connection(*address);
+                send(&connection_ref, ConnectionControl::InitiateOutgoingSystemConnection);
                 all_connections.insert(connection_ref.connection_id, connection_ref.clone());
                 attempt.attempt_time = now;
                 attempt.attempt_count += 1;
@@ -74,6 +76,9 @@ impl PeerConnections {
         let disconnected = self.disconnected_peers.remove(&success_connection.remote_address);
         let success_connection_id = success_connection.connection_id;
 
+        info!("Successfully established connection_id: {} to peer_id: {} at address: {}",
+              success_connection.connection_id, peer_id, success_connection.remote_address);
+
         if let Some(ConnectionAttempt {connection, attempt_count, ..}) = disconnected {
             if let Some(outgoing_connection_ref) = connection {
                 // if there's an existing attempt to create a connection to this peer, verify that this is indeed
@@ -81,14 +86,12 @@ impl PeerConnections {
                 // then we'll close the in progress attempt by dropping the connectionRef
                 if outgoing_connection_ref.connection_id != success_connection_id {
                     info!("Established a new connection for peer: {:?} with connection_id: {}, so existing connection: {} will be closed",
-                          peer_id,
-                          success_connection_id,
-                          outgoing_connection_ref.connection_id)
+                          peer_id, success_connection_id, outgoing_connection_ref.connection_id)
                 }
             }
         }
 
-        let mut connection = self.known_peers.entry(peer_id).or_insert_with(|| {
+        let connection = self.known_peers.entry(peer_id).or_insert_with(|| {
             Connection::new(success_connection.remote_address)
         });
         connection.state = PeerState::Connected(success_connection.clone());
@@ -107,6 +110,7 @@ impl PeerConnections {
         if let Some(peer_address) = address {
             // todo: as it is, we only deal with one connection per peer at a time, so we know there won't already be an entry in disconnected_peers. will need to change that once we deal with multiple connections per peer
             self.disconnected_peers.insert(peer_address, ConnectionAttempt::new());
+            info!("ConnectionClosed for connection_id: {} from peer_address: {}", connection_id, peer_address);
         } else {
             // just means that this id was not for a peer connection
             debug!("Got connection closed for connection_id: {}, but there was no active peer connection", connection_id);
@@ -117,6 +121,13 @@ impl PeerConnections {
         self.active_connections.get(&connection_id).cloned()
     }
 
+}
+
+fn send(connection: &ConnectionRef, control: ConnectionControl) {
+    let result = connection.control_sender.send(control);
+    if result.is_err() {
+        warn!("Error sending control to connection_id: {}, {:?}", connection.connection_id, control);
+    }
 }
 
 #[derive(Debug)]

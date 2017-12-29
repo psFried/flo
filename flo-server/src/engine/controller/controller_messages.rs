@@ -39,6 +39,15 @@ pub enum SystemOpType {
     OutgoingConnectionFailed(SocketAddr),
 }
 
+impl SystemOpType {
+    pub fn is_tick(&self) -> bool {
+        match self {
+            &SystemOpType::Tick => true,
+            _ => false
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct SystemOperation {
     pub connection_id: ConnectionId,

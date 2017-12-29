@@ -80,7 +80,10 @@ impl FloController {
     fn process(&mut self, operation: SystemOperation) {
 
         let SystemOperation {connection_id, op_start_time, op_type } = operation;
-        trace!("Received system op: {:?}", op_type);
+
+        if !op_type.is_tick() {
+            trace!("Received system op: {:?}", op_type);
+        }
         // TODO: time operation handling and record perf metrics
 
         match op_type {

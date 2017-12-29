@@ -100,7 +100,7 @@ impl ClusterManager {
     }
 
     fn determine_primary_from_peer_upgrade(&mut self, upgrade: PeerUpgrade) {
-        let PeerUpgrade { peer_id, system_primary, cluster_members } = upgrade;
+        let PeerUpgrade { peer_id, system_primary, .. } = upgrade;
         if let Some(primary) = system_primary {
             info!("Determined primary of {:?} at {}, as told by instance: {:?}", primary.id, primary.address, peer_id);
             self.transition_state(State::Follower);
@@ -112,6 +112,8 @@ impl ClusterManager {
                 let mut shared = self.shared.write().unwrap();
                 shared.system_primary = Some(primary);
             }
+        } else {
+            debug!("peer announce from {:?} has unknown primary", peer_id);
         }
     }
 
@@ -132,6 +134,7 @@ impl ConsensusProcessor for ClusterManager {
     }
 
     fn peer_connection_established(&mut self, upgrade: PeerUpgrade, connection_id: ConnectionId, all_connections: &HashMap<ConnectionId, ConnectionRef>) {
+        debug!("peer_connection_established: connection_id: {},  {:?}", connection_id, upgrade);
         let connection = all_connections.get(&connection_id)
                 .expect("Expected connection to be in all_connections on peer_connection_established");
 
@@ -139,14 +142,16 @@ impl ConsensusProcessor for ClusterManager {
 
         if let State::DeterminePrimary = self.state {
             self.determine_primary_from_peer_upgrade(upgrade);
-            self.connection_resolved(connection.remote_address);
         }
+        self.connection_resolved(connection.remote_address);
     }
 
     fn tick(&mut self, now: Instant, all_connections: &mut HashMap<ConnectionId, ConnectionRef>) {
+        self.connection_manager.establish_connections(now, all_connections);
+
         match self.state {
             State::EstablishConnections => {
-                self.connection_manager.establish_connections(now, all_connections);
+                // we'll only be in this initial status once, on startup
                 self.transition_state(State::DeterminePrimary);
             }
             _ => { }

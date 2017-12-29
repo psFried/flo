@@ -33,6 +33,8 @@ impl PeerConnectionState {
         let connection_id = state.connection_id;
         let old_state = self.set_state(connection_id, PeerConnectionState::Peer);
 
+        debug!("PeerAnnounce received on connection_id: {}, {:?}, prev_connection_state: {:?}", connection_id, announce, old_state);
+
         match old_state {
             PeerConnectionState::Peer => {
                 // we've already gone through this, so something's wrong
