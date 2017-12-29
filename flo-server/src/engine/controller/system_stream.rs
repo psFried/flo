@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 use protocol::FloInstanceId;
 use engine::event_stream::partition::{PartitionRef, Operation};
 use engine::event_stream::EventStreamRef;
-use engine::controller::{SystemPartitionSender, SystemOperation, ConnectionRef, Peer};
+use engine::controller::{SystemPartitionSender, SystemOperation, ConnectionRef, Peer, CallRequestVote};
 use engine::controller::cluster_state::{SharedClusterState, ClusterStateReader};
 use engine::ConnectionId;
 use atomics::AtomicBoolReader;
@@ -64,6 +64,11 @@ impl SystemStreamRef {
 
     pub fn connection_upgraded_to_peer(&mut self, connection_id: ConnectionId, peer_id: FloInstanceId, system_primary: Option<Peer>, cluster_members: Vec<Peer>) {
         let op = SystemOperation::connection_upgraded_to_peer(connection_id, peer_id, system_primary, cluster_members);
+        self.send(op);
+    }
+
+    pub fn request_vote_received(&mut self, connection_id: ConnectionId, request: CallRequestVote) {
+        let op = SystemOperation::request_vote_received(connection_id, request);
         self.send(op);
     }
 

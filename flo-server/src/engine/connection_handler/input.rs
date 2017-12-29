@@ -2,6 +2,7 @@
 use protocol::{FloInstanceId, Term};
 use event::EventCounter;
 use engine::ReceivedProtocolMessage;
+use engine::controller::{CallRequestVote, VoteResponse};
 
 #[derive(Debug)]
 pub enum ConnectionHandlerInput {
@@ -20,9 +21,13 @@ impl ConnectionHandlerInput {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum ConnectionControl {
     InitiateOutgoingSystemConnection,
+    SendRequestVote(CallRequestVote),
+    SendVoteResponse(VoteResponse),
 }
 
 

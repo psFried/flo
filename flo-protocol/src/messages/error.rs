@@ -9,6 +9,7 @@ pub const ERROR_HEADER: u8 = 10;
 
 pub const ERROR_INVALID_NAMESPACE: u8 = 15;
 pub const ERROR_INVALID_CONSUMER_STATE: u8 = 16;
+pub const ERROR_INVALID_PEER_STATE: u8 = 30;
 pub const ERROR_INVALID_VERSION_VECTOR: u8 = 17;
 pub const ERROR_STORAGE_ENGINE_IO: u8 = 18;
 pub const ERROR_NO_STREAM: u8 = 19;
@@ -20,6 +21,8 @@ pub enum ErrorKind {
     InvalidNamespaceGlob,
     /// Indicates that the client connection was in an invalid state when it attempted some consumer operation
     InvalidConsumerState,
+    /// Indicates that the connection was in an invalid state when it attempted to process some peer operation
+    InvalidPeerState,
     /// Indicates that the provided version vector was invalid (contained more than one entry for at least one actor id)
     InvalidVersionVector,
     /// Unable to read or write to events file
@@ -47,6 +50,7 @@ impl ErrorKind {
         match byte {
             ERROR_INVALID_NAMESPACE => Ok(ErrorKind::InvalidNamespaceGlob),
             ERROR_INVALID_CONSUMER_STATE => Ok(ErrorKind::InvalidConsumerState),
+            ERROR_INVALID_PEER_STATE => Ok(ErrorKind::InvalidPeerState),
             ERROR_INVALID_VERSION_VECTOR => Ok(ErrorKind::InvalidVersionVector),
             ERROR_STORAGE_ENGINE_IO => Ok(ErrorKind::StorageEngineError),
             ERROR_NO_STREAM => Ok(ErrorKind::NoSuchStream),
@@ -59,6 +63,7 @@ impl ErrorKind {
         match self {
             &ErrorKind::InvalidNamespaceGlob => ERROR_INVALID_NAMESPACE,
             &ErrorKind::InvalidConsumerState => ERROR_INVALID_CONSUMER_STATE,
+            &ErrorKind::InvalidPeerState => ERROR_INVALID_PEER_STATE,
             &ErrorKind::InvalidVersionVector => ERROR_INVALID_VERSION_VECTOR,
             &ErrorKind::StorageEngineError => ERROR_STORAGE_ENGINE_IO,
             &ErrorKind::NoSuchStream => ERROR_NO_STREAM,

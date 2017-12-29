@@ -125,8 +125,8 @@ impl PeerConnections {
 
 fn send(connection: &ConnectionRef, control: ConnectionControl) {
     let result = connection.control_sender.send(control);
-    if result.is_err() {
-        warn!("Error sending control to connection_id: {}, {:?}", connection.connection_id, control);
+    if let Err(send_err) = result {
+        warn!("Error sending control to connection_id: {}, {:?}", connection.connection_id, send_err);
     }
 }
 
@@ -225,7 +225,7 @@ mod test {
         };
         let mut creator = MockOutgoingConnectionCreator::new();
         creator.stub(peer_address);
-        let mut subject = PeerConnections::new(Vec::new(), creator.boxed(), &[peer.clone()]);
+        let subject = PeerConnections::new(Vec::new(), creator.boxed(), &[peer.clone()]);
 
         assert!(subject.disconnected_peers.contains_key(&peer_address));
     }

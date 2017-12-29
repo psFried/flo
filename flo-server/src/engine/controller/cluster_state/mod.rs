@@ -1,4 +1,4 @@
-mod persistent;
+pub mod persistent;
 mod peer_connections;
 
 use std::io;
@@ -125,6 +125,25 @@ impl ClusterManager {
             }
         }
     }
+
+    fn election_timed_out(&self, now: Instant) -> bool {
+        now - self.last_heartbeat > self.election_timeout
+    }
+
+    fn start_new_election(&mut self) {
+        info!("Starting new election");
+        let result = self.persistent.modify(|state| {
+            state.current_term += 1;
+            let my_id = state.this_instance_id;
+            state.voted_for = Some(my_id);
+        });
+        if let Err(io_err) = result {
+            error!("Aborting new election due to error persisting state: {:?}", io_err);
+            return;
+        }
+        unimplemented!()
+    }
+
 }
 
 impl ConsensusProcessor for ClusterManager {
@@ -153,6 +172,11 @@ impl ConsensusProcessor for ClusterManager {
             State::EstablishConnections => {
                 // we'll only be in this initial status once, on startup
                 self.transition_state(State::DeterminePrimary);
+            }
+            State::Follower => {
+                if self.election_timed_out(now) {
+                    self.start_new_election();
+                }
             }
             _ => { }
         }
@@ -219,6 +243,47 @@ mod test {
 
     fn t(start: Instant, seconds: u64) -> Instant {
         start + Duration::from_secs(seconds)
+    }
+
+    #[test]
+    fn cluster_manager_starts_new_election_after_timeout_elapses() {
+        let start = Instant::now();
+        let temp_dir = TempDir::new("cluster_state_test").unwrap();
+        let mut mock_creator = MockOutgoingConnectionCreator::new();
+        let peer_1 = Peer {
+            id: FloInstanceId::generate_new(),
+            address: addr("111.222.0.1:3000")
+        };
+        let peer_2 = Peer {
+            id: FloInstanceId::generate_new(),
+            address: addr("111.222.0.2:3000")
+        };
+        let (peer_1_connection, _) = mock_creator.stub(peer_1.address);
+        let (peer_2_connection, _) = mock_creator.stub(peer_2.address);
+        let mut subject = create_cluster_manager(vec![peer_1.address, peer_2.address], temp_dir.path(), mock_creator.boxed());
+        assert_eq!(0, subject.persistent.current_term);
+
+        let mut connections = HashMap::new();
+        subject.tick(t(start, 1), &mut connections);
+
+        let upgrade_1 = PeerUpgrade {
+            peer_id: peer_1.id,
+            system_primary: Some(peer_2.clone()),
+            cluster_members: vec![peer_2.clone()],
+        };
+        subject.peer_connection_established(upgrade_1, peer_1_connection.connection_id, &connections);
+        let upgrade_2 = PeerUpgrade {
+            peer_id: peer_2.id,
+            system_primary: Some(peer_2.clone()),
+            cluster_members: vec![peer_2.clone()],
+        };
+        subject.peer_connection_established(upgrade_2, peer_2_connection.connection_id, &connections);
+
+        subject.tick(t(start, 2), &mut connections);
+
+        let this_id = subject.persistent.this_instance_id;
+        assert_eq!(Some(this_id), subject.persistent.voted_for);
+        assert_eq!(1, subject.persistent.current_term);
     }
 
     #[test]

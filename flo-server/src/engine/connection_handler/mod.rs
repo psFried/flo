@@ -43,15 +43,8 @@ impl ConnectionHandler {
             common_state: ConnectionState::new(connection, client_sender, engine, handle),
             consumer_state: ConsumerConnectionState::new(),
             producer_state: ProducerConnectionState::new(),
-            peer_state: PeerConnectionState::Init,
+            peer_state: PeerConnectionState::new(),
         }
-    }
-
-    pub fn upgrade_to_outgoing_peer(&mut self) {
-        debug!("upgrading connection_id: {} to outgoing peer connection", self.common_state.connection_id);
-        let ConnectionHandler{ref mut common_state, ref mut peer_state, .. } = *self;
-
-        peer_state.initiate_outgoing_peer_connection(common_state);
     }
 
     pub fn can_process(&self, _message: &ReceivedProtocolMessage) -> bool {
@@ -61,12 +54,21 @@ impl ConnectionHandler {
     pub fn handle_control(&mut self, control: ConnectionControl) -> ConnectionHandlerResult {
         debug!("client: {:?} processing control: {:?}", self.common_state, control);
 
+        let ConnectionHandler{ref mut common_state, ref mut peer_state, .. } = *self;
+
         match control {
             ConnectionControl::InitiateOutgoingSystemConnection => {
-                self.upgrade_to_outgoing_peer()
+                peer_state.initiate_outgoing_peer_connection(common_state);
+                Ok(())
             }
+            ConnectionControl::SendRequestVote(request) => {
+                peer_state.send_request_vote(request, common_state)
+            }
+            ConnectionControl::SendVoteResponse(response) => {
+                peer_state.send_vote_response(response, common_state)
+            }
+            _ => unimplemented!()
         }
-        Ok(())
     }
 
     pub fn handle_incoming_message(&mut self, message: ReceivedProtocolMessage) -> ConnectionHandlerResult {
@@ -95,6 +97,9 @@ impl ConnectionHandler {
             }
             ProtocolMessage::StopConsuming(op_id) => {
                 consumer_state.stop_consuming(op_id, common_state)
+            }
+            ProtocolMessage::RequestVote(request_vote) => {
+                peer_state.request_vote_received(request_vote, common_state)
             }
             _ => unimplemented!()
         }
@@ -169,6 +174,7 @@ impl Debug for ConnectionHandler {
 mod test {
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex, RwLock};
+    use std::net::SocketAddr;
     use tokio_core::reactor::Core;
 
     use super::*;
@@ -177,8 +183,9 @@ mod test {
     use engine::event_stream::EventStreamRef;
     use engine::event_stream::partition::*;
     use engine::ClientReceiver;
-    use engine::controller::{SystemStreamRef, SharedClusterState};
+    use engine::controller::{SystemStreamRef, SharedClusterState, SystemOpType, SystemOperation, CallRequestVote, VoteResponse};
     use atomics::{AtomicCounterWriter, AtomicBoolWriter};
+    use test_utils::addr;
 
     struct Fixture {
         #[allow(dead_code)] // TODO: add more connection handler tests
@@ -187,9 +194,37 @@ mod test {
         client_receiver: Option<ClientReceiver>,
         engine: EngineRef,
         reactor: Core,
+        instance_id: FloInstanceId,
+        instance_addr: SocketAddr,
     }
 
     impl Fixture {
+
+        fn create_outgoing_peer_connection() -> (ConnectionHandler, Fixture) {
+            let (mut subject, mut fixture) = Fixture::create();
+            subject.handle_control(ConnectionControl::InitiateOutgoingSystemConnection).unwrap();
+            let announce = PeerAnnounce {
+                protocol_version: 1,
+                peer_address: fixture.instance_addr,
+                op_id: 1,
+                instance_id: fixture.instance_id,
+                system_primary_id: None,
+                cluster_members: Vec::new(),
+            };
+            fixture.assert_sent_to_client(ProtocolMessage::PeerAnnounce(announce.clone()));
+
+            let peer_id = FloInstanceId::generate_new();
+            let peer_addr = addr("127.0.0.1:4000");
+            let response = PeerAnnounce {
+                peer_address: peer_addr,
+                instance_id: peer_id,
+                .. announce
+            };
+            // get the response
+            subject.handle_incoming_message(ProtocolMessage::PeerAnnounce(response)).unwrap();
+            (subject, fixture)
+        }
+
         fn create() -> (ConnectionHandler, Fixture) {
             let reactor = Core::new().unwrap();
 
@@ -205,10 +240,12 @@ mod test {
                                              primary.reader(),
                                              tx.clone(),
                                              primary_addr);
+            let instance_id = FloInstanceId::generate_new();
+            let instance_addr = addr("127.0.0.1:3000");
 
             let cluster_state = SharedClusterState {
-                this_instance_id: FloInstanceId::generate_new(),
-                this_address: None,
+                this_instance_id: instance_id,
+                this_address: Some(instance_addr),
                 system_primary: None,
                 peers: Vec::new(),
             };
@@ -223,8 +260,10 @@ mod test {
                 partition_receivers: HashMap::new(),
                 system_receiver: rx,
                 client_receiver: Some(client_rx),
-                engine: engine,
-                reactor: reactor
+                engine,
+                reactor,
+                instance_id,
+                instance_addr
             };
             (subject, fixture)
         }
@@ -269,6 +308,20 @@ mod test {
             result.expect(&format!("partition: {} failed to receive message", partition_id))
         }
 
+        fn assert_sent_to_system_stream(&mut self, expected: SystemOpType) {
+            let mut unequal_messages = Vec::new();
+
+            while let Ok(next) = self.system_receiver.try_recv() {
+                let received = next.op_type;
+                if received == expected {
+                    return;
+                } else {
+                    unequal_messages.push(received);
+                }
+            }
+            panic!("Expected system op: {:?}, but received: {:?}", expected, unequal_messages);
+        }
+
         fn assert_sent_to_client(&mut self, expected: ProtocolMessage<PersistentEvent>) {
             use tokio_core::reactor::Timeout;
             use futures::future::Either;
@@ -290,6 +343,75 @@ mod test {
 
         }
 
+    }
+
+    #[test]
+    fn receiving_request_vote_results_in_error_when_connection_is_not_in_peer_state() {
+        let (mut subject, mut fixture) = Fixture::create();
+
+        let incoming = RequestVoteCall {
+            op_id: 99,
+            term: 5,
+            candidate_id: FloInstanceId::generate_new(),
+            last_log_index: 44,
+            last_log_term: 4,
+        };
+        let error = subject.handle_incoming_message(ProtocolMessage::RequestVote(incoming)).unwrap_err();
+        assert_eq!("Refusing to process RequestVote when connection is in Init state", &error);
+
+        let expected = ErrorMessage {
+            op_id: 99,
+            kind: ErrorKind::InvalidPeerState,
+            description: error,
+        };
+        fixture.assert_sent_to_client(ProtocolMessage::Error(expected));
+    }
+
+    #[test]
+    fn receiving_request_vote_forwards_request_to_system_stream_for_peer_connection_and_response_is_sent_back() {
+        let (mut subject, mut fixture) = Fixture::create_outgoing_peer_connection();
+        let peer_id = FloInstanceId::generate_new();
+        let incoming = RequestVoteCall {
+            op_id: 99,
+            term: 5,
+            candidate_id: peer_id,
+            last_log_index: 44,
+            last_log_term: 4,
+        };
+        subject.handle_incoming_message(ProtocolMessage::RequestVote(incoming)).unwrap();
+
+        let response = VoteResponse {
+            term: 7,
+            granted: false,
+        };
+        subject.handle_control(ConnectionControl::SendVoteResponse(response)).unwrap();
+        let expected = RequestVoteResponse {
+            op_id: 99,
+            term: 7,
+            vote_granted: false,
+        };
+        fixture.assert_sent_to_client(ProtocolMessage::VoteResponse(expected));
+    }
+
+    #[test]
+    fn send_request_vote_control_sends_request_vote_to_client() {
+        let (mut subject, mut fixture) = Fixture::create_outgoing_peer_connection();
+        let request_vote = CallRequestVote {
+            term: 4,
+            candidate_id: fixture.instance_id,
+            last_log_index: 33,
+            last_log_term: 3,
+        };
+        subject.handle_control(ConnectionControl::SendRequestVote(request_vote)).unwrap();
+
+        let expected = RequestVoteCall {
+            op_id: 2,
+            term: 4,
+            candidate_id: fixture.instance_id,
+            last_log_index: 33,
+            last_log_term: 3,
+        };
+        fixture.assert_sent_to_client(ProtocolMessage::RequestVote(expected));
     }
 
     #[test]

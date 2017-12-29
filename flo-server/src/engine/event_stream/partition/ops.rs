@@ -21,6 +21,12 @@ pub struct ProduceOperation {
     pub events: Vec<ProduceEvent>,
 }
 
+impl PartialEq for ProduceOperation {
+    fn eq(&self, other: &ProduceOperation) -> bool {
+        self.op_id == other.op_id && self.events == other.events
+    }
+}
+
 
 impl Debug for ProduceOperation {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -48,26 +54,27 @@ pub struct ConsumeOperation {
     pub notifier: Box<ConsumerNotifier>,
 }
 
+impl PartialEq for ConsumeOperation {
+    fn eq(&self, other: &ConsumeOperation) -> bool {
+        self.filter == other.filter &&
+                self.start_exclusive == other.start_exclusive &&
+                self.notifier.connection_id() == other.notifier.connection_id()
+    }
+}
+
 impl Debug for ConsumeOperation {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "ConsumeOperation {{ filter: {:?}, start_exclusive: {} }}", self.filter, self.start_exclusive)
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum OpType {
     Produce(ProduceOperation),
     Consume(ConsumeOperation),
     StopConsumer,
     Tick,
-    System(SystemOp),
 }
-
-#[derive(Debug)]
-pub enum SystemOp {
-    OutgoingConnectionFailed(SocketAddr),
-}
-
 
 #[derive(Debug)]
 pub struct Operation {
@@ -84,10 +91,6 @@ impl Operation {
             client_message_recv_time: Instant::now(),
             op_type
         }
-    }
-
-    fn system(connection_id: ConnectionId, system_op: SystemOp) -> Operation {
-        Operation::new(connection_id, OpType::System(system_op))
     }
 
     pub fn consume(connection_id: ConnectionId, notifier: Box<ConsumerNotifier>, filter: EventFilter, start_exclusive: EventCounter) -> (Operation, ConsumeResponseReceiver) {
@@ -119,10 +122,6 @@ impl Operation {
 
     pub fn tick() -> Operation {
         Operation::new(0, OpType::Tick)
-    }
-
-    pub fn outgoing_connection_failed(connection_id: ConnectionId, socket_addr: SocketAddr) -> Operation {
-        Operation::system(connection_id, SystemOp::OutgoingConnectionFailed(socket_addr))
     }
 }
 
