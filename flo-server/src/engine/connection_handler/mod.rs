@@ -101,6 +101,9 @@ impl ConnectionHandler {
             ProtocolMessage::RequestVote(request_vote) => {
                 peer_state.request_vote_received(request_vote, common_state)
             }
+            ProtocolMessage::VoteResponse(response) => {
+                peer_state.vote_response_received(response, common_state)
+            }
             _ => unimplemented!()
         }
     }
@@ -187,6 +190,8 @@ mod test {
     use atomics::{AtomicCounterWriter, AtomicBoolWriter};
     use test_utils::addr;
 
+    const CONNECTION_ID: ConnectionId = 456;
+
     struct Fixture {
         #[allow(dead_code)] // TODO: add more connection handler tests
         partition_receivers: HashMap<(String, ActorId), PartitionReceiver>,
@@ -254,7 +259,7 @@ mod test {
             let streams = Arc::new(Mutex::new(HashMap::new()));
             let engine = EngineRef::new(system_stream, streams);
 
-            let subject = ConnectionHandler::new(456, client_sender, engine.clone(), reactor.handle());
+            let subject = ConnectionHandler::new(CONNECTION_ID, client_sender, engine.clone(), reactor.handle());
 
             let fixture = Fixture {
                 partition_receivers: HashMap::new(),
@@ -342,6 +347,51 @@ mod test {
             }
 
         }
+
+    }
+
+    #[test]
+    fn error_is_returned_when_vote_response_is_unexpected() {
+        let (mut subject, mut fixture) = Fixture::create_outgoing_peer_connection();
+
+        let error = subject.handle_incoming_message(ProtocolMessage::VoteResponse(RequestVoteResponse {
+            op_id: 7,
+            term: 6,
+            vote_granted: true
+        })).unwrap_err();
+        assert_eq!("connection_id: 456 received unexpected message: RequestVoteResponse { op_id: 7, term: 6, vote_granted: true }, expected op_id: None", &error);
+    }
+
+    #[test]
+    fn vote_response_is_sent_to_system_stream_when_one_is_expected() {
+        let (mut subject, mut fixture) = Fixture::create_outgoing_peer_connection();
+        let peer_id = FloInstanceId::generate_new();
+        let request_vote = CallRequestVote {
+            term: 5,
+            candidate_id: peer_id,
+            last_log_index: 44,
+            last_log_term: 4,
+        };
+        subject.handle_control(ConnectionControl::SendRequestVote(request_vote)).unwrap();
+        fixture.assert_sent_to_client(ProtocolMessage::RequestVote(RequestVoteCall {
+            op_id: 2,
+            term: 5,
+            candidate_id: peer_id,
+            last_log_index: 44,
+            last_log_term: 4,
+        }));
+
+        subject.handle_incoming_message(ProtocolMessage::VoteResponse(RequestVoteResponse {
+            op_id: 2,
+            term: 7,
+            vote_granted: false,
+        })).unwrap();
+
+        let expected = VoteResponse {
+            term: 7,
+            granted: false,
+        };
+        fixture.assert_sent_to_system_stream(SystemOpType::VoteResponseReceived(expected));
 
     }
 

@@ -82,6 +82,10 @@ pub struct SystemOperation {
 
 impl SystemOperation {
 
+    pub fn vote_response_received(connection_id: ConnectionId, response: VoteResponse) -> SystemOperation {
+        SystemOperation::new(connection_id, SystemOpType::VoteResponseReceived(response))
+    }
+
     pub fn request_vote_received(connection_id: ConnectionId, request: CallRequestVote) -> SystemOperation {
         SystemOperation::new(connection_id, SystemOpType::RequestVote(request))
     }

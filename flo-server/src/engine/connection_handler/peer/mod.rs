@@ -19,7 +19,8 @@ enum State {
 pub struct PeerConnectionState {
     state: State,
     current_op_id: u32,
-    pending_operation_queue: VecDeque<u32>,
+    controller_operation_queue: VecDeque<u32>,
+    peer_operation_queue: VecDeque<u32>,
 }
 
 
@@ -28,12 +29,34 @@ impl PeerConnectionState {
         PeerConnectionState {
             state: State::Init,
             current_op_id: 0,
-            pending_operation_queue: VecDeque::new(),
+            controller_operation_queue: VecDeque::new(),
+            peer_operation_queue: VecDeque::new(),
+        }
+    }
+
+    pub fn vote_response_received(&mut self, response: protocol::RequestVoteResponse, state: &mut ConnectionState) -> ConnectionHandlerResult {
+        let connection_id = state.connection_id;
+        let expected_op_id = self.peer_operation_queue.pop_back();
+
+
+        if Some(response.op_id) == expected_op_id {
+            let protocol::RequestVoteResponse { op_id, term, vote_granted } = response;
+            let controller_message = controller::VoteResponse {
+                term,
+                granted: vote_granted
+            };
+            state.get_system_stream().vote_response_received(connection_id, controller_message);
+            Ok(())
+        } else {
+            let err_message =  format!("connection_id: {} received unexpected message: {:?}, expected op_id: {:?}",
+                   connection_id, response, expected_op_id);
+            error!("{}", err_message);
+            Err(err_message)
         }
     }
 
     pub fn send_vote_response(&mut self, response: controller::VoteResponse, state: &mut ConnectionState) -> ConnectionHandlerResult {
-        let pending = self.pending_operation_queue.pop_back();
+        let pending = self.controller_operation_queue.pop_back();
         if let Some(op_id) = pending {
             let protocol_message = protocol::RequestVoteResponse {
                 op_id,
@@ -51,7 +74,7 @@ impl PeerConnectionState {
     pub fn request_vote_received(&mut self, request: protocol::RequestVoteCall, state: &mut ConnectionState) -> ConnectionHandlerResult {
         if self.state == State::Peer {
             let protocol::RequestVoteCall { op_id, term, candidate_id, last_log_index, last_log_term } = request;
-            self.pending_operation_queue.push_front(op_id);
+            self.controller_operation_queue.push_front(op_id);
             let controller_message = controller::CallRequestVote { term, candidate_id, last_log_term, last_log_index };
             let connection_id = state.connection_id;
             state.get_system_stream().request_vote_received(connection_id, controller_message);
@@ -71,8 +94,10 @@ impl PeerConnectionState {
 
     pub fn send_request_vote(&mut self, request: controller::CallRequestVote, state: &mut ConnectionState) -> ConnectionHandlerResult {
         let controller::CallRequestVote { term, candidate_id, last_log_index, last_log_term } = request;
+        let op_id = self.next_op_id();
+        self.peer_operation_queue.push_front(op_id);
         let protocol_message = protocol::RequestVoteCall {
-            op_id: self.next_op_id(),
+            op_id,
             term,
             candidate_id,
             last_log_index,
