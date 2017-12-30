@@ -2,9 +2,10 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::time::{Instant, Duration};
 
-use protocol::FloInstanceId;
+use event::EventCounter;
+use protocol::{FloInstanceId, Term};
 use engine::ConnectionId;
-use engine::controller::{ConnectionRef, Peer};
+use engine::controller::{ConnectionRef, Peer, CallRequestVote};
 use engine::controller::peer_connection::{PeerSystemConnection, OutgoingConnectionCreator};
 use engine::connection_handler::ConnectionControl;
 
@@ -121,10 +122,25 @@ impl PeerConnections {
         self.active_connections.get(&connection_id).cloned()
     }
 
+    pub fn broadcast(&mut self, control: ConnectionControl) {
+        debug!("Broadcasting {:?}", control);
+        for (peer, connection) in self.known_peers.iter() {
+            match connection.state {
+                PeerState::Connected(ref connection_ref) => {
+                    send(connection_ref, control.clone());
+                }
+                ref other @ _ => {
+                    trace!("Skipping connection to {:?} because it is in state: {:?}", peer, other);
+                }
+            }
+        }
+    }
+
 }
 
 fn send(connection: &ConnectionRef, control: ConnectionControl) {
-    let result = connection.control_sender.send(control);
+    trace!("Sending to connection_id: {}, control: {:?}", connection.connection_id, control);
+    let result = connection.control_sender.unbounded_send(control);
     if let Err(send_err) = result {
         warn!("Error sending control to connection_id: {}, {:?}", connection.connection_id, send_err);
     }
@@ -190,7 +206,57 @@ mod test {
     use super::*;
     use std::time::Duration;
     use engine::controller::peer_connection::MockOutgoingConnectionCreator;
-    use test_utils::addr;
+    use engine::connection_handler::ConnectionControlReceiver;
+    use test_utils::{addr, expect_future_resolved};
+
+    fn assert_control_sent(rx: ConnectionControlReceiver, expected: &ConnectionControl) -> ConnectionControlReceiver {
+        use futures::Stream;
+        let (message, stream) = expect_future_resolved(rx.into_future()).expect("failed to receive control message");
+        let message = message.expect("did not receive any control message");
+        assert_eq!(&message, expected);
+        stream
+    }
+
+    fn subject_with_connected_peers(peers: &[Peer], creator: MockOutgoingConnectionCreator) -> (PeerConnections, HashMap<ConnectionId, ConnectionRef>) {
+        let mut subject = PeerConnections::new(Vec::new(), creator.boxed(), peers);
+        let mut connections = HashMap::new();
+        subject.establish_connections(Instant::now(), &mut connections);
+        for peer in peers {
+            let connection = connections.values().find(|conn| conn.remote_address == peer.address).unwrap();
+            subject.peer_connection_established(peer.id, connection);
+        }
+        (subject, connections)
+    }
+
+    #[test]
+    fn broadcast_sends_control_to_all_connected_peers() {
+        let peer_1 = Peer {
+            id: FloInstanceId::generate_new(),
+            address: addr("123.4.5.6:3000")
+        };
+        let peer_2 = Peer {
+            id: FloInstanceId::generate_new(),
+            address: addr("123.4.5.6:4000")
+        };
+        let mut creator = MockOutgoingConnectionCreator::new();
+        let (peer_1_conn, rx_1) = creator.stub(peer_1.address);
+        let (peer_2_conn, rx_2) = creator.stub(peer_2.address);
+        let (mut subject, mut connections) = subject_with_connected_peers(&[peer_1, peer_2], creator);
+        let rx_1 = assert_control_sent(rx_1, &ConnectionControl::InitiateOutgoingSystemConnection);
+        let rx_2 = assert_control_sent(rx_2, &ConnectionControl::InitiateOutgoingSystemConnection);
+
+        let candidate = FloInstanceId::generate_new();
+        let expected = ConnectionControl::SendRequestVote(CallRequestVote {
+            term: 7,
+            candidate_id: candidate,
+            last_log_index: 99,
+            last_log_term: 6,
+        });
+        subject.broadcast(expected.clone());
+
+        assert_control_sent(rx_1, &expected);
+        assert_control_sent(rx_2, &expected);
+    }
 
     #[test]
     fn outgoing_connect_success_adds_known_peer_and_connection_closed_sets_it_to_disconnected() {

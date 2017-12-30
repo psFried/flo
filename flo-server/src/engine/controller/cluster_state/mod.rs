@@ -10,7 +10,9 @@ use std::collections::{HashMap, HashSet};
 
 use event::EventCounter;
 use engine::{ConnectionId, EngineRef};
-use protocol::FloInstanceId;
+use engine::connection_handler::ConnectionControl;
+use engine::controller::CallRequestVote;
+use protocol::{FloInstanceId, Term};
 use atomics::{AtomicBoolWriter, AtomicBoolReader};
 use super::{ClusterOptions, ConnectionRef, Peer, PeerUpgrade};
 use super::peer_connection::{PeerSystemConnection, OutgoingConnectionCreator, OutgoingConnectionCreatorImpl};
@@ -49,6 +51,7 @@ pub struct ClusterManager {
     last_heartbeat: Instant,
     primary_status_writer: AtomicBoolWriter,
     last_applied: EventCounter,
+    last_applied_term: Term,
     persistent: FilePersistedState,
     system_partition_primary_address: SystemPrimaryAddressRef,
     shared: Arc<RwLock<SharedClusterState>>,
@@ -87,6 +90,7 @@ impl ClusterManager {
             connection_manager: peer_connections,
             initialization_peers,
             last_applied: 0,
+            last_applied_term: 0,
             primary_status_writer,
             persistent,
             system_partition_primary_address,
@@ -141,8 +145,15 @@ impl ClusterManager {
             error!("Aborting new election due to error persisting state: {:?}", io_err);
             return;
         }
-        unimplemented!()
+        let connection_control = ConnectionControl::SendRequestVote(CallRequestVote {
+            term: self.persistent.current_term,
+            candidate_id: self.persistent.this_instance_id,
+            last_log_index: self.last_applied,
+            last_log_term: self.last_applied_term,
+        });
+        self.connection_manager.broadcast(connection_control);
     }
+
 
 }
 
