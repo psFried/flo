@@ -175,7 +175,7 @@ impl Debug for ConnectionHandler {
 
 #[cfg(test)]
 mod test {
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
     use std::sync::{Arc, Mutex, RwLock};
     use std::net::SocketAddr;
     use tokio_core::reactor::Core;
@@ -252,7 +252,7 @@ mod test {
                 this_instance_id: instance_id,
                 this_address: Some(instance_addr),
                 system_primary: None,
-                peers: Vec::new(),
+                peers: HashSet::new(),
             };
             let system_stream = SystemStreamRef::new(part_ref, tx, Arc::new(RwLock::new(cluster_state)));
 
@@ -352,7 +352,7 @@ mod test {
 
     #[test]
     fn error_is_returned_when_vote_response_is_unexpected() {
-        let (mut subject, mut fixture) = Fixture::create_outgoing_peer_connection();
+        let (mut subject, fixture) = Fixture::create_outgoing_peer_connection();
 
         let error = subject.handle_incoming_message(ProtocolMessage::VoteResponse(RequestVoteResponse {
             op_id: 7,

@@ -2,6 +2,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Seek, SeekFrom};
+use std::collections::HashSet;
 
 use protocol::{FloInstanceId, Term};
 use engine::controller::controller_messages::Peer;
@@ -17,7 +18,7 @@ pub struct PersistentClusterState {
     pub voted_for: Option<FloInstanceId>,
     #[serde(with = "InstanceIdRemote")]
     pub this_instance_id: FloInstanceId,
-    pub cluster_members: Vec<Peer>,
+    pub cluster_members: HashSet<Peer>,
 }
 
 impl PersistentClusterState {
@@ -92,7 +93,7 @@ impl FilePersistedState {
                 current_term: 0,
                 voted_for: None,
                 this_instance_id: FloInstanceId::generate_new(),
-                cluster_members: Vec::new(),
+                cluster_members: HashSet::new(),
             };
             info!("Initialized brand new state: {:?}", state);
             (file, state)
@@ -158,7 +159,7 @@ mod test {
         let mut subject = FilePersistedState::initialize(path.clone()).unwrap();
         subject.modify(|state| {
             state.current_term = 9;
-            state.cluster_members = vec![
+            state.cluster_members = [
                 Peer {
                     id: FloInstanceId::generate_new(),
                     address: addr("127.0.0.1:3456")
@@ -171,7 +172,7 @@ mod test {
                     id: FloInstanceId::generate_new(),
                     address: addr("127.0.0.1:456")
                 }
-            ];
+            ].iter().cloned().collect();
         }).unwrap();
 
         let subject2 = FilePersistedState::initialize(path.clone()).unwrap();
@@ -179,8 +180,7 @@ mod test {
 
         // remove some data here. This will cause the second init to fail if we don't truncate the file
         subject.modify(|state| {
-            state.cluster_members.pop();
-            state.cluster_members.pop();
+            state.cluster_members.clear();
         }).unwrap();
 
         let subject2 = FilePersistedState::initialize(path.clone()).unwrap();

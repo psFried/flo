@@ -1,6 +1,7 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::time::{Instant, Duration};
+use std::fmt::Debug;
 
 use event::EventCounter;
 use protocol::{FloInstanceId, Term};
@@ -8,6 +9,15 @@ use engine::ConnectionId;
 use engine::controller::{ConnectionRef, Peer, CallRequestVote};
 use engine::controller::peer_connection::{PeerSystemConnection, OutgoingConnectionCreator};
 use engine::connection_handler::ConnectionControl;
+
+pub trait PeerConnectionManager: Send + Debug + 'static {
+    fn establish_connections(&mut self, now: Instant, all_connections: &mut HashMap<ConnectionId, ConnectionRef>);
+    fn outgoing_connection_failed(&mut self, connection_id: ConnectionId, addr: SocketAddr);
+    fn connection_closed(&mut self, connection_id: ConnectionId);
+    fn peer_connection_established(&mut self, peer_id: FloInstanceId, success_connection: &ConnectionRef);
+    fn broadcast_to_peers(&mut self, connection_control: ConnectionControl);
+    fn send_to_peer(&mut self, peer_id: FloInstanceId, connection_control: ConnectionControl);
+}
 
 #[derive(Debug)]
 pub struct PeerConnections {
@@ -18,7 +28,7 @@ pub struct PeerConnections {
 }
 
 impl PeerConnections {
-    pub fn new(starting_peer_addresses: Vec<SocketAddr>, outgoing_connection_creator: Box<OutgoingConnectionCreator>, peers: &[Peer]) -> PeerConnections {
+    pub fn new(starting_peer_addresses: Vec<SocketAddr>, outgoing_connection_creator: Box<OutgoingConnectionCreator>, peers: &HashSet<Peer>) -> PeerConnections {
         let known_peers = peers.iter().map(|peer| {
             let connection = Connection::new(peer.address);
             (peer.id, connection)
@@ -43,7 +53,15 @@ impl PeerConnections {
         }
     }
 
-    pub fn establish_connections(&mut self, now: Instant, all_connections: &mut HashMap<ConnectionId, ConnectionRef>) {
+
+    fn connection_peer_id(&self, connection_id: ConnectionId) -> Option<FloInstanceId> {
+        self.active_connections.get(&connection_id).cloned()
+    }
+}
+
+impl PeerConnectionManager for PeerConnections {
+
+    fn establish_connections(&mut self, now: Instant, all_connections: &mut HashMap<ConnectionId, ConnectionRef>) {
         let PeerConnections {ref mut disconnected_peers, ref mut outgoing_connection_creator, ..} = *self;
         for (address, attempt) in disconnected_peers.iter_mut() {
             if attempt.should_try_connect(now) {
@@ -58,7 +76,7 @@ impl PeerConnections {
         }
     }
 
-    pub fn outgoing_connection_failed(&mut self, connection_id: ConnectionId, address: SocketAddr) {
+    fn outgoing_connection_failed(&mut self, connection_id: ConnectionId, address: SocketAddr) {
         let PeerConnections {ref mut disconnected_peers, ref mut known_peers, ref mut outgoing_connection_creator, ..} = *self;
         if let Some(attempt) = disconnected_peers.get_mut(&address) {
             // remove the connection
@@ -73,7 +91,7 @@ impl PeerConnections {
         }
     }
 
-    pub fn peer_connection_established(&mut self, peer_id: FloInstanceId, success_connection: &ConnectionRef) {
+    fn peer_connection_established(&mut self, peer_id: FloInstanceId, success_connection: &ConnectionRef) {
         let disconnected = self.disconnected_peers.remove(&success_connection.remote_address);
         let success_connection_id = success_connection.connection_id;
 
@@ -100,7 +118,7 @@ impl PeerConnections {
         self.active_connections.insert(success_connection_id, peer_id);
     }
 
-    pub fn connection_closed(&mut self, connection_id: ConnectionId) {
+    fn connection_closed(&mut self, connection_id: ConnectionId) {
         let address: Option<SocketAddr> = self.active_connections.remove(&connection_id).and_then(|peer_id| {
             self.known_peers.get_mut(&peer_id).map(|connection| {
                 connection.state = PeerState::ConnectionFailed;
@@ -118,11 +136,7 @@ impl PeerConnections {
         }
     }
 
-    pub fn connection_peer_id(&self, connection_id: ConnectionId) -> Option<FloInstanceId> {
-        self.active_connections.get(&connection_id).cloned()
-    }
-
-    pub fn broadcast(&mut self, control: ConnectionControl) {
+    fn broadcast_to_peers(&mut self, control: ConnectionControl) {
         debug!("Broadcasting {:?}", control);
         for (peer, connection) in self.known_peers.iter() {
             match connection.state {
@@ -136,6 +150,9 @@ impl PeerConnections {
         }
     }
 
+    fn send_to_peer(&mut self, peer_id: FloInstanceId, control: ConnectionControl) {
+        unimplemented!()
+    }
 }
 
 fn send(connection: &ConnectionRef, control: ConnectionControl) {
@@ -218,7 +235,7 @@ mod test {
     }
 
     fn subject_with_connected_peers(peers: &[Peer], creator: MockOutgoingConnectionCreator) -> (PeerConnections, HashMap<ConnectionId, ConnectionRef>) {
-        let mut subject = PeerConnections::new(Vec::new(), creator.boxed(), peers);
+        let mut subject = PeerConnections::new(Vec::new(), creator.boxed(), &peers.iter().cloned().collect());
         let mut connections = HashMap::new();
         subject.establish_connections(Instant::now(), &mut connections);
         for peer in peers {
@@ -241,7 +258,7 @@ mod test {
         let mut creator = MockOutgoingConnectionCreator::new();
         let (peer_1_conn, rx_1) = creator.stub(peer_1.address);
         let (peer_2_conn, rx_2) = creator.stub(peer_2.address);
-        let (mut subject, mut connections) = subject_with_connected_peers(&[peer_1, peer_2], creator);
+        let (mut subject, connections) = subject_with_connected_peers(&[peer_1, peer_2], creator);
         let rx_1 = assert_control_sent(rx_1, &ConnectionControl::InitiateOutgoingSystemConnection);
         let rx_2 = assert_control_sent(rx_2, &ConnectionControl::InitiateOutgoingSystemConnection);
 
@@ -252,7 +269,7 @@ mod test {
             last_log_index: 99,
             last_log_term: 6,
         });
-        subject.broadcast(expected.clone());
+        subject.broadcast_to_peers(expected.clone());
 
         assert_control_sent(rx_1, &expected);
         assert_control_sent(rx_2, &expected);
@@ -266,7 +283,7 @@ mod test {
         let mut creator = MockOutgoingConnectionCreator::new();
         let (peer_connection, rx) = creator.stub(peer_address);
 
-        let mut subject = PeerConnections::new(vec![peer_address], creator.boxed(), &[]);
+        let mut subject = PeerConnections::new(vec![peer_address], creator.boxed(), &HashSet::new());
 
         let mut connections = HashMap::new();
         let time = Instant::now();
@@ -291,7 +308,9 @@ mod test {
         };
         let mut creator = MockOutgoingConnectionCreator::new();
         creator.stub(peer_address);
-        let subject = PeerConnections::new(Vec::new(), creator.boxed(), &[peer.clone()]);
+        let mut all_peers = HashSet::new();
+        all_peers.insert(peer.clone());
+        let subject = PeerConnections::new(Vec::new(), creator.boxed(), &all_peers);
 
         assert!(subject.disconnected_peers.contains_key(&peer_address));
     }
@@ -302,7 +321,7 @@ mod test {
         let new_peers = vec![peer_address];
         let mut creator = MockOutgoingConnectionCreator::new();
         creator.stub(peer_address);
-        let mut subject = PeerConnections::new(new_peers, creator.boxed(), &[]);
+        let mut subject = PeerConnections::new(new_peers, creator.boxed(), &HashSet::new());
 
         let mut connections = HashMap::new();
         let time = Instant::now();
@@ -370,4 +389,90 @@ mod test {
         };
         assert!(!attempt.should_try_connect(Instant::now()));
     }
+
+}
+
+#[cfg(test)]
+pub mod mock {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+    use std::collections::VecDeque;
+
+    #[derive(Debug, Clone)]
+    pub struct MockPeerConnectionManager {
+        actual_invocations: Arc<Mutex<VecDeque<Invocation>>>,
+    }
+
+    impl MockPeerConnectionManager {
+        pub fn new() -> MockPeerConnectionManager {
+            MockPeerConnectionManager {
+                actual_invocations: Arc::new(Mutex::new(VecDeque::new()))
+            }
+        }
+
+        pub fn verify_in_order(&self, expected: &Invocation) {
+            // lock will be poisoned if this panics
+            let mut lock = self.actual_invocations.lock().unwrap();
+
+            let missing_invocation_message = format!("Expected invocation: {:?}, but no calls were made on this mock", expected);
+            let next_invocation = lock.pop_front().expect(&missing_invocation_message);
+            if expected != &next_invocation {
+                panic!("Expected: {:?}, but actual was: {:?}. Other invocations were: {:?}", expected, next_invocation, ::std::ops::Deref::deref(&lock));
+            }
+        }
+
+        pub fn boxed_ref(&self) -> Box<PeerConnectionManager> {
+            Box::new(self.clone())
+        }
+
+        fn push_invocation(&self, invocation: Invocation) {
+            let mut lock = self.actual_invocations.lock().unwrap();
+            lock.push_back(invocation);
+        }
+    }
+
+    impl PeerConnectionManager for MockPeerConnectionManager {
+        fn establish_connections(&mut self, _now: Instant, _all_connections: &mut HashMap<ConnectionId, ConnectionRef>) {
+            self.push_invocation(Invocation::EstablishConnections);
+        }
+        fn outgoing_connection_failed(&mut self, connection_id: ConnectionId, addr: SocketAddr) {
+            self.push_invocation(Invocation::OutgoingConnectionFailed {connection_id, addr});
+        }
+        fn connection_closed(&mut self, connection_id: ConnectionId) {
+            self.push_invocation(Invocation::ConnectionClosed {connection_id});
+        }
+        fn peer_connection_established(&mut self, peer_id: FloInstanceId, success_connection: &ConnectionRef) {
+            self.push_invocation(Invocation::PeerConnectionEstablished {peer_id, success_connection: success_connection.clone()});
+        }
+        fn broadcast_to_peers(&mut self, connection_control: ConnectionControl) {
+            self.push_invocation(Invocation::BroadcastToPeers {connection_control});
+        }
+        fn send_to_peer(&mut self, peer_id: FloInstanceId, connection_control: ConnectionControl) {
+            self.push_invocation(Invocation::SendToPeer {peer_id, connection_control});
+        }
+    }
+
+
+
+    #[derive(Debug, PartialEq, Clone)]
+    pub enum Invocation {
+        EstablishConnections,
+        OutgoingConnectionFailed{
+            connection_id: ConnectionId,
+            addr: SocketAddr,
+        },
+        ConnectionClosed{ connection_id: ConnectionId },
+        PeerConnectionEstablished{peer_id: FloInstanceId, success_connection: ConnectionRef},
+        BroadcastToPeers{connection_control: ConnectionControl},
+        SendToPeer{peer_id: FloInstanceId, connection_control :ConnectionControl},
+    }
+
+    /*
+    fn establish_connections(&mut self, now: Instant, all_connections: &mut HashMap<ConnectionId, ConnectionRef>);
+    fn outgoing_connection_failed(&mut self, connection_id: ConnectionId, addr: SocketAddr);
+    fn connection_closed(&mut self, connection_id: ConnectionId);
+    fn peer_connection_established(&mut self, peer_id: FloInstanceId, success_connection: &ConnectionRef);
+    fn broadcast_to_peers(&mut self, connection_control: ConnectionControl);
+    fn send_to_peer(&mut self, peer_id: FloInstanceId, connection_control: ConnectionControl);
+    */
 }

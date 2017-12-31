@@ -11,20 +11,29 @@ use std::collections::{HashMap, HashSet};
 use event::EventCounter;
 use engine::{ConnectionId, EngineRef};
 use engine::connection_handler::ConnectionControl;
-use engine::controller::CallRequestVote;
+use engine::controller::{CallRequestVote, VoteResponse};
 use protocol::{FloInstanceId, Term};
 use atomics::{AtomicBoolWriter, AtomicBoolReader};
 use super::{ClusterOptions, ConnectionRef, Peer, PeerUpgrade};
 use super::peer_connection::{PeerSystemConnection, OutgoingConnectionCreator, OutgoingConnectionCreatorImpl};
-use self::peer_connections::PeerConnections;
+use self::peer_connections::{PeerConnectionManager, PeerConnections};
 
 pub use self::persistent::{FilePersistedState, PersistentClusterState};
+
+/// This is a placeholder for a somewhat better error handling when updating the persistent cluster state fails.
+/// This situation is extremely problematic, since it may be possible to cast two different votes in the same term, if for
+/// instance, changes to the `voted_for` field cannot be persisted. For now, we're just going to have the controller panic
+/// whenever there's an IO error when persisting cluster state changes. Thankfully, this error should be fairly rare, since
+/// the file that's used to persist state changes is opened during initialization.
+static STATE_UPDATE_FAILED: &'static str = "failed to persist changes to cluster state! Panicking, since data consistency cannot be guaranteed under these circumstances";
+
 
 pub trait ConsensusProcessor: Send {
     fn tick(&mut self, now: Instant, all_connections: &mut HashMap<ConnectionId, ConnectionRef>);
     fn is_primary(&self) -> bool;
     fn peer_connection_established(&mut self, upgrade: PeerUpgrade, connection_id: ConnectionId, all_connections: &HashMap<ConnectionId, ConnectionRef>);
     fn outgoing_connection_failed(&mut self, connection_id: ConnectionId, address: SocketAddr);
+    fn request_vote_received(&mut self, from: ConnectionId, request: CallRequestVote);
 }
 
 #[derive(Debug)]
@@ -35,6 +44,9 @@ impl ConsensusProcessor for NoOpConsensusProcessor {
     }
     fn outgoing_connection_failed(&mut self, connection_id: ConnectionId, address: SocketAddr) {
         panic!("invalid operation for a NoOpConsensusProcessor. This should not happen");
+    }
+    fn request_vote_received(&mut self, from: ConnectionId, request: CallRequestVote) {
+
     }
     fn tick(&mut self, now: Instant, all_connections: &mut HashMap<ConnectionId, ConnectionRef>) {
     }
@@ -55,7 +67,7 @@ pub struct ClusterManager {
     persistent: FilePersistedState,
     system_partition_primary_address: SystemPrimaryAddressRef,
     shared: Arc<RwLock<SharedClusterState>>,
-    connection_manager: PeerConnections,
+    connection_manager: Box<PeerConnectionManager>,
 }
 
 #[derive(Debug, PartialEq, Copy, Clone)]
@@ -74,20 +86,18 @@ impl ClusterManager {
            shared: Arc<RwLock<SharedClusterState>>,
            primary_status_writer: AtomicBoolWriter,
            system_partition_primary_address: SystemPrimaryAddressRef,
-           outgoing_connection_creator: Box<OutgoingConnectionCreator>) -> ClusterManager {
+           peer_connection_manager: Box<PeerConnectionManager>) -> ClusterManager {
 
         let mut initialization_peers = starting_peer_addresses.iter().cloned().collect::<HashSet<_>>();
         for peer in persistent.cluster_members.iter() {
             initialization_peers.insert(peer.address);
         }
 
-        let peer_connections = PeerConnections::new(starting_peer_addresses, outgoing_connection_creator, &persistent.cluster_members);
-
         ClusterManager {
             state: State::EstablishConnections,
             election_timeout: Duration::from_millis(election_timeout_millis),
             last_heartbeat: Instant::now(),
-            connection_manager: peer_connections,
+            connection_manager: peer_connection_manager,
             initialization_peers,
             last_applied: 0,
             last_applied_term: 0,
@@ -140,20 +150,24 @@ impl ClusterManager {
             state.current_term += 1;
             let my_id = state.this_instance_id;
             state.voted_for = Some(my_id);
-        });
-        if let Err(io_err) = result {
-            error!("Aborting new election due to error persisting state: {:?}", io_err);
-            return;
-        }
+        }).expect(STATE_UPDATE_FAILED);
+
         let connection_control = ConnectionControl::SendRequestVote(CallRequestVote {
             term: self.persistent.current_term,
             candidate_id: self.persistent.this_instance_id,
             last_log_index: self.last_applied,
             last_log_term: self.last_applied_term,
         });
-        self.connection_manager.broadcast(connection_control);
+        self.connection_manager.broadcast_to_peers(connection_control);
     }
 
+    fn can_grant_vote(&self, request: &CallRequestVote) -> bool {
+        (self.persistent.voted_for.is_none() || self.persistent.voted_for == Some(request.candidate_id)) &&
+                self.persistent.current_term <= request.term &&
+                self.last_applied <= request.last_log_index &&
+                self.last_applied_term <= request.last_log_term &&
+                self.persistent.cluster_members.iter().any(|peer| peer.id == request.candidate_id)
+    }
 
 }
 
@@ -161,6 +175,29 @@ impl ConsensusProcessor for ClusterManager {
     fn outgoing_connection_failed(&mut self, connection_id: ConnectionId, address: SocketAddr) {
         self.connection_manager.outgoing_connection_failed(connection_id, address);
         self.connection_resolved(address);
+    }
+
+    fn request_vote_received(&mut self, from: ConnectionId, request: CallRequestVote) {
+        let candidate_id = request.candidate_id;
+
+        let response = if self.can_grant_vote(&request) {
+            self.persistent.modify(|state| {
+                state.voted_for = Some(candidate_id);
+                state.current_term = request.term;
+            }).expect(STATE_UPDATE_FAILED);
+
+            VoteResponse {
+                term: self.persistent.current_term,
+                granted: true
+            }
+        } else {
+            VoteResponse {
+                term: self.persistent.current_term,
+                granted: false,
+            }
+        };
+
+        self.connection_manager.send_to_peer(candidate_id, ConnectionControl::SendVoteResponse(response));
     }
 
     fn peer_connection_established(&mut self, upgrade: PeerUpgrade, connection_id: ConnectionId, all_connections: &HashMap<ConnectionId, ConnectionRef>) {
@@ -203,7 +240,7 @@ pub struct SharedClusterState {
     pub this_instance_id: FloInstanceId,
     pub this_address: Option<SocketAddr>,
     pub system_primary: Option<Peer>,
-    pub peers: Vec<Peer>,
+    pub peers: HashSet<Peer>,
 }
 
 impl SharedClusterState {
@@ -212,7 +249,7 @@ impl SharedClusterState {
             this_instance_id: FloInstanceId::generate_new(),
             this_address: None,
             system_primary: None,
-            peers: Vec::new(),
+            peers: HashSet::new(),
         }
     }
 }
@@ -231,6 +268,7 @@ pub fn init_cluster_consensus_processor(persistent_state: FilePersistedState,
     let ClusterOptions{ peer_addresses, event_loop_handles, election_timeout_millis, .. } = options;
 
     let outgoing_connection_creator = OutgoingConnectionCreatorImpl::new(event_loop_handles, engine_ref);
+    let peer_connection_manager = PeerConnections::new(peer_addresses.clone(), Box::new(outgoing_connection_creator), &persistent_state.cluster_members);
 
     let state = ClusterManager::new(election_timeout_millis,
                                     peer_addresses,
@@ -238,7 +276,7 @@ pub fn init_cluster_consensus_processor(persistent_state: FilePersistedState,
                                     shared_state_ref,
                                     system_primary,
                                     primary_address,
-                                    Box::new(outgoing_connection_creator));
+                                    Box::new(peer_connection_manager));
     Box::new(state)
 }
 
@@ -250,17 +288,200 @@ mod test {
     use tempdir::TempDir;
     use engine::connection_handler::{ConnectionControlSender, ConnectionControlReceiver, ConnectionControl};
     use engine::controller::peer_connection::{OutgoingConnectionCreator, MockOutgoingConnectionCreator};
-    use test_utils::addr;
+    use test_utils::{addr, expect_future_resolved};
+    use engine::controller::cluster_state::peer_connections::mock::{MockPeerConnectionManager, Invocation};
+    use engine::controller::controller_messages::mock::mock_connection_ref;
 
     fn t(start: Instant, seconds: u64) -> Instant {
         start + Duration::from_secs(seconds)
+    }
+
+    struct VoteExpectation {
+        term: Term,
+        persistent_voted_for: Option<FloInstanceId>,
+        granted: bool,
+    }
+
+    fn vote_test<F>(setup_fun: F) where F: Fn(&mut ClusterManager, &CallRequestVote, Peer, Peer) -> VoteExpectation {
+        let start = Instant::now();
+        let temp_dir = TempDir::new("cluster_state_test").unwrap();
+        let connection_manager = MockPeerConnectionManager::new();
+        let peer_1 = Peer {
+            id: FloInstanceId::generate_new(),
+            address: addr("111.222.0.1:3000")
+        };
+        let peer_2 = Peer {
+            id: FloInstanceId::generate_new(),
+            address: addr("111.222.0.2:3000")
+        };
+        let mut subject = create_cluster_manager(vec![peer_1.address, peer_2.address], temp_dir.path(), connection_manager.boxed_ref());
+        subject.state = State::Follower;
+
+        let request_vote = CallRequestVote {
+            term: 8,
+            candidate_id: peer_1.id,
+            last_log_index: 9,
+            last_log_term: 7,
+        };
+        let expectation = setup_fun(&mut subject, &request_vote, peer_1.clone(), peer_2.clone());
+
+        subject.request_vote_received(678, request_vote);
+
+        assert_eq!(expectation.persistent_voted_for, subject.persistent.voted_for);
+        assert_eq!(expectation.term, subject.persistent.current_term);
+
+        connection_manager.verify_in_order(&Invocation::SendToPeer {
+            peer_id: peer_1.id,
+            connection_control: ConnectionControl::SendVoteResponse(VoteResponse {
+                term: expectation.term,
+                granted: expectation.granted,
+            })
+        });
+
+    }
+
+    #[test]
+    fn vote_is_granted_when_candidate_term_and_log_are_more_up_to_date() {
+        vote_test(|subject, request, peer_1, peer_2| {
+            subject.last_applied_term = request.last_log_term - 1;
+            subject.last_applied = request.last_log_index - 2;
+            subject.persistent.modify(|state| {
+                state.current_term = request.term - 1;
+                state.cluster_members.insert(peer_1.clone());
+                state.cluster_members.insert(peer_2.clone());
+            }).unwrap();
+
+            VoteExpectation {
+                term: request.term,
+                persistent_voted_for: Some(peer_1.id),
+                granted: true
+            }
+        });
+    }
+
+    #[test]
+    fn vote_is_denied_when_candidate_term_is_less_than_current_term() {
+        vote_test(|subject, request, peer_1, peer_2| {
+            subject.last_applied_term = request.last_log_term;
+            subject.last_applied = request.last_log_index;
+            subject.persistent.modify(|state| {
+                state.current_term = request.term + 1; // my current term is greater
+                state.cluster_members.insert(peer_1.clone());
+                state.cluster_members.insert(peer_2.clone());
+            }).unwrap();
+
+            VoteExpectation {
+                term: request.term + 1,
+                persistent_voted_for: None,
+                granted: false
+            }
+        });
+    }
+
+    #[test]
+    fn vote_is_denied_when_candidate_log_term_is_out_of_date() {
+        vote_test(|subject, request, peer_1, peer_2| {
+            subject.last_applied_term = request.last_log_term + 1;
+            // unless we've really screwed something up, the last_log_index should never be the same if the last_log_term is different.
+            // We're doing it this way in the test just to document the behavior in this case
+            subject.last_applied = request.last_log_index;
+            subject.persistent.modify(|state| {
+                state.current_term = request.term;
+                state.cluster_members.insert(peer_1.clone());
+                state.cluster_members.insert(peer_2.clone());
+            }).unwrap();
+
+            VoteExpectation {
+                term: request.term,
+                persistent_voted_for: None,
+                granted: false
+            }
+        });
+    }
+
+    #[test]
+    fn vote_is_denied_when_candidate_is_not_a_known_peer() {
+        vote_test(|subject, request, peer_1, peer_2| {
+            subject.last_applied_term = request.last_log_term;
+            subject.last_applied = request.last_log_index;
+            subject.persistent.modify(|state| {
+                state.current_term = request.term - 1;
+                // peer_1 is not a known member
+                state.cluster_members.insert(peer_2.clone());
+            }).unwrap();
+
+            VoteExpectation {
+                term: request.term - 1,
+                persistent_voted_for: None,
+                granted: false
+            }
+        });
+    }
+
+    #[test]
+    fn vote_is_denied_when_candidate_log_is_out_of_date() {
+        vote_test(|subject, request, peer_1, peer_2| {
+            subject.last_applied_term = request.last_log_term;
+            subject.last_applied = request.last_log_index + 1;
+            subject.persistent.modify(|state| {
+                state.voted_for = None;
+                state.current_term = request.term;
+                state.cluster_members.insert(peer_1.clone());
+                state.cluster_members.insert(peer_2.clone());
+            }).unwrap();
+
+            VoteExpectation {
+                term: request.term,
+                persistent_voted_for: None,
+                granted: false,
+            }
+        });
+    }
+
+    #[test]
+    fn vote_is_denied_when_a_vote_was_already_cast_for_another_member_this_term() {
+        vote_test(|subject, request, peer_1, peer_2| {
+            subject.last_applied_term = request.last_log_term;
+            subject.last_applied = request.last_log_index;
+            subject.persistent.modify(|state| {
+                state.voted_for = Some(peer_2.id); // already voted for peer 2
+                state.current_term = request.term;
+                state.cluster_members.insert(peer_1.clone());
+                state.cluster_members.insert(peer_2.clone());
+            }).unwrap();
+
+            VoteExpectation {
+                term: request.term,
+                persistent_voted_for: Some(peer_2.id),
+                granted: false,
+            }
+        });
+    }
+
+    #[test]
+    fn vote_is_granted_when_no_other_vote_was_granted_and_candidate_log_exactly_matches() {
+        vote_test(|subject, request, peer_1, peer_2| {
+            subject.last_applied_term = request.last_log_term;
+            subject.last_applied = request.last_log_index;
+            subject.persistent.modify(|state| {
+                state.current_term = request.term - 1;
+                state.cluster_members.insert(peer_1.clone());
+                state.cluster_members.insert(peer_2.clone());
+            }).unwrap();
+
+            VoteExpectation {
+                term: request.term,
+                persistent_voted_for: Some(peer_1.id),
+                granted: true
+            }
+        });
     }
 
     #[test]
     fn cluster_manager_starts_new_election_after_timeout_elapses() {
         let start = Instant::now();
         let temp_dir = TempDir::new("cluster_state_test").unwrap();
-        let mut mock_creator = MockOutgoingConnectionCreator::new();
+        let connection_manager = MockPeerConnectionManager::new();
         let peer_1 = Peer {
             id: FloInstanceId::generate_new(),
             address: addr("111.222.0.1:3000")
@@ -269,39 +490,37 @@ mod test {
             id: FloInstanceId::generate_new(),
             address: addr("111.222.0.2:3000")
         };
-        let (peer_1_connection, _) = mock_creator.stub(peer_1.address);
-        let (peer_2_connection, _) = mock_creator.stub(peer_2.address);
-        let mut subject = create_cluster_manager(vec![peer_1.address, peer_2.address], temp_dir.path(), mock_creator.boxed());
-        assert_eq!(0, subject.persistent.current_term);
+        let mut subject = create_cluster_manager(vec![peer_1.address, peer_2.address], temp_dir.path(), connection_manager.boxed_ref());
+        subject.state = State::Follower;
+        subject.last_applied_term = 7;
+        subject.last_applied = 9;
+        subject.persistent.modify(|state| {
+            state.current_term = 7;
+        }).unwrap();
 
         let mut connections = HashMap::new();
         subject.tick(t(start, 1), &mut connections);
-
-        let upgrade_1 = PeerUpgrade {
-            peer_id: peer_1.id,
-            system_primary: Some(peer_2.clone()),
-            cluster_members: vec![peer_2.clone()],
-        };
-        subject.peer_connection_established(upgrade_1, peer_1_connection.connection_id, &connections);
-        let upgrade_2 = PeerUpgrade {
-            peer_id: peer_2.id,
-            system_primary: Some(peer_2.clone()),
-            cluster_members: vec![peer_2.clone()],
-        };
-        subject.peer_connection_established(upgrade_2, peer_2_connection.connection_id, &connections);
-
-        subject.tick(t(start, 2), &mut connections);
+        connection_manager.verify_in_order(&Invocation::EstablishConnections);
 
         let this_id = subject.persistent.this_instance_id;
         assert_eq!(Some(this_id), subject.persistent.voted_for);
-        assert_eq!(1, subject.persistent.current_term);
+        assert_eq!(8, subject.persistent.current_term);
+
+        connection_manager.verify_in_order(&Invocation::BroadcastToPeers {
+            connection_control: ConnectionControl::SendRequestVote(CallRequestVote {
+                term: 8,
+                candidate_id: this_id,
+                last_log_index: 9,
+                last_log_term: 7,
+            })
+        });
     }
 
     #[test]
     fn cluster_manager_moves_to_follower_state_once_peer_announce_is_received_with_known_primary() {
         let start = Instant::now();
         let temp_dir = TempDir::new("cluster_state_test").unwrap();
-        let mut mock_creator = MockOutgoingConnectionCreator::new();
+        let connection_manager = MockPeerConnectionManager::new();
         let peer_1 = Peer {
             id: FloInstanceId::generate_new(),
             address: addr("111.222.0.1:3000")
@@ -310,27 +529,34 @@ mod test {
             id: FloInstanceId::generate_new(),
             address: addr("111.222.0.2:3000")
         };
-        let (peer_1_connection, _) = mock_creator.stub(peer_1.address);
-        let _ = mock_creator.stub(peer_2.address);
-        let mut subject = create_cluster_manager(vec![peer_1.address, peer_2.address], temp_dir.path(), mock_creator.boxed());
+        let mut subject = create_cluster_manager(vec![peer_1.address, peer_2.address], temp_dir.path(), connection_manager.boxed_ref());
 
         assert_eq!(State::EstablishConnections, subject.state);
         let mut connections = HashMap::new();
         subject.tick(t(start, 1), &mut connections);
         assert_eq!(State::DeterminePrimary, subject.state);
+        connection_manager.verify_in_order(&Invocation::EstablishConnections);
 
+        let conn_id = 5;
         let upgrade = PeerUpgrade {
             peer_id: peer_1.id,
             system_primary: Some(peer_2.clone()),
             cluster_members: vec![peer_2.clone()],
         };
-        subject.peer_connection_established(upgrade, peer_1_connection.connection_id, &connections);
+        let (connection, _) = mock_connection_ref(conn_id, peer_1.address);
+        connections.insert(conn_id, connection.clone());
+
+        subject.peer_connection_established(upgrade, conn_id, &connections);
+        connection_manager.verify_in_order(&Invocation::PeerConnectionEstablished {
+            peer_id: peer_1.id,
+            success_connection: connection,
+        });
 
         assert_eq!(State::Follower, subject.state);
         let actual_primary: Option<SocketAddr> = {
             subject.system_partition_primary_address.read().unwrap().as_ref().cloned()
         };
-
+        assert_eq!(Some(peer_2.address), actual_primary);
     }
 
     #[test]
@@ -338,30 +564,27 @@ mod test {
         let start = Instant::now();
 
         let temp_dir = TempDir::new("cluster_state_test").unwrap();
-        let mut mock_creator = MockOutgoingConnectionCreator::new();
+        let connection_manager = MockPeerConnectionManager::new();
         let peer_1_addr = addr("111.222.0.1:3000");
         let peer_2_addr = addr("111.222.0.2:3000");
-        let _ = mock_creator.stub(peer_1_addr);
-        let _ = mock_creator.stub(peer_2_addr);
-        let mut subject = create_cluster_manager(vec![peer_1_addr, peer_2_addr], temp_dir.path(), mock_creator.boxed());
+        let mut subject = create_cluster_manager(vec![peer_1_addr, peer_2_addr], temp_dir.path(), connection_manager.boxed_ref());
 
         assert_eq!(State::EstablishConnections, subject.state);
         let mut connections = HashMap::new();
         subject.tick(t(start, 1), &mut connections);
+        connection_manager.verify_in_order(&Invocation::EstablishConnections);
         assert_eq!(State::DeterminePrimary, subject.state);
 
-        assert_eq!(2, connections.len());
-        let actual = connections.values().map(|cr| cr.remote_address).collect::<HashSet<_>>();
-
-        assert!(actual.contains(&peer_1_addr));
-        assert!(actual.contains(&peer_2_addr));
-
-        // make sure it doesn't happen again
-        subject.tick(t(start, 5), &mut connections);
-        assert_eq!(2, connections.len());
-
         subject.outgoing_connection_failed(1, peer_1_addr);
+        connection_manager.verify_in_order(&Invocation::OutgoingConnectionFailed {
+            connection_id: 1,
+            addr: peer_1_addr,
+        });
         subject.outgoing_connection_failed(2, peer_2_addr);
+        connection_manager.verify_in_order(&Invocation::OutgoingConnectionFailed {
+            connection_id: 2,
+            addr: peer_2_addr,
+        });
         assert_eq!(State::Follower, subject.state);
     }
 
@@ -369,7 +592,7 @@ mod test {
         addr("123.1.2.3:4567")
     }
 
-    fn create_cluster_manager(starting_peers: Vec<SocketAddr>, temp_dir: &Path, conn_creator: Box<OutgoingConnectionCreator>) -> ClusterManager {
+    fn create_cluster_manager(starting_peers: Vec<SocketAddr>, temp_dir: &Path, conn_manager: Box<PeerConnectionManager>) -> ClusterManager {
         let temp_file = temp_dir.join("cluster_state");
         let file_state = FilePersistedState::initialize(temp_file).expect("failed to init persistent state");
 
@@ -381,6 +604,6 @@ mod test {
                             Arc::new(RwLock::new(shared)),
                             AtomicBoolWriter::with_value(false),
                             Arc::new(RwLock::new(None)),
-                            conn_creator)
+                            conn_manager)
     }
 }

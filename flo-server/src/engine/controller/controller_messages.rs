@@ -135,3 +135,19 @@ impl From<Operation> for SystemOperation {
         }
     }
 }
+
+#[cfg(test)]
+pub mod mock {
+    use super::*;
+    use engine::connection_handler::{create_connection_control_channels, ConnectionControlReceiver};
+
+    pub fn mock_connection_ref(connection_id: ConnectionId, addr: SocketAddr) -> (ConnectionRef, ConnectionControlReceiver) {
+        let (tx, rx) = create_connection_control_channels();
+        let conn = ConnectionRef {
+            connection_id,
+            remote_address: addr,
+            control_sender: tx,
+        };
+        (conn, rx)
+    }
+}
