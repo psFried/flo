@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicUsize};
 use std::net::SocketAddr;
 
 use protocol::ProtocolMessage;
-use event::OwnedFloEvent;
+use event::{OwnedFloEvent, ActorId};
 use self::event_stream::EventStreamRef;
 
 pub use self::controller::{ControllerOptions, ClusterOptions, SystemStreamRef, start_controller};
@@ -35,6 +35,23 @@ pub static SYSTEM_STREAM_NAME: &'static str = "system";
 
 pub fn system_stream_name() -> String {
     SYSTEM_STREAM_NAME.to_owned()
+}
+
+/// Returns the minimum number of votes required to achieve a majority. Takes as input the number of _other_ peers in the
+/// cluster, not including this instance. Returns the number of votes required from _other_ peers, again not including the
+/// implicit vote from this instance
+fn minimum_required_votes_for_majority(number_of_other_peers: ActorId) -> ActorId {
+    match number_of_other_peers {
+        0 => 0,
+        1 => 1,
+        2 => 1,
+        other @ _ if other % 2 == 0 => {
+            other / 2
+        }
+        other @ _ => {
+            (other / 2) + 1
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -93,5 +110,51 @@ impl EngineRef {
 }
 
 
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn minimum_required_votes_for_majority_returns_0_when_there_are_no_other_peers() {
+        // no-cluster mode, so no other votes are required
+        let result = minimum_required_votes_for_majority(0);
+        assert_eq!(0, result);
+    }
+
+    #[test]
+    fn minimum_required_votes_for_majority_returns_1_when_there_is_1_other_peer() {
+        // total cluster size is only 2, so they must both agree
+        let result = minimum_required_votes_for_majority(1);
+        assert_eq!(1, result);
+    }
+
+    #[test]
+    fn minimum_required_votes_for_majority_returns_1_when_there_are_2_other_peers() {
+        // total cluster size is 3, so one vote from another peer makes for 2/3
+        let result = minimum_required_votes_for_majority(2);
+        assert_eq!(1, result);
+    }
+
+    #[test]
+    fn minimum_required_votes_for_majority_returns_2_when_there_are_3_other_peers() {
+        // total cluster size is 4, so 2 votes makes for 3/4
+        let result = minimum_required_votes_for_majority(3);
+        assert_eq!(2, result);
+    }
+
+    #[test]
+    fn minimum_required_votes_for_majority_returns_2_when_there_are_4_other_peers() {
+        // total cluster size is 5, so 2 votes makes for 3/5
+        let result = minimum_required_votes_for_majority(4);
+        assert_eq!(2, result);
+    }
+
+    #[test]
+    fn minimum_required_votes_for_majority_returns_4_when_there_are_7_other_peers() {
+        // total cluster size is 8, so 4 votes makes for 5/8
+        let result = minimum_required_votes_for_majority(7);
+        assert_eq!(4, result);
+    }
+}
 
 

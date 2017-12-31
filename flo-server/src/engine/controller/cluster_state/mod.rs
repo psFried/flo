@@ -292,68 +292,20 @@ mod test {
     use engine::controller::cluster_state::peer_connections::mock::{MockPeerConnectionManager, Invocation};
     use engine::controller::controller_messages::mock::mock_connection_ref;
 
-    fn t(start: Instant, seconds: u64) -> Instant {
-        start + Duration::from_secs(seconds)
-    }
-
-    struct VoteExpectation {
-        term: Term,
-        persistent_voted_for: Option<FloInstanceId>,
-        granted: bool,
-    }
-
-    fn vote_test<F>(setup_fun: F) where F: Fn(&mut ClusterManager, &CallRequestVote, Peer, Peer) -> VoteExpectation {
-        let start = Instant::now();
-        let temp_dir = TempDir::new("cluster_state_test").unwrap();
-        let connection_manager = MockPeerConnectionManager::new();
-        let peer_1 = Peer {
-            id: FloInstanceId::generate_new(),
-            address: addr("111.222.0.1:3000")
-        };
-        let peer_2 = Peer {
-            id: FloInstanceId::generate_new(),
-            address: addr("111.222.0.2:3000")
-        };
-        let mut subject = create_cluster_manager(vec![peer_1.address, peer_2.address], temp_dir.path(), connection_manager.boxed_ref());
-        subject.state = State::Follower;
-
-        let request_vote = CallRequestVote {
-            term: 8,
-            candidate_id: peer_1.id,
-            last_log_index: 9,
-            last_log_term: 7,
-        };
-        let expectation = setup_fun(&mut subject, &request_vote, peer_1.clone(), peer_2.clone());
-
-        subject.request_vote_received(678, request_vote);
-
-        assert_eq!(expectation.persistent_voted_for, subject.persistent.voted_for);
-        assert_eq!(expectation.term, subject.persistent.current_term);
-
-        connection_manager.verify_in_order(&Invocation::SendToPeer {
-            peer_id: peer_1.id,
-            connection_control: ConnectionControl::SendVoteResponse(VoteResponse {
-                term: expectation.term,
-                granted: expectation.granted,
-            })
-        });
-
-    }
-
     #[test]
     fn vote_is_granted_when_candidate_term_and_log_are_more_up_to_date() {
-        vote_test(|subject, request, peer_1, peer_2| {
+        vote_test(|subject, request, candidate, peer_2| {
             subject.last_applied_term = request.last_log_term - 1;
             subject.last_applied = request.last_log_index - 2;
             subject.persistent.modify(|state| {
                 state.current_term = request.term - 1;
-                state.cluster_members.insert(peer_1.clone());
+                state.cluster_members.insert(candidate.clone());
                 state.cluster_members.insert(peer_2.clone());
             }).unwrap();
 
             VoteExpectation {
                 term: request.term,
-                persistent_voted_for: Some(peer_1.id),
+                persistent_voted_for: Some(candidate.id),
                 granted: true
             }
         });
@@ -361,12 +313,12 @@ mod test {
 
     #[test]
     fn vote_is_denied_when_candidate_term_is_less_than_current_term() {
-        vote_test(|subject, request, peer_1, peer_2| {
+        vote_test(|subject, request, candidate, peer_2| {
             subject.last_applied_term = request.last_log_term;
             subject.last_applied = request.last_log_index;
             subject.persistent.modify(|state| {
                 state.current_term = request.term + 1; // my current term is greater
-                state.cluster_members.insert(peer_1.clone());
+                state.cluster_members.insert(candidate.clone());
                 state.cluster_members.insert(peer_2.clone());
             }).unwrap();
 
@@ -380,14 +332,14 @@ mod test {
 
     #[test]
     fn vote_is_denied_when_candidate_log_term_is_out_of_date() {
-        vote_test(|subject, request, peer_1, peer_2| {
+        vote_test(|subject, request, candidate, peer_2| {
             subject.last_applied_term = request.last_log_term + 1;
             // unless we've really screwed something up, the last_log_index should never be the same if the last_log_term is different.
             // We're doing it this way in the test just to document the behavior in this case
             subject.last_applied = request.last_log_index;
             subject.persistent.modify(|state| {
                 state.current_term = request.term;
-                state.cluster_members.insert(peer_1.clone());
+                state.cluster_members.insert(candidate.clone());
                 state.cluster_members.insert(peer_2.clone());
             }).unwrap();
 
@@ -401,7 +353,7 @@ mod test {
 
     #[test]
     fn vote_is_denied_when_candidate_is_not_a_known_peer() {
-        vote_test(|subject, request, peer_1, peer_2| {
+        vote_test(|subject, request, candidate, peer_2| {
             subject.last_applied_term = request.last_log_term;
             subject.last_applied = request.last_log_index;
             subject.persistent.modify(|state| {
@@ -420,13 +372,13 @@ mod test {
 
     #[test]
     fn vote_is_denied_when_candidate_log_is_out_of_date() {
-        vote_test(|subject, request, peer_1, peer_2| {
+        vote_test(|subject, request, candidate, peer_2| {
             subject.last_applied_term = request.last_log_term;
             subject.last_applied = request.last_log_index + 1;
             subject.persistent.modify(|state| {
                 state.voted_for = None;
                 state.current_term = request.term;
-                state.cluster_members.insert(peer_1.clone());
+                state.cluster_members.insert(candidate.clone());
                 state.cluster_members.insert(peer_2.clone());
             }).unwrap();
 
@@ -440,13 +392,13 @@ mod test {
 
     #[test]
     fn vote_is_denied_when_a_vote_was_already_cast_for_another_member_this_term() {
-        vote_test(|subject, request, peer_1, peer_2| {
+        vote_test(|subject, request, candidate, peer_2| {
             subject.last_applied_term = request.last_log_term;
             subject.last_applied = request.last_log_index;
             subject.persistent.modify(|state| {
                 state.voted_for = Some(peer_2.id); // already voted for peer 2
                 state.current_term = request.term;
-                state.cluster_members.insert(peer_1.clone());
+                state.cluster_members.insert(candidate.clone());
                 state.cluster_members.insert(peer_2.clone());
             }).unwrap();
 
@@ -460,18 +412,18 @@ mod test {
 
     #[test]
     fn vote_is_granted_when_no_other_vote_was_granted_and_candidate_log_exactly_matches() {
-        vote_test(|subject, request, peer_1, peer_2| {
+        vote_test(|subject, request, candidate, peer_2| {
             subject.last_applied_term = request.last_log_term;
             subject.last_applied = request.last_log_index;
             subject.persistent.modify(|state| {
                 state.current_term = request.term - 1;
-                state.cluster_members.insert(peer_1.clone());
+                state.cluster_members.insert(candidate.clone());
                 state.cluster_members.insert(peer_2.clone());
             }).unwrap();
 
             VoteExpectation {
                 term: request.term,
-                persistent_voted_for: Some(peer_1.id),
+                persistent_voted_for: Some(candidate.id),
                 granted: true
             }
         });
@@ -605,5 +557,52 @@ mod test {
                             AtomicBoolWriter::with_value(false),
                             Arc::new(RwLock::new(None)),
                             conn_manager)
+    }
+
+    fn t(start: Instant, seconds: u64) -> Instant {
+        start + Duration::from_secs(seconds)
+    }
+
+    struct VoteExpectation {
+        term: Term,
+        persistent_voted_for: Option<FloInstanceId>,
+        granted: bool,
+    }
+
+    fn vote_test<F>(setup_fun: F) where F: Fn(&mut ClusterManager, &CallRequestVote, Peer, Peer) -> VoteExpectation {
+        let start = Instant::now();
+        let temp_dir = TempDir::new("cluster_state_test").unwrap();
+        let connection_manager = MockPeerConnectionManager::new();
+        let peer_1 = Peer {
+            id: FloInstanceId::generate_new(),
+            address: addr("111.222.0.1:3000")
+        };
+        let peer_2 = Peer {
+            id: FloInstanceId::generate_new(),
+            address: addr("111.222.0.2:3000")
+        };
+        let mut subject = create_cluster_manager(vec![peer_1.address, peer_2.address], temp_dir.path(), connection_manager.boxed_ref());
+        subject.state = State::Follower;
+
+        let request_vote = CallRequestVote {
+            term: 8,
+            candidate_id: peer_1.id,
+            last_log_index: 9,
+            last_log_term: 7,
+        };
+        let expectation = setup_fun(&mut subject, &request_vote, peer_1.clone(), peer_2.clone());
+
+        subject.request_vote_received(678, request_vote);
+
+        assert_eq!(expectation.persistent_voted_for, subject.persistent.voted_for);
+        assert_eq!(expectation.term, subject.persistent.current_term);
+
+        connection_manager.verify_in_order(&Invocation::SendToPeer {
+            peer_id: peer_1.id,
+            connection_control: ConnectionControl::SendVoteResponse(VoteResponse {
+                term: expectation.term,
+                granted: expectation.granted,
+            })
+        });
     }
 }

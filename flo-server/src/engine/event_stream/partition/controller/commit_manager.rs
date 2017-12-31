@@ -41,7 +41,7 @@ impl CommitManager {
         self.peers.sort_by_key(|elem| elem.1);
 
         let idx = self.min_required_for_commit;
-        let ack_counter = self.peers[idx as usize].1;
+        let mut ack_counter = self.peers[idx as usize].1;
 
         if self.commit_index.set_if_greater(ack_counter as usize) {
             Some(ack_counter)
@@ -67,17 +67,7 @@ impl CommitManager {
     fn compute_min_required(&self) -> ActorId {
         let peer_count = self.peers.len() as ActorId;
 
-        match peer_count {
-            0 => 0,
-            1 => 1,
-            2 => 1,
-            other @ _ if other % 2 == 0 => {
-                other / 2
-            }
-            other @ _ => {
-                (other / 2) + 1
-            }
-        }
+        ::engine::minimum_required_votes_for_majority(peer_count)
     }
 }
 
