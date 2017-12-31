@@ -22,15 +22,29 @@ use self::consumer_manager::ConsumerManager;
 const FIRST_SEGMENT_NUM: SegmentNum = SegmentNum(1);
 
 pub struct PartitionImpl {
+    /// The name of the event stream that this partition is a member of. This is just here to make debugging _way_ easier.
     event_stream_name: String,
+    /// The partition number within this event stream
     partition_num: ActorId,
+    /// The directory used to store everything for this partition
     partition_dir: PathBuf,
+    /// The maximum size in bytes for any segment. This value may be exceeded when the size of a single event is larger than
+    /// the `max_segment_size`. In this case, you'll end up with a segment that includes just that one event
     max_segment_size: usize,
+    /// the maximum duration of any segment. Helps control the size of segments when there's relatively low frequency of events
+    /// added and a short TTL for events
     max_segment_duration: Duration,
+    /// The segments that make up this partition
     segments: VecDeque<Segment>,
+    /// A simple index that maps `EventCounter`s to a tuple of segment number and file offset
     index: PartitionIndex,
+    /// Shared EventCounter for all partitions in the event stream. Serves as a Lamport clock to help reason about relative
+    /// order of events across multiple partitions. Used to generate new `EventCounter`s when events are appended
     event_stream_highest_counter: HighestCounter,
+    /// Tracks the highest committed event in this partition. This value is shared with the `ConnectionHandler`s
     partition_highest_committed: AtomicCounterWriter,
+    /// Whether this instance is the primary for this partition. This value is set by `FloController`, since it requires
+    /// consensus to modify which instance is primary for a partition.
     primary: AtomicBoolReader,
 
     /// new segments each have a reader added here. The readers are then accessed as needed by the EventReader
