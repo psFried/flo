@@ -17,6 +17,7 @@ pub trait PeerConnectionManager: Send + Debug + 'static {
     fn peer_connection_established(&mut self, peer_id: FloInstanceId, success_connection: &ConnectionRef);
     fn broadcast_to_peers(&mut self, connection_control: ConnectionControl);
     fn send_to_peer(&mut self, peer_id: FloInstanceId, connection_control: ConnectionControl);
+    fn get_peer_id(&mut self, connection_id: ConnectionId) -> Option<FloInstanceId>;
 }
 
 #[derive(Debug)]
@@ -51,11 +52,6 @@ impl PeerConnections {
             known_peers,
             outgoing_connection_creator,
         }
-    }
-
-
-    fn connection_peer_id(&self, connection_id: ConnectionId) -> Option<FloInstanceId> {
-        self.active_connections.get(&connection_id).cloned()
     }
 }
 
@@ -152,6 +148,10 @@ impl PeerConnectionManager for PeerConnections {
 
     fn send_to_peer(&mut self, peer_id: FloInstanceId, control: ConnectionControl) {
         unimplemented!()
+    }
+
+    fn get_peer_id(&mut self, connection_id: ConnectionId) -> Option<FloInstanceId> {
+        self.active_connections.get(&connection_id).cloned()
     }
 }
 
@@ -291,12 +291,12 @@ mod test {
 
         subject.peer_connection_established(peer_id, &peer_connection);
 
-        assert_eq!(Some(peer_id), subject.connection_peer_id(peer_connection.connection_id));
+        assert_eq!(Some(peer_id), subject.get_peer_id(peer_connection.connection_id));
 
         subject.connection_closed(peer_connection.connection_id);
 
         assert!(subject.disconnected_peers.contains_key(&peer_address));
-        assert_eq!(None, subject.connection_peer_id(peer_connection.connection_id));
+        assert_eq!(None, subject.get_peer_id(peer_connection.connection_id));
     }
 
     #[test]
@@ -401,13 +401,20 @@ pub mod mock {
     #[derive(Debug, Clone)]
     pub struct MockPeerConnectionManager {
         actual_invocations: Arc<Mutex<VecDeque<Invocation>>>,
+        peer_stubs: Arc<Mutex<HashMap<ConnectionId, FloInstanceId>>>,
     }
 
     impl MockPeerConnectionManager {
         pub fn new() -> MockPeerConnectionManager {
             MockPeerConnectionManager {
-                actual_invocations: Arc::new(Mutex::new(VecDeque::new()))
+                actual_invocations: Arc::new(Mutex::new(VecDeque::new())),
+                peer_stubs: Arc::new(Mutex::new(HashMap::new())),
             }
+        }
+
+        pub fn stub_peer_connection(&self, connection_id: ConnectionId, peer_id: FloInstanceId) {
+            let mut lock = self.peer_stubs.lock().unwrap();
+            lock.insert(connection_id, peer_id);
         }
 
         pub fn verify_in_order(&self, expected: &Invocation) {
@@ -437,18 +444,27 @@ pub mod mock {
         }
         fn outgoing_connection_failed(&mut self, connection_id: ConnectionId, addr: SocketAddr) {
             self.push_invocation(Invocation::OutgoingConnectionFailed {connection_id, addr});
+            let mut lock = self.peer_stubs.lock().unwrap();
+            lock.remove(&connection_id);
         }
         fn connection_closed(&mut self, connection_id: ConnectionId) {
             self.push_invocation(Invocation::ConnectionClosed {connection_id});
+            let mut lock = self.peer_stubs.lock().unwrap();
+            lock.remove(&connection_id);
         }
         fn peer_connection_established(&mut self, peer_id: FloInstanceId, success_connection: &ConnectionRef) {
             self.push_invocation(Invocation::PeerConnectionEstablished {peer_id, success_connection: success_connection.clone()});
+            self.stub_peer_connection(success_connection.connection_id, peer_id);
         }
         fn broadcast_to_peers(&mut self, connection_control: ConnectionControl) {
             self.push_invocation(Invocation::BroadcastToPeers {connection_control});
         }
         fn send_to_peer(&mut self, peer_id: FloInstanceId, connection_control: ConnectionControl) {
             self.push_invocation(Invocation::SendToPeer {peer_id, connection_control});
+        }
+        fn get_peer_id(&mut self, connection_id: ConnectionId) -> Option<FloInstanceId> {
+            let lock = self.peer_stubs.lock().unwrap();
+            lock.get(&connection_id).cloned()
         }
     }
 
@@ -466,13 +482,4 @@ pub mod mock {
         BroadcastToPeers{connection_control: ConnectionControl},
         SendToPeer{peer_id: FloInstanceId, connection_control :ConnectionControl},
     }
-
-    /*
-    fn establish_connections(&mut self, now: Instant, all_connections: &mut HashMap<ConnectionId, ConnectionRef>);
-    fn outgoing_connection_failed(&mut self, connection_id: ConnectionId, addr: SocketAddr);
-    fn connection_closed(&mut self, connection_id: ConnectionId);
-    fn peer_connection_established(&mut self, peer_id: FloInstanceId, success_connection: &ConnectionRef);
-    fn broadcast_to_peers(&mut self, connection_control: ConnectionControl);
-    fn send_to_peer(&mut self, peer_id: FloInstanceId, connection_control: ConnectionControl);
-    */
 }
