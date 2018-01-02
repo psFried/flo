@@ -67,7 +67,7 @@ impl ConnectionHandler {
             ConnectionControl::SendVoteResponse(response) => {
                 peer_state.send_vote_response(response, common_state)
             }
-            ConnectionControl::SendAppendEntried(append) => {
+            ConnectionControl::SendAppendEntries(append) => {
                 peer_state.send_append_entries(append, common_state)
             }
             _ => unimplemented!()
@@ -353,6 +353,31 @@ mod test {
         }
 
     }
+     #[test]
+     fn append_entries_is_sent_without_any_events() {
+         let (mut subject, mut fixture) = Fixture::create_outgoing_peer_connection();
+
+         subject.handle_control(ConnectionControl::SendAppendEntries(CallAppendEntries {
+             current_term: 4,
+             prev_entry_index: 0,
+             prev_entry_term: 0,
+             reader_start_offset: 0,
+             reader_start_segment: SegmentNum::new_unset(),
+             reader_start_event: 0,
+             commit_index: 987, // just to show that this is just a dumb value and not interpreted by the connection handler
+         })).unwrap();
+
+         let expected_id = fixture.instance_id;
+         fixture.assert_sent_to_client(ProtocolMessage::SystemAppendCall(AppendEntriesCall {
+             op_id: 2,
+             leader_id: expected_id,
+             term: 4,
+             prev_entry_term: 0,
+             prev_entry_index: 0,
+             leader_commit_index: 987,
+             entry_count: 0,
+         }));
+     }
 
     #[test]
     fn error_is_returned_when_vote_response_is_unexpected() {

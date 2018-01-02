@@ -62,6 +62,13 @@ fn get_events_file(partition_dir: &Path, segment_num: SegmentNum) -> PathBuf {
 pub struct SegmentNum(u64);
 
 impl SegmentNum {
+
+    /// Used to create SegmentNum(0) for testing purposes. Normally, creating such instances would only be possible from within the partition module
+    #[cfg(test)]
+    pub fn new_unset() -> SegmentNum {
+        SegmentNum(0)
+    }
+
     /// returns true if this segment is non-zero
     pub fn is_set(&self) -> bool {
         self.0 > 0

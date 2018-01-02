@@ -29,7 +29,7 @@ pub enum ConnectionControl {
     InitiateOutgoingSystemConnection,
     SendRequestVote(CallRequestVote),
     SendVoteResponse(VoteResponse),
-    SendAppendEntried(CallAppendEntries)
+    SendAppendEntries(CallAppendEntries)
 }
 
 
@@ -53,4 +53,5 @@ pub struct CallAppendEntries {
     pub reader_start_offset: usize,
     pub reader_start_segment: SegmentNum,
     pub reader_start_event: EventCounter,
+    pub commit_index: EventCounter,
 }

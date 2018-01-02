@@ -43,21 +43,25 @@ impl PeerConnectionState {
         let op_id = self.next_op_id();
         let this_instance_id = self.get_this_instance_id(state);
         let CallAppendEntries {current_term, prev_entry_index, prev_entry_term,
-            reader_start_offset, reader_start_segment, reader_start_event} = append;
+            reader_start_offset, reader_start_segment, reader_start_event, commit_index} = append;
 
         if self.system_partition_reader.is_none() {
             let reader = state.get_system_stream().create_system_stream_reader(connection_id);
             self.system_partition_reader = Some(reader);
         }
-
         let reader = self.system_partition_reader.as_mut().unwrap();
-        reader.set_to(reader_start_segment, reader_start_offset).map_err(|io_err| {
-            format!("Failed to set position of system stream reader for connection_id: {} - {:?}", connection_id ,io_err)
-        })?; // just give up
 
-        let num_events = reader.fill_buffer().map_err(|io_err| {
-            format!("Failed to rea events for AppendEntries for connection_id: {}, error: {:?}", connection_id, io_err)
-        })?; // give up on error
+        let num_events = if reader_start_segment.is_set() {
+            reader.set_to(reader_start_segment, reader_start_offset).map_err(|io_err| {
+                format!("Failed to set position of system stream reader for connection_id: {} - {:?}", connection_id ,io_err)
+            })?; // just give up
+
+            reader.fill_buffer().map_err(|io_err| {
+                format!("Failed to rea events for AppendEntries for connection_id: {}, error: {:?}", connection_id, io_err)
+            })? // give up on error
+        } else {
+            0
+        };
 
         let append = protocol::AppendEntriesCall {
             op_id,
@@ -65,12 +69,14 @@ impl PeerConnectionState {
             term: current_term,
             prev_entry_term,
             prev_entry_index,
-            leader_commit_index: 0, //TODO: figure out what our current commit_index is
+            leader_commit_index: commit_index,
             entry_count: num_events as u32,
         };
         state.send_to_client(ProtocolMessage::SystemAppendCall(append))?;
-        for event in reader.drain() {
-            state.send_to_client(ProtocolMessage::ReceiveEvent(event))?;
+        if num_events > 0 {
+            for event in reader.drain() {
+                state.send_to_client(ProtocolMessage::ReceiveEvent(event))?;
+            }
         }
         Ok(())
     }
