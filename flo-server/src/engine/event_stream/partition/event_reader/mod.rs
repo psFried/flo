@@ -78,6 +78,21 @@ impl PartitionReader {
         unimplemented!()
     }
 
+    pub fn set_to(&mut self, segment_num: SegmentNum, offset: usize) -> io::Result<()> {
+        if !segment_num.is_set() {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "Cannot set PartitionReader segment to 0"));
+        }
+        if self.current_reader_segment_id() != segment_num.0 {
+            let segment = self.segment_readers_ref.get_segment(segment_num)
+                    .ok_or_else(|| {
+                        io::Error::new(io::ErrorKind::InvalidInput, format!("No segment exists for {:?}", segment_num))
+                    })?; // return early if segment does not exist
+            self.current_segment_reader = Some(segment);
+        }
+        self.current_segment_reader.as_mut().unwrap().set_offset(offset);
+        Ok(())
+    }
+
     fn should_skip(&self, result: &Option<Result<PersistentEvent, io::Error>>) -> bool {
         if let Some(Ok(ref event)) = *result {
             !self.filter.matches(event)

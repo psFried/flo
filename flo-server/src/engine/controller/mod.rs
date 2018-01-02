@@ -4,6 +4,7 @@ mod system_stream;
 mod initialization;
 mod controller_messages;
 mod peer_connection;
+mod system_reader;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
@@ -24,6 +25,7 @@ use self::cluster_state::{ClusterManager, ConsensusProcessor};
 
 pub use self::initialization::{start_controller, ControllerOptions, ClusterOptions};
 pub use self::system_stream::SystemStreamRef;
+pub use self::system_reader::SystemStreamReader;
 pub use self::controller_messages::{SystemOperation, SystemOpType, ConnectionRef, Peer, PeerUpgrade, CallRequestVote, VoteResponse};
 pub use self::cluster_state::{SharedClusterState, ClusterStateReader};
 

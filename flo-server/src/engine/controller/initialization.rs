@@ -25,6 +25,7 @@ use engine::event_stream::{EventStreamRefMut,
 use engine::event_stream::partition::{PartitionSender,
                                       PartitionReceiver,
                                       PartitionRef,
+                                      SharedReaderRefs,
                                       create_partition_channels};
 use engine::event_stream::partition::controller::PartitionImpl;
 use atomics::{AtomicBoolReader, AtomicBoolWriter, AtomicCounterReader};
@@ -88,6 +89,7 @@ pub fn start_controller(options: ControllerOptions, remote: Remote) -> io::Resul
     let cluster_state_ref = Arc::new(RwLock::new(shared_state));
 
     let engine_ref = create_engine_ref(shared_stream_refs.clone(),
+                                       system_partition.get_shared_reader_refs(),
                                        system_highest_counter,
                                        system_primary_status_writer.reader(),
                                        system_primary_address.clone(),
@@ -144,6 +146,7 @@ fn init_system_partition(storage_dir: &Path, system_primary_reader: AtomicBoolRe
 }
 
 fn create_engine_ref(shared_stream_refs: Arc<Mutex<HashMap<String, EventStreamRef>>>,
+                     system_reader_refs: SharedReaderRefs,
                      system_highest_counter: AtomicCounterReader,
                      system_primary_reader: AtomicBoolReader,
                      system_primary_addr: Arc<RwLock<Option<SocketAddr>>>,
@@ -157,7 +160,7 @@ fn create_engine_ref(shared_stream_refs: Arc<Mutex<HashMap<String, EventStreamRe
                                                  system_partition_sender.clone(),
                                                  system_primary_addr);
 
-    let system_stream_ref = SystemStreamRef::new(system_partition_ref, system_partition_sender, cluster_state_reader);
+    let system_stream_ref = SystemStreamRef::new(system_partition_ref, system_partition_sender, cluster_state_reader, system_reader_refs);
 
     EngineRef::new(system_stream_ref, shared_stream_refs)
 }

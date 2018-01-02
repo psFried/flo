@@ -119,6 +119,7 @@ impl SharedReaderRefsMut {
     }
 }
 
+#[derive(Clone)]
 pub struct SharedReaderRefs {
     inner: Arc<RwLock<VecDeque<SegmentReader>>>
 }
@@ -134,6 +135,13 @@ impl Debug for SharedReaderRefs {
 }
 
 impl SharedReaderRefs {
+    #[cfg(test)]
+    pub fn empty() -> SharedReaderRefs {
+        SharedReaderRefs {
+            inner: Arc::new(RwLock::new(VecDeque::new()))
+        }
+    }
+
     pub fn get_next_segment(&self, previous: SegmentNum) -> Option<SegmentReader> {
         let locked = self.inner.read().unwrap();
         locked.front().map(|r| r.segment_id).and_then(|front_segment| {
@@ -220,6 +228,10 @@ impl PartitionRef {
 
     pub fn get_highest_event_counter(&self) -> EventCounter {
         self.highest_event_counter.load_relaxed() as EventCounter
+    }
+
+    pub fn get_highest_counter_reader(&self) -> AtomicCounterReader {
+        self.highest_event_counter.clone()
     }
 
     pub fn is_primary(&self) -> bool {

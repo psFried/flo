@@ -18,7 +18,7 @@ use self::consumer::ConsumerConnectionState;
 use self::producer::ProducerConnectionState;
 use self::peer::PeerConnectionState;
 
-pub use self::input::{ConnectionHandlerInput, ConnectionControl};
+pub use self::input::{ConnectionHandlerInput, ConnectionControl, CallAppendEntries};
 
 pub type ConnectionControlSender = ::futures::sync::mpsc::UnboundedSender<ConnectionControl>;
 pub type ConnectionControlReceiver = ::futures::sync::mpsc::UnboundedReceiver<ConnectionControl>;
@@ -66,6 +66,9 @@ impl ConnectionHandler {
             }
             ConnectionControl::SendVoteResponse(response) => {
                 peer_state.send_vote_response(response, common_state)
+            }
+            ConnectionControl::SendAppendEntried(append) => {
+                peer_state.send_append_entries(append, common_state)
             }
             _ => unimplemented!()
         }
@@ -254,7 +257,8 @@ mod test {
                 system_primary: None,
                 peers: HashSet::new(),
             };
-            let system_stream = SystemStreamRef::new(part_ref, tx, Arc::new(RwLock::new(cluster_state)));
+            let readers = ::engine::event_stream::partition::SharedReaderRefs::empty();
+            let system_stream = SystemStreamRef::new(part_ref, tx, Arc::new(RwLock::new(cluster_state)), readers);
 
             let streams = Arc::new(Mutex::new(HashMap::new()));
             let engine = EngineRef::new(system_stream, streams);

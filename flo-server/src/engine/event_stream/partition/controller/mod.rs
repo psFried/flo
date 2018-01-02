@@ -11,7 +11,7 @@ use chrono::{Duration};
 use atomics::{AtomicCounterWriter, AtomicCounterReader, AtomicBoolReader};
 use protocol::ProduceEvent;
 use event::{ActorId, FloEventId, EventCounter, FloEvent, Timestamp, time};
-use super::{SharedReaderRefsMut, Operation, OpType, ProduceOperation, ConsumeOperation, PartitionReader, EventFilter, SegmentNum};
+use super::{SharedReaderRefs, SharedReaderRefsMut, Operation, OpType, ProduceOperation, ConsumeOperation, PartitionReader, EventFilter, SegmentNum};
 use super::segment::Segment;
 use super::index::{PartitionIndex, IndexEntry};
 use engine::event_stream::{EventStreamOptions, HighestCounter};
@@ -302,6 +302,10 @@ impl PartitionImpl {
         Ok(())
     }
 
+    pub fn get_shared_reader_refs(&self) -> SharedReaderRefs {
+        self.reader_refs.get_reader_refs()
+    }
+
     fn current_segment_num(&self) -> SegmentNum {
         self.segments.front().map(|s| s.segment_num).unwrap_or(SegmentNum(0))
     }
@@ -322,7 +326,7 @@ impl PartitionImpl {
     fn create_reader(&mut self, connection_id: ConnectionId, filter: EventFilter, start_exclusive: EventCounter) -> PartitionReader {
         let current_segment_num = self.current_segment_num();
         let index_entry: Option<IndexEntry> = self.index.get_next_entry(start_exclusive);
-        let readers = self.reader_refs.get_reader_refs();
+        let readers = self.get_shared_reader_refs();
 
         let current_segment = match index_entry {
             Some(entry) => {

@@ -3,6 +3,7 @@ use protocol::{FloInstanceId, Term};
 use event::EventCounter;
 use engine::ReceivedProtocolMessage;
 use engine::controller::{CallRequestVote, VoteResponse};
+use engine::event_stream::partition::SegmentNum;
 
 #[derive(Debug)]
 pub enum ConnectionHandlerInput {
@@ -28,6 +29,7 @@ pub enum ConnectionControl {
     InitiateOutgoingSystemConnection,
     SendRequestVote(CallRequestVote),
     SendVoteResponse(VoteResponse),
+    SendAppendEntried(CallAppendEntries)
 }
 
 
@@ -43,8 +45,12 @@ impl From<ConnectionControl> for ConnectionHandlerInput {
     }
 }
 
-pub struct SendAppendEntries {
+#[derive(Debug, Clone, PartialEq)]
+pub struct CallAppendEntries {
     pub current_term: Term,
     pub prev_entry_index: EventCounter,
     pub prev_entry_term: Term,
+    pub reader_start_offset: usize,
+    pub reader_start_segment: SegmentNum,
+    pub reader_start_event: EventCounter,
 }
