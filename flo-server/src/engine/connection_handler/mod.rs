@@ -107,6 +107,12 @@ impl ConnectionHandler {
             ProtocolMessage::VoteResponse(response) => {
                 peer_state.vote_response_received(response, common_state)
             }
+            ProtocolMessage::SystemAppendCall(append_entries) => {
+                peer_state.append_entries_received(append_entries, common_state)
+            }
+            ProtocolMessage::ReceiveEvent(event) => {
+                peer_state.event_received(event, common_state)
+            }
             _ => unimplemented!()
         }
     }
@@ -184,12 +190,12 @@ mod test {
     use tokio_core::reactor::Core;
 
     use super::*;
-    use event::ActorId;
+    use event::{ActorId, OwnedFloEvent, FloEventId, time};
     use engine::{SYSTEM_STREAM_NAME, system_stream_name};
     use engine::event_stream::EventStreamRef;
     use engine::event_stream::partition::*;
     use engine::ClientReceiver;
-    use engine::controller::{SystemStreamRef, SharedClusterState, SystemOpType, SystemOperation, CallRequestVote, VoteResponse};
+    use engine::controller::*;
     use atomics::{AtomicCounterWriter, AtomicBoolWriter};
     use test_utils::addr;
 
@@ -230,6 +236,11 @@ mod test {
             };
             // get the response
             subject.handle_incoming_message(ProtocolMessage::PeerAnnounce(response)).unwrap();
+            fixture.assert_sent_to_system_stream(SystemOpType::ConnectionUpgradeToPeer(PeerUpgrade {
+                peer_id,
+                system_primary: None,
+                cluster_members: Vec::new(),
+            }));
             (subject, fixture)
         }
 
@@ -331,6 +342,12 @@ mod test {
             panic!("Expected system op: {:?}, but received: {:?}", expected, unequal_messages);
         }
 
+        fn assert_nothing_sent_to_system_stream(&self) {
+            if let Ok(message) = self.system_receiver.try_recv() {
+                panic!("Expected no messages to be received by the system controller, but received: {:?}", message);
+            }
+        }
+
         fn assert_sent_to_client(&mut self, expected: ProtocolMessage<PersistentEvent>) {
             use tokio_core::reactor::Timeout;
             use futures::future::Either;
@@ -345,39 +362,130 @@ mod test {
                     self.client_receiver = Some(receiver);
                     assert_eq!(Some(expected), message)
                 },
-                Ok(Either::B(_)) => panic!("Timed out on recv with Ok"),
+                Ok(Either::B(_)) => panic!("No message was received before timeout expired"),
                 Err(Either::A(_)) => panic!("Recv err attempting to recv next message, expected: {:?}", expected),
                 Err(Either::B(_)) => panic!("Timout Err")
             }
-
         }
-
     }
-     #[test]
-     fn append_entries_is_sent_without_any_events() {
-         let (mut subject, mut fixture) = Fixture::create_outgoing_peer_connection();
 
-         subject.handle_control(ConnectionControl::SendAppendEntries(CallAppendEntries {
-             current_term: 4,
-             prev_entry_index: 0,
-             prev_entry_term: 0,
-             reader_start_offset: 0,
-             reader_start_segment: SegmentNum::new_unset(),
-             reader_start_event: 0,
-             commit_index: 987, // just to show that this is just a dumb value and not interpreted by the connection handler
-         })).unwrap();
+    #[test]
+    fn receive_event_returns_error_when_no_event_was_expected() {
+        let (mut subject, mut fixture) = Fixture::create_outgoing_peer_connection();
 
-         let expected_id = fixture.instance_id;
-         fixture.assert_sent_to_client(ProtocolMessage::SystemAppendCall(AppendEntriesCall {
-             op_id: 2,
-             leader_id: expected_id,
-             term: 4,
-             prev_entry_term: 0,
-             prev_entry_index: 0,
-             leader_commit_index: 987,
-             entry_count: 0,
-         }));
-     }
+        let event = OwnedFloEvent {
+            id: FloEventId::new(0, 457),
+            timestamp: time::now(),
+            parent_id: None,
+            namespace: "/system/foo".to_owned(),
+            data: vec![1, 2, 3, 4, 5],
+        };
+        let result = subject.handle_incoming_message(ProtocolMessage::ReceiveEvent(event.clone()));
+        assert!(result.is_err());
+
+        fixture.assert_sent_to_client(ProtocolMessage::Error(ErrorMessage {
+            op_id: 0,
+            kind: ErrorKind::InvalidPeerState,
+            description: "No event was expected".to_owned(),
+        }));
+    }
+
+    #[test]
+    fn receiving_append_entries_with_multiple_entries_sends_append_entries_to_system_controller_once_all_events_are_received() {
+        let (mut subject, mut fixture) = Fixture::create_outgoing_peer_connection();
+
+        let sender_id = FloInstanceId::generate_new();
+        let append = ProtocolMessage::SystemAppendCall(AppendEntriesCall {
+            op_id: 2,
+            leader_id: sender_id,
+            term: 4,
+            prev_entry_term: 4,
+            prev_entry_index: 456,
+            leader_commit_index: 458,
+            entry_count: 2,
+        });
+
+        subject.handle_incoming_message(append).unwrap();
+        fixture.assert_nothing_sent_to_system_stream();
+        let event1 = OwnedFloEvent {
+            id: FloEventId::new(0, 457),
+            timestamp: time::now(),
+            parent_id: None,
+            namespace: "/system/foo".to_owned(),
+            data: vec![1, 2, 3, 4, 5],
+        };
+        subject.handle_incoming_message(ProtocolMessage::ReceiveEvent(event1.clone())).unwrap();
+        fixture.assert_nothing_sent_to_system_stream();
+        let event2 = OwnedFloEvent {
+            id: FloEventId::new(0, 457),
+            timestamp: time::now(),
+            parent_id: None,
+            namespace: "/system/foo".to_owned(),
+            data: vec![1, 2, 3, 4, 5],
+        };
+        subject.handle_incoming_message(ProtocolMessage::ReceiveEvent(event2.clone())).unwrap();
+
+        let expected = SystemOpType::AppendEntriesReceived(ReceiveAppendEntries {
+            term: 4,
+            prev_entry_index: 456,
+            prev_entry_term: 4,
+            commit_index: 458,
+            events: vec![event1, event2],
+        });
+        fixture.assert_sent_to_system_stream(expected);
+    }
+
+    #[test]
+    fn receiving_append_entries_with_0_entries_sends_append_entries_to_system_controller() {
+        let (mut subject, mut fixture) = Fixture::create_outgoing_peer_connection();
+
+        let sender_id = FloInstanceId::generate_new();
+        let append = ProtocolMessage::SystemAppendCall(AppendEntriesCall {
+            op_id: 2,
+            leader_id: sender_id,
+            term: 4,
+            prev_entry_term: 4,
+            prev_entry_index: 456,
+            leader_commit_index: 987,
+            entry_count: 0,
+        });
+
+        subject.handle_incoming_message(append).unwrap();
+
+        fixture.assert_sent_to_system_stream(SystemOpType::AppendEntriesReceived(ReceiveAppendEntries {
+            term: 4,
+            prev_entry_index: 456,
+            prev_entry_term: 4,
+            commit_index: 987,
+            events: Vec::new(),
+        }));
+    }
+
+    #[test]
+    fn append_entries_is_sent_without_any_events() {
+        let (mut subject, mut fixture) = Fixture::create_outgoing_peer_connection();
+
+        subject.handle_control(ConnectionControl::SendAppendEntries(CallAppendEntries {
+            current_term: 4,
+            prev_entry_index: 0,
+            prev_entry_term: 0,
+            reader_start_offset: 0,
+            reader_start_segment: SegmentNum::new_unset(),
+            reader_start_event: 0,
+            commit_index: 987, // just to show that this is just a dumb value and not interpreted by the connection handler
+        })).unwrap();
+
+        let expected_id = fixture.instance_id;
+        fixture.assert_sent_to_client(ProtocolMessage::SystemAppendCall(AppendEntriesCall {
+            op_id: 2,
+            leader_id: expected_id,
+            term: 4,
+            prev_entry_term: 0,
+            prev_entry_index: 0,
+            leader_commit_index: 987,
+            entry_count: 0,
+        }));
+    }
 
     #[test]
     fn error_is_returned_when_vote_response_is_unexpected() {

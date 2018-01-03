@@ -1,6 +1,8 @@
 mod peer_follower;
 
 use std::collections::VecDeque;
+
+use event::OwnedFloEvent;
 use protocol::{self, ProtocolMessage, PeerAnnounce, EventStreamStatus, ClusterMember, ErrorMessage, ErrorKind, FloInstanceId};
 use engine::{ReceivedProtocolMessage, ConnectionId};
 use engine::controller::{self, SystemStreamRef, Peer, SystemStreamReader};
@@ -23,6 +25,7 @@ pub struct PeerConnectionState {
     peer_operation_queue: VecDeque<u32>,
     system_partition_reader: Option<SystemStreamReader>,
     this_instance_id: Option<FloInstanceId>,
+    in_progress_append: Option<controller::ReceiveAppendEntries>,
 }
 
 
@@ -35,7 +38,76 @@ impl PeerConnectionState {
             peer_operation_queue: VecDeque::new(),
             system_partition_reader: None,
             this_instance_id: None,
+            in_progress_append: None,
         }
+    }
+
+    pub fn append_entries_received(&mut self, append: protocol::AppendEntriesCall, connection: &mut ConnectionState) -> ConnectionHandlerResult {
+        self.ensure_peer_state(Some(append.op_id), connection)?;
+
+        self.controller_operation_queue.push_back(append.op_id);
+        let event_count = append.entry_count;
+        let controller_message = controller::ReceiveAppendEntries {
+            term: append.term,
+            prev_entry_index: append.prev_entry_index,
+            prev_entry_term: append.prev_entry_term,
+            commit_index: append.leader_commit_index,
+            events: Vec::with_capacity(event_count as usize),
+        };
+
+        if event_count == 0 {
+            let connection_id = connection.connection_id;
+            connection.get_system_stream().append_entries_received(connection_id, controller_message);
+        } else {
+            self.in_progress_append = Some(controller_message);
+        }
+        Ok(())
+    }
+
+    pub fn event_received(&mut self, event: OwnedFloEvent, state: &mut ConnectionState) -> ConnectionHandlerResult {
+        let connection_id = state.connection_id;
+        self.ensure_peer_state(None, state)?;
+        if self.in_progress_append.is_none() {
+            let error_message = ErrorMessage {
+                op_id: 0,
+                kind: ErrorKind::InvalidPeerState,
+                description: "No event was expected".to_owned(),
+            };
+            let _ = state.send_to_client(ProtocolMessage::Error(error_message));
+            Err(format!("Received event for connection_id: {}, when none was expected", connection_id))
+        } else {
+            let receive_complete = {
+                let in_progress = self.in_progress_append.as_mut().unwrap();
+                in_progress.events.push(event);
+                in_progress.events.capacity() == in_progress.events.len()
+            };
+            if receive_complete {
+                let append = self.in_progress_append.take().unwrap();
+                state.get_system_stream().append_entries_received(connection_id, append);
+            }
+            Ok(())
+        }
+    }
+
+    fn ensure_peer_state(&self, op_id: Option<u32>, state: &mut ConnectionState) -> ConnectionHandlerResult {
+        if self.state != State::Peer {
+            let err = ErrorMessage {
+                op_id: op_id.unwrap_or(0),
+                kind: ErrorKind::InvalidPeerState,
+                description: "No PeerAnnounce message has been received so peer operations are invalid".to_owned(),
+            };
+            // ignore whatever send error might be raised here, since we're returning an error anyway, which will close the connection
+            let _ = state.send_to_client(ProtocolMessage::Error(err));
+            Err(format!("Expected connection to be in {:?} state, but was {:?}", State::Peer, self.state))
+        } else {
+            Ok(())
+        }
+    }
+
+    fn get_remaining_expected_events(&self) -> usize {
+        self.in_progress_append.as_ref().map(|append| {
+            append.events.capacity() - append.events.len()
+        }).unwrap_or(0)
     }
 
     pub fn send_append_entries(&mut self, append: CallAppendEntries, state: &mut ConnectionState) -> ConnectionHandlerResult {
@@ -91,8 +163,8 @@ impl PeerConnectionState {
 
     pub fn vote_response_received(&mut self, response: protocol::RequestVoteResponse, state: &mut ConnectionState) -> ConnectionHandlerResult {
         let connection_id = state.connection_id;
+        self.ensure_peer_state(Some(response.op_id), state)?;
         let expected_op_id = self.peer_operation_queue.pop_back();
-
 
         if Some(response.op_id) == expected_op_id {
             let protocol::RequestVoteResponse { op_id, term, vote_granted } = response;

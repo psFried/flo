@@ -3,7 +3,7 @@ use std::time::Instant;
 
 use futures::sync::mpsc::UnboundedSender;
 
-use event::EventCounter;
+use event::{EventCounter, OwnedFloEvent};
 use protocol::{FloInstanceId, Term};
 use engine::event_stream::partition::{self, Operation};
 use engine::connection_handler::{ConnectionControl, ConnectionControlSender};
@@ -37,6 +37,15 @@ impl PartialEq for ConnectionRef {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReceiveAppendEntries {
+    pub term: Term,
+    pub prev_entry_index: EventCounter,
+    pub prev_entry_term: Term,
+    pub commit_index: EventCounter,
+    pub events: Vec<OwnedFloEvent>,
+}
+
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize)]
 pub struct Peer {
     #[serde(with = "InstanceIdRemote")]
@@ -62,6 +71,7 @@ pub enum SystemOpType {
     OutgoingConnectionFailed(SocketAddr),
     RequestVote(CallRequestVote),
     VoteResponseReceived(VoteResponse),
+    AppendEntriesReceived(ReceiveAppendEntries)
 }
 
 impl SystemOpType {
@@ -81,6 +91,10 @@ pub struct SystemOperation {
 }
 
 impl SystemOperation {
+
+    pub fn append_entries_received(connection_id: ConnectionId, append: ReceiveAppendEntries) -> SystemOperation {
+        SystemOperation::new(connection_id, SystemOpType::AppendEntriesReceived(append))
+    }
 
     pub fn vote_response_received(connection_id: ConnectionId, response: VoteResponse) -> SystemOperation {
         SystemOperation::new(connection_id, SystemOpType::VoteResponseReceived(response))
