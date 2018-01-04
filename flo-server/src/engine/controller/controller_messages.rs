@@ -46,6 +46,12 @@ pub struct ReceiveAppendEntries {
     pub events: Vec<OwnedFloEvent>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct AppendEntriesResponse {
+    pub term: Term,
+    pub success: bool,
+}
+
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize)]
 pub struct Peer {
     #[serde(with = "InstanceIdRemote")]
@@ -69,9 +75,11 @@ pub enum SystemOpType {
     ConnectionUpgradeToPeer(PeerUpgrade),
     ConnectionClosed,
     OutgoingConnectionFailed(SocketAddr),
+
     RequestVote(CallRequestVote),
     VoteResponseReceived(VoteResponse),
-    AppendEntriesReceived(ReceiveAppendEntries)
+    AppendEntriesReceived(ReceiveAppendEntries),
+    AppendEntriesResponseReceived(AppendEntriesResponse),
 }
 
 impl SystemOpType {
@@ -91,6 +99,10 @@ pub struct SystemOperation {
 }
 
 impl SystemOperation {
+
+    pub fn append_entries_response_received(connection_id: ConnectionId, response: AppendEntriesResponse) -> SystemOperation {
+        SystemOperation::new(connection_id, SystemOpType::AppendEntriesResponseReceived(response))
+    }
 
     pub fn append_entries_received(connection_id: ConnectionId, append: ReceiveAppendEntries) -> SystemOperation {
         SystemOperation::new(connection_id, SystemOpType::AppendEntriesReceived(append))

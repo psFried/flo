@@ -42,6 +42,34 @@ impl PeerConnectionState {
         }
     }
 
+    pub fn append_entries_response_received(&mut self, response: protocol::AppendEntriesResponse, state: &mut ConnectionState) -> ConnectionHandlerResult {
+        let op_id = self.peer_operation_queue.pop_front().ok_or_else(|| {
+            "Received AppendEntriesResponse but no response was expected".to_owned()
+        })?;
+        if op_id != response.op_id {
+            return Err(format!("Expected AppendEntriesResponse with op_id: {}, but received: {:?}", op_id, response));
+        }
+        let controller_message = controller::AppendEntriesResponse {
+            term: response.term,
+            success: response.success,
+        };
+        let connection_id = state.connection_id;
+        state.get_system_stream().append_entries_response_received(connection_id, controller_message);
+        Ok(())
+    }
+
+    pub fn send_append_entries_response(&mut self, response: controller::AppendEntriesResponse, state: &mut ConnectionState) -> ConnectionHandlerResult {
+        let op_id = self.controller_operation_queue.pop_front().ok_or_else(|| {
+            "send_append_entries_response was called but there was no pending operation".to_owned()
+        })?;
+        let protocol_message = protocol::AppendEntriesResponse {
+            op_id,
+            term: response.term,
+            success: response.success,
+        };
+        state.send_to_client(ProtocolMessage::SystemAppendResponse(protocol_message))
+    }
+
     pub fn append_entries_received(&mut self, append: protocol::AppendEntriesCall, connection: &mut ConnectionState) -> ConnectionHandlerResult {
         self.ensure_peer_state(Some(append.op_id), connection)?;
 
@@ -113,6 +141,7 @@ impl PeerConnectionState {
     pub fn send_append_entries(&mut self, append: CallAppendEntries, state: &mut ConnectionState) -> ConnectionHandlerResult {
         let connection_id = state.connection_id;
         let op_id = self.next_op_id();
+        self.peer_operation_queue.push_back(op_id);
         let this_instance_id = self.get_this_instance_id(state);
         let CallAppendEntries {current_term, prev_entry_index, prev_entry_term,
             reader_start_offset, reader_start_segment, reader_start_event, commit_index} = append;

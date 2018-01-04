@@ -26,7 +26,7 @@ use self::cluster_state::{ClusterManager, ConsensusProcessor};
 pub use self::initialization::{start_controller, ControllerOptions, ClusterOptions};
 pub use self::system_stream::SystemStreamRef;
 pub use self::system_reader::SystemStreamReader;
-pub use self::controller_messages::{SystemOperation, SystemOpType, ConnectionRef, Peer, PeerUpgrade, CallRequestVote, VoteResponse, ReceiveAppendEntries};
+pub use self::controller_messages::*;
 pub use self::cluster_state::{SharedClusterState, ClusterStateReader};
 
 pub type SystemPartitionSender = ::std::sync::mpsc::Sender<SystemOperation>;

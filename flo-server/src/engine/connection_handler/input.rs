@@ -2,7 +2,7 @@
 use protocol::{FloInstanceId, Term};
 use event::EventCounter;
 use engine::ReceivedProtocolMessage;
-use engine::controller::{CallRequestVote, VoteResponse};
+use engine::controller::{CallRequestVote, VoteResponse, AppendEntriesResponse};
 use engine::event_stream::partition::SegmentNum;
 
 #[derive(Debug)]
@@ -29,7 +29,8 @@ pub enum ConnectionControl {
     InitiateOutgoingSystemConnection,
     SendRequestVote(CallRequestVote),
     SendVoteResponse(VoteResponse),
-    SendAppendEntries(CallAppendEntries)
+    SendAppendEntries(CallAppendEntries),
+    SendAppendEntriesResponse(AppendEntriesResponse),
 }
 
 

@@ -406,7 +406,6 @@ mod test {
     fn serde_append_entries_response() {
         let response = AppendEntriesResponse {
             op_id: 45,
-            from_peer: FloInstanceId::generate_new(),
             term: 345,
             success: false,
         };

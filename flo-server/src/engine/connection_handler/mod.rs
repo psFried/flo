@@ -70,6 +70,9 @@ impl ConnectionHandler {
             ConnectionControl::SendAppendEntries(append) => {
                 peer_state.send_append_entries(append, common_state)
             }
+            ConnectionControl::SendAppendEntriesResponse(response) => {
+                peer_state.send_append_entries_response(response, common_state)
+            }
             _ => unimplemented!()
         }
     }
@@ -112,6 +115,9 @@ impl ConnectionHandler {
             }
             ProtocolMessage::ReceiveEvent(event) => {
                 peer_state.event_received(event, common_state)
+            }
+            ProtocolMessage::SystemAppendResponse(response) => {
+                peer_state.append_entries_response_received(response, common_state)
             }
             _ => unimplemented!()
         }
@@ -190,11 +196,13 @@ mod test {
     use tokio_core::reactor::Core;
 
     use super::*;
+    use protocol;
     use event::{ActorId, OwnedFloEvent, FloEventId, time};
     use engine::{SYSTEM_STREAM_NAME, system_stream_name};
     use engine::event_stream::EventStreamRef;
     use engine::event_stream::partition::*;
     use engine::ClientReceiver;
+    use engine::controller;
     use engine::controller::*;
     use atomics::{AtomicCounterWriter, AtomicBoolWriter};
     use test_utils::addr;
@@ -436,7 +444,7 @@ mod test {
     }
 
     #[test]
-    fn receiving_append_entries_with_0_entries_sends_append_entries_to_system_controller() {
+    fn receiving_append_entries_with_0_entries_sends_append_entries_to_system_controller_and_response_is_sent_out() {
         let (mut subject, mut fixture) = Fixture::create_outgoing_peer_connection();
 
         let sender_id = FloInstanceId::generate_new();
@@ -459,10 +467,22 @@ mod test {
             commit_index: 987,
             events: Vec::new(),
         }));
+
+        // now send the response to the client
+        subject.handle_control(ConnectionControl::SendAppendEntriesResponse(controller::AppendEntriesResponse {
+            term: 11,
+            success: false,
+        })).unwrap();
+
+        fixture.assert_sent_to_client(ProtocolMessage::SystemAppendResponse(protocol::AppendEntriesResponse {
+            op_id: 2,
+            term: 11,
+            success: false,
+        }));
     }
 
     #[test]
-    fn append_entries_is_sent_without_any_events() {
+    fn append_entries_is_sent_without_any_events_and_response_is_received() {
         let (mut subject, mut fixture) = Fixture::create_outgoing_peer_connection();
 
         subject.handle_control(ConnectionControl::SendAppendEntries(CallAppendEntries {
@@ -484,6 +504,17 @@ mod test {
             prev_entry_index: 0,
             leader_commit_index: 987,
             entry_count: 0,
+        }));
+
+        // now receive the response
+        subject.handle_incoming_message(ProtocolMessage::SystemAppendResponse(protocol::AppendEntriesResponse {
+            op_id: 2,
+            term: 7,
+            success: false,
+        })).unwrap();
+        fixture.assert_sent_to_system_stream(SystemOpType::AppendEntriesResponseReceived(controller::AppendEntriesResponse {
+            term: 7,
+            success: false,
         }));
     }
 

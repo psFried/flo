@@ -56,7 +56,6 @@ impl AppendEntriesCall {
 #[derive(Debug, PartialEq, Clone)]
 pub struct AppendEntriesResponse {
     pub op_id: u32,
-    pub from_peer: FloInstanceId,
     pub term: Term,
     pub success: bool,
 }
@@ -65,7 +64,6 @@ pub fn serialize_append_response(response: &AppendEntriesResponse, buf: &mut [u8
     Serializer::new(buf)
             .write_u8(APPEND_ENTRIES_RESPONSE_HEADER)
             .write_u32(response.op_id)
-            .write(&response.from_peer)
             .write_u64(response.term)
             .write_bool(response.success)
             .finish()
@@ -74,12 +72,11 @@ pub fn serialize_append_response(response: &AppendEntriesResponse, buf: &mut [u8
 named!{pub parse_append_entries_response<ProtocolMessage<OwnedFloEvent>>, do_parse!(
     tag!(&[APPEND_ENTRIES_RESPONSE_HEADER]) >>
     op_id: be_u32                           >>
-    from_peer: parse_flo_instance_id        >>
     term: be_u64                            >>
     success: map!(be_u8, |val| { val == 1 }) >>
 
     ( ProtocolMessage::SystemAppendResponse(AppendEntriesResponse {
-        op_id, from_peer, term, success,
+        op_id, term, success,
     }) )
 )}
 
