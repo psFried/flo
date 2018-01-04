@@ -261,7 +261,7 @@ mod test {
 
         subject.append(&input).unwrap();
         let result = reader.read_next().expect("reader returned none").expect("failed to read event");
-        assert_eq!(input, result.to_owned());
+        assert_eq!(input, result.to_owned_event());
     }
 
     #[test]
@@ -306,7 +306,7 @@ mod test {
 
         subject.append(&input).unwrap();
         let result = reader.read_next().expect("reader returned none").expect("failed to read event");
-        assert_eq!(input, result.to_owned());
+        assert_eq!(input, result.to_owned_event());
 
         let len = PersistentEvent::get_repr_length(&input);
         assert_eq!(len, PersistentEvent::get_repr_length(&result));
@@ -339,7 +339,7 @@ mod test {
         let off_3 = subject.append(&input3).unwrap().expect("write returned none");
 
         let read_all = subject.reader(0)
-            .map(|result| result.expect("failed to read event").to_owned())
+            .map(|result| result.expect("failed to read event").to_owned_event())
             .collect::<Vec<OwnedFloEvent>>();
         let expected = vec![input1.clone(), input2.clone(), input3.clone()];
         assert_eq!(expected, read_all);
@@ -347,10 +347,10 @@ mod test {
         let read_2 = subject.reader(off_2).next().unwrap().expect("failed to read event 2");
         let read2_offset = read_2.file_offset();
         assert_eq!(off_2, read2_offset);
-        assert_eq!(input2, read_2.to_owned());
+        assert_eq!(input2, read_2.to_owned_event());
 
         let read_3 = subject.reader(off_3).next().unwrap().expect("failed to read event 3");
-        assert_eq!(input3, read_3.to_owned());
+        assert_eq!(input3, read_3.to_owned_event());
     }
 
     fn assert_read_err<F: Fn(&mut [u8])>(expected_description: &str, modify_buffer_fun: F) {

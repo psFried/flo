@@ -5,7 +5,11 @@ use engine::ConnectionId;
 use engine::event_stream::partition::{PartitionReader, SegmentNum, SharedReaderRefs, EventFilter, PersistentEvent};
 use atomics::AtomicCounterReader;
 
-const SYSTEM_READER_BATCH_SIZE: usize = 8;
+/// The max number of events that will be sent with a single AppendEntries call.
+/// This is currently a bit hacky. When the controller requests an AppendEntries to be sent, it does not say how many events
+/// should be included. The controller just assumes that all available events will be sent, to a maximum of this value.
+/// A better plan may be to have the controller simply tell the ConnectionHandler how many events to send.
+pub const SYSTEM_READER_BATCH_SIZE: usize = 8;
 
 #[derive(Debug)]
 pub struct SystemStreamReader {

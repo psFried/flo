@@ -7,7 +7,7 @@ use engine::event_stream::partition::segment::mmap::{MmapRef};
 
 
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PersistentEvent {
     id: FloEventId,
     file_offset: usize,
@@ -163,7 +163,7 @@ impl FloEvent for PersistentEvent {
         self.as_buf(48 + ns_len, data_len)
     }
 
-    fn to_owned(&self) -> OwnedFloEvent {
+    fn to_owned_event(&self) -> OwnedFloEvent {
         let id = *self.id();
         let parent_id = self.parent_id();
         let timestamp = self.timestamp();

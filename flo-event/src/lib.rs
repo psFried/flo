@@ -203,7 +203,7 @@ pub trait FloEvent: Debug {
     /// Returns the arbitrary binary data associated with this event.
     fn data(&self) -> &[u8];
     /// Converts this event into an `OwnedFloEvent`, cloning it in the process.
-    fn to_owned(&self) -> OwnedFloEvent {
+    fn to_owned_event(&self) -> OwnedFloEvent {
         let id = *self.id();
         let data = self.data().to_owned();
         OwnedFloEvent {
@@ -233,7 +233,7 @@ impl <T> FloEvent for T where T: AsRef<OwnedFloEvent> + Debug {
         self.as_ref().data()
     }
 
-    fn to_owned(&self) -> OwnedFloEvent {
+    fn to_owned_event(&self) -> OwnedFloEvent {
         self.as_ref().clone()
     }
 
@@ -286,7 +286,7 @@ impl FloEvent for OwnedFloEvent {
         &self.data
     }
 
-    fn to_owned(&self) -> OwnedFloEvent {
+    fn to_owned_event(&self) -> OwnedFloEvent {
         self.clone()
     }
 

@@ -14,7 +14,7 @@ use engine::connection_handler::ConnectionControl;
 use engine::controller::{CallRequestVote, VoteResponse};
 use protocol::{FloInstanceId, Term};
 use atomics::{AtomicBoolWriter, AtomicBoolReader};
-use super::{ClusterOptions, ConnectionRef, Peer, PeerUpgrade};
+use super::{ClusterOptions, ConnectionRef, Peer, PeerUpgrade, AppendEntriesResponse, ReceiveAppendEntries};
 use super::peer_connection::{PeerSystemConnection, OutgoingConnectionCreator, OutgoingConnectionCreatorImpl};
 use self::peer_connections::{PeerConnectionManager, PeerConnections};
 
@@ -33,30 +33,12 @@ pub trait ConsensusProcessor: Send {
     fn is_primary(&self) -> bool;
     fn peer_connection_established(&mut self, upgrade: PeerUpgrade, connection_id: ConnectionId, all_connections: &HashMap<ConnectionId, ConnectionRef>);
     fn outgoing_connection_failed(&mut self, connection_id: ConnectionId, address: SocketAddr);
+
     fn request_vote_received(&mut self, from: ConnectionId, request: CallRequestVote);
     fn vote_response_received(&mut self, now: Instant, from: ConnectionId, response: VoteResponse);
-}
 
-#[derive(Debug)]
-pub struct NoOpConsensusProcessor;
-
-impl ConsensusProcessor for NoOpConsensusProcessor {
-    fn peer_connection_established(&mut self, upgrade: PeerUpgrade, connection_id: ConnectionId, all_connections: &HashMap<ConnectionId, ConnectionRef>) {
-    }
-    fn outgoing_connection_failed(&mut self, connection_id: ConnectionId, address: SocketAddr) {
-        panic!("invalid operation for a NoOpConsensusProcessor. This should not happen");
-    }
-    fn request_vote_received(&mut self, from: ConnectionId, request: CallRequestVote) {
-
-    }
-    fn tick(&mut self, now: Instant, all_connections: &mut HashMap<ConnectionId, ConnectionRef>) {
-    }
-    fn is_primary(&self) -> bool {
-        true
-    }
-    fn vote_response_received(&mut self, now: Instant, from: ConnectionId, response: VoteResponse) {
-
-    }
+    fn append_entries_received(&mut self, append: ReceiveAppendEntries);
+    fn append_entries_response_received(&mut self, connection_id: ConnectionId, response: AppendEntriesResponse);
 }
 
 #[derive(Debug)]
@@ -299,6 +281,14 @@ impl ConsensusProcessor for ClusterManager {
     fn is_primary(&self) -> bool {
         self.state == State::Primary
     }
+
+    fn append_entries_received(&mut self, append: ReceiveAppendEntries) {
+        unimplemented!()
+    }
+
+    fn append_entries_response_received(&mut self, connection_id: ConnectionId, response: AppendEntriesResponse) {
+        unimplemented!()
+    }
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -365,6 +355,37 @@ mod test {
     use test_utils::{addr, expect_future_resolved};
     use engine::controller::cluster_state::peer_connections::mock::{MockPeerConnectionManager, Invocation};
     use engine::controller::controller_messages::mock::mock_connection_ref;
+
+    #[test]
+    fn append_entries_is_sent_on_tick_when_state_is_primary() {
+        let start = Instant::now();
+        let temp_dir = TempDir::new("cluster_state_test").unwrap();
+        let connection_manager = MockPeerConnectionManager::new();
+        let peer_1 = Peer {
+            id: FloInstanceId::generate_new(),
+            address: addr("111.222.0.1:1000")
+        };
+        let peer_2 = Peer {
+            id: FloInstanceId::generate_new(),
+            address: addr("111.222.0.2:2000")
+        };
+        let peer_1_connection = 1;
+        let peer_2_connection = 2;
+        connection_manager.stub_peer_connection(peer_1_connection, peer_1.id);
+        connection_manager.stub_peer_connection(peer_2_connection, peer_2.id);
+
+        let mut subject = create_cluster_manager(vec![peer_1.address, peer_2.address], temp_dir.path(), connection_manager.boxed_ref());
+
+        subject.persistent.modify(|state| {
+            state.cluster_members.insert(peer_1.clone());
+            state.cluster_members.insert(peer_2.clone());
+            state.current_term = 5;
+        }).unwrap();
+        subject.last_applied = 99;
+        subject.last_applied_term = 4;
+        subject.state = State::Voted;
+        subject.last_heartbeat = start;
+    }
 
     #[test]
     fn new_election_is_started_on_tick_when_current_election_goes_beyond_timeout() {
@@ -970,5 +991,36 @@ mod test {
                 granted: expectation.granted,
             })
         });
+    }
+}
+
+/// Used when the server is running in standalone mode
+#[derive(Debug)]
+pub struct NoOpConsensusProcessor;
+
+// TODO: reasonable and consistent behavior for calls into NoOpConsensusProcessor that should never actually happen
+impl ConsensusProcessor for NoOpConsensusProcessor {
+    fn peer_connection_established(&mut self, upgrade: PeerUpgrade, connection_id: ConnectionId, all_connections: &HashMap<ConnectionId, ConnectionRef>) {
+    }
+    fn outgoing_connection_failed(&mut self, connection_id: ConnectionId, address: SocketAddr) {
+        panic!("invalid operation for a NoOpConsensusProcessor. This should not happen");
+    }
+    fn request_vote_received(&mut self, from: ConnectionId, request: CallRequestVote) {
+
+    }
+    fn tick(&mut self, now: Instant, all_connections: &mut HashMap<ConnectionId, ConnectionRef>) {
+    }
+    fn is_primary(&self) -> bool {
+        true
+    }
+    fn vote_response_received(&mut self, now: Instant, from: ConnectionId, response: VoteResponse) {
+
+    }
+    fn append_entries_received(&mut self, append: ReceiveAppendEntries) {
+        unimplemented!()
+    }
+
+    fn append_entries_response_received(&mut self, connection_id: ConnectionId, response: AppendEntriesResponse) {
+        unimplemented!()
     }
 }

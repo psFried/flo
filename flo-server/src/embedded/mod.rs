@@ -55,7 +55,7 @@ impl EmbeddedFloServer {
 // probably figure out a way to avoid exposing the generic types via the public api. Seems like a 'later' problem
 fn message_to_owned(server_msg: SendProtocolMessage) -> ClientProtocolMessage {
     match server_msg {
-        ProtocolMessage::ReceiveEvent(event) => ProtocolMessage::ReceiveEvent(event.to_owned()),
+        ProtocolMessage::ReceiveEvent(event) => ProtocolMessage::ReceiveEvent(event.to_owned_event()),
         ProtocolMessage::StopConsuming(op) => ProtocolMessage::StopConsuming(op),
         ProtocolMessage::AwaitingEvents => ProtocolMessage::AwaitingEvents,
         ProtocolMessage::Error(op) => ProtocolMessage::Error(op),
