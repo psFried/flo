@@ -1,5 +1,6 @@
 pub mod cluster_state;
 pub mod tick_generator;
+pub mod system_event;
 mod system_stream;
 mod initialization;
 mod controller_messages;
