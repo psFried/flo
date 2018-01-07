@@ -1,8 +1,9 @@
 use std::io;
-use std::vec::Drain;
 
+use event::FloEvent;
 use engine::ConnectionId;
 use engine::event_stream::partition::{PartitionReader, SegmentNum, SharedReaderRefs, EventFilter, PersistentEvent};
+use engine::controller::system_event::SystemEvent;
 use atomics::AtomicCounterReader;
 
 /// The max number of events that will be sent with a single AppendEntries call.
@@ -14,16 +15,13 @@ pub const SYSTEM_READER_BATCH_SIZE: usize = 8;
 #[derive(Debug)]
 pub struct SystemStreamReader {
     inner: PartitionReader,
-    event_buffer: Vec<PersistentEvent>,
 }
 
 impl SystemStreamReader {
     pub fn new(connection_id: ConnectionId, shared_refs: SharedReaderRefs, commit_index_reader: AtomicCounterReader) -> SystemStreamReader {
-        use engine::event_stream::partition::EventFilter;
         let part = PartitionReader::new(connection_id, 0, EventFilter::All, None, shared_refs, commit_index_reader);
         SystemStreamReader {
             inner: part,
-            event_buffer: Vec::with_capacity(SYSTEM_READER_BATCH_SIZE),
         }
     }
 
@@ -32,20 +30,22 @@ impl SystemStreamReader {
         self.inner.set_to(segment, offset)
     }
 
-    pub fn fill_buffer(&mut self) -> io::Result<usize> {
-        while self.event_buffer.len() < SYSTEM_READER_BATCH_SIZE {
+    pub fn fill_buffer(&mut self, event_buffer: &mut Vec<SystemEvent<PersistentEvent>>) -> io::Result<usize> {
+        event_buffer.clear();
+        while event_buffer.len() < SYSTEM_READER_BATCH_SIZE {
             let next = self.inner.next();
             if let Some(next_result) = next {
                 let event = next_result?; // return if read failed
-                self.event_buffer.push(event);
+                let event_id = *event.id();
+                let system_event = SystemEvent::from_event(event).map_err(|des_err| {
+                    error!("Error deserializing system event: {}, err: {:?}", event_id, des_err);
+                    io::Error::new(io::ErrorKind::InvalidData, des_err)
+                })?;
+                event_buffer.push(system_event);
             } else {
                 break;
             }
         }
-        Ok(self.event_buffer.len())
-    }
-
-    pub fn drain(&mut self) -> Drain<PersistentEvent> {
-        self.event_buffer.drain(..)
+        Ok(event_buffer.len())
     }
 }

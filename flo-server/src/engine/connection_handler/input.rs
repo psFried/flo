@@ -49,10 +49,15 @@ impl From<ConnectionControl> for ConnectionHandlerInput {
 #[derive(Debug, Clone, PartialEq)]
 pub struct CallAppendEntries {
     pub current_term: Term,
+    pub commit_index: EventCounter,
+    pub reader_start_position: Option<AppendEntriesStart>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AppendEntriesStart {
     pub prev_entry_index: EventCounter,
     pub prev_entry_term: Term,
     pub reader_start_offset: usize,
     pub reader_start_segment: SegmentNum,
     pub reader_start_event: EventCounter,
-    pub commit_index: EventCounter,
 }

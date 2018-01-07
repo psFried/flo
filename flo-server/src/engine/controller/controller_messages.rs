@@ -49,7 +49,7 @@ pub struct ReceiveAppendEntries {
 #[derive(Debug, Clone, PartialEq)]
 pub struct AppendEntriesResponse {
     pub term: Term,
-    pub success: bool,
+    pub success: Option<EventCounter>,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize)]

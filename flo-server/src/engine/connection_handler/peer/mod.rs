@@ -1,13 +1,16 @@
 mod peer_follower;
+mod system_read_wrapper;
 
 use std::collections::VecDeque;
 
-use event::OwnedFloEvent;
-use protocol::{self, ProtocolMessage, PeerAnnounce, EventStreamStatus, ClusterMember, ErrorMessage, ErrorKind, FloInstanceId};
+use event::{EventCounter, OwnedFloEvent, FloEvent};
+use protocol::{self, ProtocolMessage, PeerAnnounce, EventStreamStatus, ClusterMember, ErrorMessage, ErrorKind, FloInstanceId, Term};
 use engine::{ReceivedProtocolMessage, ConnectionId};
-use engine::controller::{self, SystemStreamRef, Peer, SystemStreamReader};
+use engine::controller::{self, SystemStreamRef, Peer, SystemEvent, SystemStreamReader, SYSTEM_READER_BATCH_SIZE};
+use engine::event_stream::partition::PersistentEvent;
 use super::connection_state::ConnectionState;
-use super::{ConnectionHandlerResult, CallAppendEntries};
+use super::{ConnectionHandlerResult, CallAppendEntries, AppendEntriesStart};
+use self::system_read_wrapper::SystemReaderWrapper;
 
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -23,7 +26,7 @@ pub struct PeerConnectionState {
     current_op_id: u32,
     controller_operation_queue: VecDeque<u32>,
     peer_operation_queue: VecDeque<u32>,
-    system_partition_reader: Option<SystemStreamReader>,
+    system_partition_reader: Option<SystemReaderWrapper>,
     this_instance_id: Option<FloInstanceId>,
     in_progress_append: Option<controller::ReceiveAppendEntries>,
 }
@@ -49,9 +52,16 @@ impl PeerConnectionState {
         if op_id != response.op_id {
             return Err(format!("Expected AppendEntriesResponse with op_id: {}, but received: {:?}", op_id, response));
         }
+        let success = if response.success {
+            self.system_partition_reader.as_mut().map(|reader| {
+                reader.append_acknowledged()
+            })
+        } else {
+            None
+        };
         let controller_message = controller::AppendEntriesResponse {
             term: response.term,
-            success: response.success,
+            success,
         };
         let connection_id = state.connection_id;
         state.get_system_stream().append_entries_response_received(connection_id, controller_message);
@@ -65,7 +75,7 @@ impl PeerConnectionState {
         let protocol_message = protocol::AppendEntriesResponse {
             op_id,
             term: response.term,
-            success: response.success,
+            success: response.success.is_some(),
         };
         state.send_to_client(ProtocolMessage::SystemAppendResponse(protocol_message))
     }
@@ -117,10 +127,10 @@ impl PeerConnectionState {
         }
     }
 
-    fn ensure_peer_state(&self, op_id: Option<u32>, state: &mut ConnectionState) -> ConnectionHandlerResult {
+    fn ensure_peer_state(&self, incoming_message_op_id: Option<u32>, state: &mut ConnectionState) -> ConnectionHandlerResult {
         if self.state != State::Peer {
             let err = ErrorMessage {
-                op_id: op_id.unwrap_or(0),
+                op_id: incoming_message_op_id.unwrap_or(0),
                 kind: ErrorKind::InvalidPeerState,
                 description: "No PeerAnnounce message has been received so peer operations are invalid".to_owned(),
             };
@@ -132,54 +142,17 @@ impl PeerConnectionState {
         }
     }
 
-    fn get_remaining_expected_events(&self) -> usize {
-        self.in_progress_append.as_ref().map(|append| {
-            append.events.capacity() - append.events.len()
-        }).unwrap_or(0)
-    }
-
     pub fn send_append_entries(&mut self, append: CallAppendEntries, state: &mut ConnectionState) -> ConnectionHandlerResult {
-        let connection_id = state.connection_id;
         let op_id = self.next_op_id();
         self.peer_operation_queue.push_back(op_id);
         let this_instance_id = self.get_this_instance_id(state);
-        let CallAppendEntries {current_term, prev_entry_index, prev_entry_term,
-            reader_start_offset, reader_start_segment, reader_start_event, commit_index} = append;
 
         if self.system_partition_reader.is_none() {
-            let reader = state.get_system_stream().create_system_stream_reader(connection_id);
-            self.system_partition_reader = Some(reader);
+            self.system_partition_reader = Some(SystemReaderWrapper::new(state));
         }
         let reader = self.system_partition_reader.as_mut().unwrap();
 
-        let num_events = if reader_start_segment.is_set() {
-            reader.set_to(reader_start_segment, reader_start_offset).map_err(|io_err| {
-                format!("Failed to set position of system stream reader for connection_id: {} - {:?}", connection_id ,io_err)
-            })?; // just give up
-
-            reader.fill_buffer().map_err(|io_err| {
-                format!("Failed to rea events for AppendEntries for connection_id: {}, error: {:?}", connection_id, io_err)
-            })? // give up on error
-        } else {
-            0
-        };
-
-        let append = protocol::AppendEntriesCall {
-            op_id,
-            leader_id: this_instance_id,
-            term: current_term,
-            prev_entry_term,
-            prev_entry_index,
-            leader_commit_index: commit_index,
-            entry_count: num_events as u32,
-        };
-        state.send_to_client(ProtocolMessage::SystemAppendCall(append))?;
-        if num_events > 0 {
-            for event in reader.drain() {
-                state.send_to_client(ProtocolMessage::ReceiveEvent(event))?;
-            }
-        }
-        Ok(())
+        reader.send_append_entries(op_id, this_instance_id, append, state)
     }
 
     fn get_this_instance_id(&mut self, state: &mut ConnectionState) -> FloInstanceId {

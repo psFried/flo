@@ -26,7 +26,8 @@ use self::cluster_state::{ClusterManager, ConsensusProcessor};
 
 pub use self::initialization::{start_controller, ControllerOptions, ClusterOptions};
 pub use self::system_stream::SystemStreamRef;
-pub use self::system_reader::SystemStreamReader;
+pub use self::system_event::{SystemEvent, SystemEventData};
+pub use self::system_reader::{SystemStreamReader, SYSTEM_READER_BATCH_SIZE};
 pub use self::controller_messages::*;
 pub use self::cluster_state::{SharedClusterState, ClusterStateReader};
 

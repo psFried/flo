@@ -2,21 +2,31 @@ use rmp_serde::decode::Error;
 
 use protocol::Term;
 use event::{FloEvent, FloEventId, OwnedFloEvent, EventCounter, ActorId, Timestamp, time};
+use engine::event_stream::partition::PersistentEvent;
 
 #[derive(Debug, PartialEq)]
 pub struct SystemEvent<E: FloEvent> {
+    term: Term,
     wrapped: E,
 }
 
 impl <E: FloEvent> SystemEvent<E> {
 
     pub fn from_event(event: E) -> Result<SystemEvent<E>, Error> {
-        {
-            let _ = ::rmp_serde::decode::from_slice::<SystemEventData>(event.data())?;
-        }
+        let term = {
+
+            let data = ::rmp_serde::decode::from_slice::<SystemEventData>(event.data())?;
+            data.term
+
+        };
         Ok(SystemEvent{
+            term,
             wrapped: event
         })
+    }
+
+    pub fn term(&self) -> Term {
+        self.term
     }
 
     pub fn system_data(&self) -> Result<SystemEventData, Error> {
@@ -24,13 +34,21 @@ impl <E: FloEvent> SystemEvent<E> {
     }
 }
 
+impl Into<PersistentEvent> for SystemEvent<PersistentEvent> {
+    fn into(self) -> PersistentEvent {
+        self.wrapped
+    }
+}
+
 
 impl SystemEvent<OwnedFloEvent> {
     pub fn new(id: FloEventId, parent: Option<FloEventId>, namespace: String, time: Timestamp, data: &SystemEventData) -> SystemEvent<OwnedFloEvent> {
+        let term = data.term;
         // TODO: I feel like this is probably a safe unwrap, but might be good to double check
         let data = ::rmp_serde::to_vec(data).unwrap();
         let event = OwnedFloEvent::new(id, parent, time, namespace, data);
         SystemEvent {
+            term,
             wrapped: event
         }
     }

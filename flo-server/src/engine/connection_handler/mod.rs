@@ -18,7 +18,7 @@ use self::consumer::ConsumerConnectionState;
 use self::producer::ProducerConnectionState;
 use self::peer::PeerConnectionState;
 
-pub use self::input::{ConnectionHandlerInput, ConnectionControl, CallAppendEntries};
+pub use self::input::{ConnectionHandlerInput, ConnectionControl, CallAppendEntries, AppendEntriesStart};
 
 pub type ConnectionControlSender = ::futures::sync::mpsc::UnboundedSender<ConnectionControl>;
 pub type ConnectionControlReceiver = ::futures::sync::mpsc::UnboundedReceiver<ConnectionControl>;
@@ -471,7 +471,7 @@ mod test {
         // now send the response to the client
         subject.handle_control(ConnectionControl::SendAppendEntriesResponse(controller::AppendEntriesResponse {
             term: 11,
-            success: false,
+            success: None,
         })).unwrap();
 
         fixture.assert_sent_to_client(ProtocolMessage::SystemAppendResponse(protocol::AppendEntriesResponse {
@@ -487,12 +487,8 @@ mod test {
 
         subject.handle_control(ConnectionControl::SendAppendEntries(CallAppendEntries {
             current_term: 4,
-            prev_entry_index: 0,
-            prev_entry_term: 0,
-            reader_start_offset: 0,
-            reader_start_segment: SegmentNum::new_unset(),
-            reader_start_event: 0,
             commit_index: 987, // just to show that this is just a dumb value and not interpreted by the connection handler
+            reader_start_position: None,
         })).unwrap();
 
         let expected_id = fixture.instance_id;
@@ -514,7 +510,7 @@ mod test {
         })).unwrap();
         fixture.assert_sent_to_system_stream(SystemOpType::AppendEntriesResponseReceived(controller::AppendEntriesResponse {
             term: 7,
-            success: false,
+            success: None,
         }));
     }
 
