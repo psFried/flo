@@ -93,6 +93,12 @@ impl PartitionReader {
         Ok(())
     }
 
+    pub fn get_current_file_offset(&self) -> (SegmentNum, usize) {
+        self.current_segment_reader.as_ref().map(|segment| {
+            (segment.segment_id, segment.current_offset())
+        }).unwrap_or((SegmentNum(0), 0))
+    }
+
     fn should_skip(&self, result: &Option<Result<PersistentEvent, io::Error>>) -> bool {
         if let Some(Ok(ref event)) = *result {
             !self.filter.matches(event)

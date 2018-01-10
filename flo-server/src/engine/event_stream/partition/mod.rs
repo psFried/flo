@@ -34,6 +34,7 @@ pub use self::ops::{OpType,
 };
 pub use self::event_reader::{PartitionReader, EventFilter};
 pub use self::segment::PersistentEvent;
+pub use self::index::IndexEntry;
 
 pub type PartitionSender = ::std::sync::mpsc::Sender<Operation>;
 pub type PartitionReceiver = ::std::sync::mpsc::Receiver<Operation>;

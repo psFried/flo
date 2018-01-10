@@ -59,5 +59,4 @@ pub struct AppendEntriesStart {
     pub prev_entry_term: Term,
     pub reader_start_offset: usize,
     pub reader_start_segment: SegmentNum,
-    pub reader_start_event: EventCounter,
 }

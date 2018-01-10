@@ -14,7 +14,7 @@ use engine::connection_handler::ConnectionControl;
 use engine::controller::{CallRequestVote, VoteResponse};
 use protocol::{FloInstanceId, Term};
 use atomics::{AtomicBoolWriter, AtomicBoolReader};
-use super::{ClusterOptions, ConnectionRef, Peer, PeerUpgrade, AppendEntriesResponse, ReceiveAppendEntries};
+use super::{ClusterOptions, ConnectionRef, Peer, PeerUpgrade, AppendEntriesResponse, ReceiveAppendEntries, ControllerState};
 use super::peer_connection::{PeerSystemConnection, OutgoingConnectionCreator, OutgoingConnectionCreatorImpl};
 use self::peer_connections::{PeerConnectionManager, PeerConnections};
 
@@ -29,16 +29,16 @@ static STATE_UPDATE_FAILED: &'static str = "failed to persist changes to cluster
 
 
 pub trait ConsensusProcessor: Send {
-    fn tick(&mut self, now: Instant, all_connections: &mut HashMap<ConnectionId, ConnectionRef>);
+    fn tick(&mut self, now: Instant, controller_state: &mut ControllerState);
     fn is_primary(&self) -> bool;
-    fn peer_connection_established(&mut self, upgrade: PeerUpgrade, connection_id: ConnectionId, all_connections: &HashMap<ConnectionId, ConnectionRef>);
+    fn peer_connection_established(&mut self, upgrade: PeerUpgrade, connection_id: ConnectionId, controller_state: &ControllerState);
     fn outgoing_connection_failed(&mut self, connection_id: ConnectionId, address: SocketAddr);
 
     fn request_vote_received(&mut self, from: ConnectionId, request: CallRequestVote);
     fn vote_response_received(&mut self, now: Instant, from: ConnectionId, response: VoteResponse);
 
-    fn append_entries_received(&mut self, append: ReceiveAppendEntries);
-    fn append_entries_response_received(&mut self, connection_id: ConnectionId, response: AppendEntriesResponse);
+    fn append_entries_received(&mut self, append: ReceiveAppendEntries, controller_state: &mut ControllerState);
+    fn append_entries_response_received(&mut self, connection_id: ConnectionId, response: AppendEntriesResponse, controller_state: &mut ControllerState);
 }
 
 #[derive(Debug)]
@@ -191,6 +191,11 @@ impl ClusterManager {
         let mut lock = self.shared.write().unwrap();
         lock.system_primary = primary;
     }
+
+    fn send_append_entries(&mut self, controller_state: &mut ControllerState) {
+        let term = self.persistent.current_term;
+        self.connection_manager.broadcast_append_entries(term, controller_state);
+    }
 }
 
 impl ConsensusProcessor for ClusterManager {
@@ -243,9 +248,9 @@ impl ConsensusProcessor for ClusterManager {
         }
     }
 
-    fn peer_connection_established(&mut self, upgrade: PeerUpgrade, connection_id: ConnectionId, all_connections: &HashMap<ConnectionId, ConnectionRef>) {
+    fn peer_connection_established(&mut self, upgrade: PeerUpgrade, connection_id: ConnectionId, controller_state: &ControllerState) {
         debug!("peer_connection_established: connection_id: {},  {:?}", connection_id, upgrade);
-        let connection = all_connections.get(&connection_id)
+        let connection = controller_state.get_connection(connection_id)
                 .expect("Expected connection to be in all_connections on peer_connection_established");
 
         self.connection_manager.peer_connection_established(upgrade.peer_id, connection);
@@ -256,8 +261,8 @@ impl ConsensusProcessor for ClusterManager {
         self.connection_resolved(connection.remote_address);
     }
 
-    fn tick(&mut self, now: Instant, all_connections: &mut HashMap<ConnectionId, ConnectionRef>) {
-        self.connection_manager.establish_connections(now, all_connections);
+    fn tick(&mut self, now: Instant, controller_state: &mut ControllerState) {
+        self.connection_manager.establish_connections(now, controller_state);
 
         match self.state {
             State::EstablishConnections => {
@@ -269,6 +274,7 @@ impl ConsensusProcessor for ClusterManager {
             }
             State::Primary => {
                 trace!("This instance is primary");
+                self.send_append_entries(controller_state);
             }
             other @ _ => {
                 if self.election_timed_out(now) {
@@ -282,11 +288,11 @@ impl ConsensusProcessor for ClusterManager {
         self.state == State::Primary
     }
 
-    fn append_entries_received(&mut self, append: ReceiveAppendEntries) {
+    fn append_entries_received(&mut self, append: ReceiveAppendEntries, controller_state: &mut ControllerState) {
         unimplemented!()
     }
 
-    fn append_entries_response_received(&mut self, connection_id: ConnectionId, response: AppendEntriesResponse) {
+    fn append_entries_response_received(&mut self, connection_id: ConnectionId, response: AppendEntriesResponse, controller_state: &mut ControllerState) {
         unimplemented!()
     }
 }
@@ -350,11 +356,12 @@ mod test {
     use std::path::{Path, PathBuf};
     use std::collections::HashSet;
     use tempdir::TempDir;
-    use engine::connection_handler::{ConnectionControlSender, ConnectionControlReceiver, ConnectionControl};
+    use engine::connection_handler::{ConnectionControlSender, ConnectionControlReceiver, ConnectionControl, CallAppendEntries};
     use engine::controller::peer_connection::{OutgoingConnectionCreator, MockOutgoingConnectionCreator};
     use test_utils::{addr, expect_future_resolved};
     use engine::controller::cluster_state::peer_connections::mock::{MockPeerConnectionManager, Invocation};
     use engine::controller::controller_messages::mock::mock_connection_ref;
+    use engine::controller::mock::MockControllerState;
 
     #[test]
     fn append_entries_is_sent_on_tick_when_state_is_primary() {
@@ -383,8 +390,13 @@ mod test {
         }).unwrap();
         subject.last_applied = 99;
         subject.last_applied_term = 4;
-        subject.state = State::Voted;
+        subject.state = State::Primary;
         subject.last_heartbeat = start;
+
+        let mut controller_state = MockControllerState::with_commit_index(101);
+        subject.send_append_entries(&mut controller_state);
+
+        connection_manager.verify_in_order(&Invocation::BroadcastAppendEntries { term: 5 })
     }
 
     #[test]
@@ -419,8 +431,8 @@ mod test {
         subject.state = State::Voted;
         subject.last_heartbeat = start;
 
-        let mut connections = HashMap::new();
-        subject.tick(t_sec(start, 1), &mut connections);
+        let mut controller_state = MockControllerState::new();
+        subject.tick(t_sec(start, 1), &mut controller_state);
 
         connection_manager.verify_in_order(&Invocation::EstablishConnections);
         connection_manager.verify_in_order(&Invocation::BroadcastToPeers {
@@ -609,9 +621,9 @@ mod test {
         subject.last_applied_term = 5;
         subject.last_applied = 9;
 
-        let mut connections = HashMap::new();
+        let mut controller_state = MockControllerState::new();
         let election_start = t_sec(start, 1);
-        subject.tick(election_start, &mut connections);
+        subject.tick(election_start, &mut controller_state);
         connection_manager.verify_in_order(&Invocation::EstablishConnections);
         connection_manager.verify_in_order(&Invocation::BroadcastToPeers {
             connection_control: ConnectionControl::SendRequestVote(CallRequestVote {
@@ -793,8 +805,8 @@ mod test {
             state.current_term = 7;
         }).unwrap();
 
-        let mut connections = HashMap::new();
-        subject.tick(t_sec(start, 1), &mut connections);
+        let mut controller_state = MockControllerState::new();
+        subject.tick(t_sec(start, 1), &mut controller_state);
         connection_manager.verify_in_order(&Invocation::EstablishConnections);
 
         let this_id = subject.persistent.this_instance_id;
@@ -827,8 +839,8 @@ mod test {
         let mut subject = create_cluster_manager(vec![peer_1.address, peer_2.address], temp_dir.path(), connection_manager.boxed_ref());
 
         assert_eq!(State::EstablishConnections, subject.state);
-        let mut connections = HashMap::new();
-        subject.tick(t_sec(start, 1), &mut connections);
+        let mut controller_state = MockControllerState::new();
+        subject.tick(t_sec(start, 1), &mut controller_state);
         assert_eq!(State::DeterminePrimary, subject.state);
         connection_manager.verify_in_order(&Invocation::EstablishConnections);
 
@@ -839,9 +851,9 @@ mod test {
             cluster_members: vec![peer_2.clone()],
         };
         let (connection, _) = mock_connection_ref(conn_id, peer_1.address);
-        connections.insert(conn_id, connection.clone());
+        controller_state.add_connection(connection.clone());
 
-        subject.peer_connection_established(upgrade, conn_id, &connections);
+        subject.peer_connection_established(upgrade, conn_id, &controller_state);
         connection_manager.verify_in_order(&Invocation::PeerConnectionEstablished {
             peer_id: peer_1.id,
             success_connection: connection,
@@ -865,8 +877,8 @@ mod test {
         let mut subject = create_cluster_manager(vec![peer_1_addr, peer_2_addr], temp_dir.path(), connection_manager.boxed_ref());
 
         assert_eq!(State::EstablishConnections, subject.state);
-        let mut connections = HashMap::new();
-        subject.tick(t_sec(start, 1), &mut connections);
+        let mut controller_state = MockControllerState::new();
+        subject.tick(t_sec(start, 1), &mut controller_state);
         connection_manager.verify_in_order(&Invocation::EstablishConnections);
         assert_eq!(State::DeterminePrimary, subject.state);
 
@@ -1000,7 +1012,7 @@ pub struct NoOpConsensusProcessor;
 
 // TODO: reasonable and consistent behavior for calls into NoOpConsensusProcessor that should never actually happen
 impl ConsensusProcessor for NoOpConsensusProcessor {
-    fn peer_connection_established(&mut self, upgrade: PeerUpgrade, connection_id: ConnectionId, all_connections: &HashMap<ConnectionId, ConnectionRef>) {
+    fn peer_connection_established(&mut self, upgrade: PeerUpgrade, connection_id: ConnectionId, controller_state: &ControllerState) {
     }
     fn outgoing_connection_failed(&mut self, connection_id: ConnectionId, address: SocketAddr) {
         panic!("invalid operation for a NoOpConsensusProcessor. This should not happen");
@@ -1008,7 +1020,7 @@ impl ConsensusProcessor for NoOpConsensusProcessor {
     fn request_vote_received(&mut self, from: ConnectionId, request: CallRequestVote) {
 
     }
-    fn tick(&mut self, now: Instant, all_connections: &mut HashMap<ConnectionId, ConnectionRef>) {
+    fn tick(&mut self, now: Instant, controller_state: &mut ControllerState) {
     }
     fn is_primary(&self) -> bool {
         true
@@ -1016,11 +1028,11 @@ impl ConsensusProcessor for NoOpConsensusProcessor {
     fn vote_response_received(&mut self, now: Instant, from: ConnectionId, response: VoteResponse) {
 
     }
-    fn append_entries_received(&mut self, append: ReceiveAppendEntries) {
+    fn append_entries_received(&mut self, append: ReceiveAppendEntries, controller_state: &mut ControllerState) {
         unimplemented!()
     }
 
-    fn append_entries_response_received(&mut self, connection_id: ConnectionId, response: AppendEntriesResponse) {
+    fn append_entries_response_received(&mut self, connection_id: ConnectionId, response: AppendEntriesResponse, controller_state: &mut ControllerState) {
         unimplemented!()
     }
 }

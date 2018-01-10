@@ -6,22 +6,21 @@ mod initialization;
 mod controller_messages;
 mod peer_connection;
 mod system_reader;
+mod controller_state;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 use std::collections::HashMap;
-use std::net::SocketAddr;
+use std::io;
 
-
+use event::EventCounter;
 use engine::ConnectionId;
 use engine::event_stream::{EventStreamRef,
                                EventStreamRefMut,
                                EventStreamOptions};
-
-use engine::event_stream::partition::Operation;
+use engine::event_stream::partition::{PersistentEvent, IndexEntry, SegmentNum};
 use engine::event_stream::partition::controller::PartitionImpl;
-use atomics::AtomicBoolWriter;
-use self::cluster_state::{ClusterManager, ConsensusProcessor};
+use self::cluster_state::ConsensusProcessor;
 
 
 pub use self::initialization::{start_controller, ControllerOptions, ClusterOptions};
@@ -30,6 +29,10 @@ pub use self::system_event::{SystemEvent, SystemEventData};
 pub use self::system_reader::{SystemStreamReader, SYSTEM_READER_BATCH_SIZE};
 pub use self::controller_messages::*;
 pub use self::cluster_state::{SharedClusterState, ClusterStateReader};
+pub use self::controller_state::{ControllerState, ControllerStateImpl};
+
+#[cfg(test)]
+pub use self::controller_state::mock;
 
 pub type SystemPartitionSender = ::std::sync::mpsc::Sender<SystemOperation>;
 pub type SystemPartitionReceiver = ::std::sync::mpsc::Receiver<SystemOperation>;
@@ -38,28 +41,14 @@ pub fn create_system_partition_channels() -> (SystemPartitionSender, SystemParti
     ::std::sync::mpsc::channel()
 }
 
+
+
 /// A specialized event stream that always has exactly one partition and manages the cluster state and consensus
 /// Of course there is no cluster state and thus no consensus at the moment, but we'll just leave this here...
 #[allow(dead_code)]
 pub struct FloController {
-    /// Shared references to all event streams in the system
-    shared_event_stream_refs: Arc<Mutex<HashMap<String, EventStreamRef>>>,
-
-    /// Unique mutable references to every event stream in the system
-    event_streams: HashMap<String, EventStreamRefMut>,
-
-    /// used as defaults when creating new event streams
-    default_stream_options: EventStreamOptions,
-
-    /// directory in which all event stream data is stored
-    storage_dir: PathBuf,
-
-    /// the partition that persists system events. Used as the RAFT log
-    system_partition: PartitionImpl,
-
+    controller_state: ControllerStateImpl,
     cluster_state: Box<ConsensusProcessor>,
-
-    all_connections: HashMap<ConnectionId, ConnectionRef>,
 }
 
 impl FloController {
@@ -70,14 +59,12 @@ impl FloController {
                cluster_state: Box<ConsensusProcessor>,
                default_stream_options: EventStreamOptions) -> FloController {
 
+        let controller_state = ControllerStateImpl::new(system_partition, event_streams, shared_stream_refs,
+                                                        storage_dir, default_stream_options);
+
         FloController {
-            shared_event_stream_refs: shared_stream_refs,
-            event_streams,
-            system_partition,
-            storage_dir,
-            default_stream_options,
             cluster_state,
-            all_connections: HashMap::with_capacity(4),
+            controller_state,
         }
     }
 
@@ -92,19 +79,19 @@ impl FloController {
 
         match op_type {
             SystemOpType::IncomingConnectionEstablished(connection_ref) => {
-                self.all_connections.insert(connection_id, connection_ref);
+                self.controller_state.all_connections.insert(connection_id, connection_ref);
             }
             SystemOpType::OutgoingConnectionFailed(address) => {
-                self.all_connections.remove(&connection_id);
+                self.controller_state.all_connections.remove(&connection_id);
                 self.cluster_state.outgoing_connection_failed(connection_id, address);
             }
             SystemOpType::ConnectionUpgradeToPeer(upgrade) => {
-                let FloController{ref mut cluster_state, ref mut all_connections, ..} = *self;
-                cluster_state.peer_connection_established(upgrade, connection_id, all_connections);
+                let FloController{ref mut cluster_state, ref mut controller_state, ..} = *self;
+                cluster_state.peer_connection_established(upgrade, connection_id, controller_state);
             }
             SystemOpType::Tick => {
-                let FloController{ref mut cluster_state, ref mut all_connections, ..} = *self;
-                cluster_state.tick(op_start_time, all_connections);
+                let FloController{ref mut cluster_state, ref mut controller_state, ..} = *self;
+                cluster_state.tick(op_start_time, controller_state);
             }
             other @ _ => {
                 warn!("Ignoring SystemOperation: {:?}", other);
@@ -114,9 +101,11 @@ impl FloController {
 
     fn shutdown(&mut self) {
         info!("Shutting down FloController");
+        //TODO: either do something on shutdown or delete this function
     }
 
 }
+
 
 
 

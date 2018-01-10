@@ -140,6 +140,14 @@ impl PartitionImpl {
         self.partition_highest_committed.reader()
     }
 
+    pub fn set_commit_index(&mut self, new_index: EventCounter) {
+        self.partition_highest_committed.set_if_greater(new_index as usize);
+    }
+
+    pub fn get_commit_index(&self) -> EventCounter {
+        self.partition_highest_committed.get() as EventCounter
+    }
+
     pub fn primary_status_reader(&self) -> AtomicBoolReader {
         self.primary.clone()
     }
@@ -306,6 +314,12 @@ impl PartitionImpl {
         self.reader_refs.get_reader_refs()
     }
 
+    pub fn get_head_position(&self) -> (SegmentNum, usize) {
+        self.segments.front().map(|s| {
+            (s.segment_num, s.head_position())
+        }).unwrap_or((SegmentNum(0), 0))
+    }
+
     fn current_segment_num(&self) -> SegmentNum {
         self.segments.front().map(|s| s.segment_num).unwrap_or(SegmentNum(0))
     }
@@ -323,9 +337,9 @@ impl PartitionImpl {
         Ok(())
     }
 
-    fn create_reader(&mut self, connection_id: ConnectionId, filter: EventFilter, start_exclusive: EventCounter) -> PartitionReader {
+    pub fn create_reader(&mut self, connection_id: ConnectionId, filter: EventFilter, start_exclusive: EventCounter) -> PartitionReader {
         let current_segment_num = self.current_segment_num();
-        let index_entry: Option<IndexEntry> = self.index.get_next_entry(start_exclusive);
+        let index_entry: Option<IndexEntry> = self.get_next_index_entry(start_exclusive);
         let readers = self.get_shared_reader_refs();
 
         let current_segment = match index_entry {
@@ -352,6 +366,9 @@ impl PartitionImpl {
                              commit_index_reader)
     }
 
+    pub fn get_next_index_entry(&self, previous: EventCounter) -> Option<IndexEntry> {
+        self.index.get_next_entry(previous)
+    }
 
 }
 

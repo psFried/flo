@@ -223,6 +223,10 @@ impl MmapReader {
         self.current_offset >= head
     }
 
+    pub fn get_current_offset(&self) -> usize {
+        self.current_offset
+    }
+
     fn get_current_head(&self) -> usize {
         self.inner.head.load(Ordering::Relaxed)
     }
