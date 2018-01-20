@@ -17,7 +17,6 @@ pub trait PeerConnectionManager: Send + Debug + 'static {
     fn connection_closed(&mut self, connection_id: ConnectionId);
     fn peer_connection_established(&mut self, peer_id: FloInstanceId, success_connection: &ConnectionRef);
 
-    fn broadcast_append_entries(&mut self, term: Term, controller_state: &mut ControllerState);
     fn broadcast_to_peers(&mut self, connection_control: ConnectionControl);
     fn send_to_peer(&mut self, peer_id: FloInstanceId, connection_control: ConnectionControl);
     fn get_peer_id(&mut self, connection_id: ConnectionId) -> Option<FloInstanceId>;
@@ -59,25 +58,6 @@ impl PeerConnections {
 
 }
 
-fn start_after_commit_index(controller_state: &mut ControllerState, peer: &mut Connection, commit_index: EventCounter) -> io::Result<AppendEntriesStart> {
-    // safe unwrap of the option, since we're asking for the last committed event
-    let result = controller_state.get_system_event(commit_index).unwrap();
-    result.map(|event| {
-        let next_entry = controller_state.get_next_entry(commit_index);
-        let (reader_start_segment, reader_start_offset) = next_entry.map(|entry| {
-            (entry.segment, entry.file_offset)
-        }).unwrap_or_else(|| {
-            controller_state.get_current_file_offset()
-        });
-
-        AppendEntriesStart {
-            prev_entry_index: commit_index,
-            prev_entry_term: event.term(),
-            reader_start_segment,
-            reader_start_offset,
-        }
-    })
-}
 
 impl PeerConnectionManager for PeerConnections {
 
@@ -170,38 +150,12 @@ impl PeerConnectionManager for PeerConnections {
         }
     }
 
-    fn broadcast_append_entries(&mut self, term: Term, controller_state: &mut ControllerState) {
-
-        let commit_index = controller_state.get_system_commit_index();
-        for (peer_id, peer) in self.known_peers.iter_mut() {
-            if peer.is_connected() {
-                let start = if peer.last_acknowledged_index.is_none() {
-                    match start_after_commit_index(controller_state, peer, commit_index) {
-                        Ok(start_after) => Some(start_after),
-                        Err(io_err) => {
-                            error!("Failed to create AppendEntriesStart, refusing to send any more AppendEntries this time: {:?}", io_err);
-                            return;
-                        }
-                    }
-                } else {
-                    None
-                };
-
-                let append = CallAppendEntries {
-                    current_term: term,
-                    reader_start_position: start,
-                    commit_index,
-                };
-
-                peer.send_append_entries(append);
-            } else {
-                debug!("Not sending AppendEntries to peer_id: {} because it is disconnected", peer_id);
-            }
-        }
-    }
-
     fn send_to_peer(&mut self, peer_id: FloInstanceId, control: ConnectionControl) {
-        unimplemented!()
+        if let Some(connection) = self.known_peers.get_mut(&peer_id) {
+            connection.send_if_connected(control);
+        } else {
+            debug!("Cannot send control to unknown peer_id: {:?}, dropping message: {:?}", peer_id, control);
+        }
     }
 
     fn get_peer_id(&mut self, connection_id: ConnectionId) -> Option<FloInstanceId> {
@@ -210,10 +164,10 @@ impl PeerConnectionManager for PeerConnections {
 }
 
 fn send(connection: &ConnectionRef, control: ConnectionControl) {
-    trace!("Sending to connection_id: {}, control: {:?}", connection.connection_id, control);
+    debug!("Sending to connection_id: {}, control: {:?}", connection.connection_id, control);
     let result = connection.control_sender.unbounded_send(control);
     if let Err(send_err) = result {
-        warn!("Error sending control to connection_id: {}, {:?}", connection.connection_id, send_err);
+        info!("Error sending control to connection_id: {}, {:?}", connection.connection_id, send_err);
     }
 }
 
@@ -250,7 +204,6 @@ impl ConnectionAttempt {
 
 #[derive(Debug)]
 struct Connection {
-    last_acknowledged_index: Option<EventCounter>,
     peer_address: SocketAddr,
     state: PeerState,
 }
@@ -258,31 +211,26 @@ struct Connection {
 impl Connection {
     fn new(peer_address: SocketAddr) -> Connection {
         Connection {
-            last_acknowledged_index: None,
             peer_address,
             state: PeerState::Init
         }
+    }
+
+    fn send_if_connected(&mut self, control: ConnectionControl) {
+        match self.state {
+            PeerState::Connected(ref mut connection_ref) => {
+                send(connection_ref, control);
+                return;
+            }
+            _ => {}
+        }
+        debug!("Not sending control to peer: {:?} because it is not connected, dropping message: {:?}", self, control);
     }
 
     fn is_connected(&self) -> bool {
         match self.state {
             PeerState::Connected(_) => true,
             _ => false
-        }
-    }
-
-    fn send_append_entries(&mut self, append: CallAppendEntries) {
-        let send_err = match &mut self.state {
-            &mut PeerState::Connected(ref mut conn) => {
-                let result = conn.control_sender.send(ConnectionControl::SendAppendEntries(append));
-                result.is_err()
-            }
-            other @ _ => {
-                panic!("Attempted to send AppendEntries to disconnected peer in state: {:?}", other);
-            }
-        };
-        if send_err {
-            warn!("Failed to send AppendEntries control message to connectionHandler for peer at: {}", self.peer_address);
         }
     }
 }
@@ -328,27 +276,25 @@ mod test {
     }
 
     #[test]
-    fn broadcast_append_entries_sends_append_entries_control_to_all_connected_peers() {
-        let peer_1 = Peer {
-            id: FloInstanceId::generate_new(),
+    fn send_to_peer_sends_connection_control_to_a_connected_peer() {
+        let peer_id = FloInstanceId::generate_new();
+        let peer = Peer {
+            id: peer_id,
             address: addr("123.4.5.6:3000")
         };
-        let peer_2 = Peer {
-            id: FloInstanceId::generate_new(),
-            address: addr("123.4.5.6:4000")
-        };
         let mut creator = MockOutgoingConnectionCreator::new();
-        let (peer_1_conn, rx_1) = creator.stub(peer_1.address);
-        let (peer_2_conn, rx_2) = creator.stub(peer_2.address);
-        let (mut subject, mut controller_state) = subject_with_connected_peers(&[peer_1, peer_2], creator);
-        controller_state.set_commit_index(7);
+        let (peer_conn, rx) = creator.stub(peer.address);
 
-        // TODO: stub out return values for controller_state
+        let (mut subject, connections) = subject_with_connected_peers(&[peer], creator);
+        let rx = assert_control_sent(rx, &ConnectionControl::InitiateOutgoingSystemConnection);
 
-        subject.broadcast_append_entries(7, &mut controller_state);
-
-
-        // TODO: verify that append entries was sent
+        let expected = ConnectionControl::SendAppendEntries(CallAppendEntries {
+            current_term: 3,
+            commit_index: 5,
+            reader_start_position: None,
+        });
+        subject.send_to_peer(peer_id, expected.clone());
+        assert_control_sent(rx, &expected);
     }
 
     #[test]
@@ -530,7 +476,7 @@ pub mod mock {
             let missing_invocation_message = format!("Expected invocation: {:?}, but no calls were made on this mock", expected);
             let next_invocation = lock.pop_front().expect(&missing_invocation_message);
             if expected != &next_invocation {
-                panic!("Expected: {:?}, but actual was: {:?}. Other invocations were: {:?}", expected, next_invocation, ::std::ops::Deref::deref(&lock));
+                panic!("Expected: {:#?}, but actual was: {:#?}. Other invocations were: {:#?}", expected, next_invocation, ::std::ops::Deref::deref(&lock));
             }
         }
 
@@ -542,7 +488,7 @@ pub mod mock {
             if let Some(idx) = index {
                 lock.remove(idx);
             } else {
-                panic!("Expected: {:?} in any order, other invocations on this mock: {:?}", expected, lock.as_slices());
+                panic!("Expected: {:#?} in any order, other invocations on this mock: {:#?}", expected, lock.as_slices());
             }
         }
 
@@ -584,9 +530,6 @@ pub mod mock {
             let lock = self.peer_stubs.lock().unwrap();
             lock.get(&connection_id).cloned()
         }
-        fn broadcast_append_entries(&mut self, term: Term, controller_state: &mut ControllerState) {
-            self.push_invocation(Invocation::BroadcastAppendEntries {term})
-        }
     }
 
 
@@ -602,6 +545,5 @@ pub mod mock {
         PeerConnectionEstablished{peer_id: FloInstanceId, success_connection: ConnectionRef},
         BroadcastToPeers{connection_control: ConnectionControl},
         SendToPeer{peer_id: FloInstanceId, connection_control :ConnectionControl},
-        BroadcastAppendEntries { term: Term },
     }
 }

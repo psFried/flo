@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::collections::HashMap;
 use std::io;
 
+use protocol::Term;
 use event::EventCounter;
 use engine::ConnectionId;
 use engine::controller::{ConnectionRef, SystemEvent};
@@ -16,9 +17,10 @@ pub trait ControllerState {
     fn remove_connection(&mut self, connection_id: ConnectionId);
     fn get_connection(&self, connection_id: ConnectionId) -> Option<&ConnectionRef>;
 
+    fn get_last_committed(&mut self) -> io::Result<(EventCounter, Term)>;
+    fn get_next_event(&mut self, start_after: EventCounter) -> Option<io::Result<(EventCounter, Term)>>;
+
     fn set_commit_index(&mut self, new_index: EventCounter);
-    fn get_system_commit_index(&self) -> EventCounter;
-    fn get_system_event(&mut self, event_counter: EventCounter) -> Option<io::Result<SystemEvent<PersistentEvent>>>;
     fn get_next_entry(&self, event_counter: EventCounter) -> Option<IndexEntry>;
     fn get_current_file_offset(&self) -> (SegmentNum, usize);
 }
@@ -94,22 +96,8 @@ impl ControllerState for ControllerStateImpl {
         self.all_connections.get(&connection_id)
     }
 
-    fn get_system_commit_index(&self) -> EventCounter {
-        self.system_partition.get_commit_index()
-    }
-
     fn set_commit_index(&mut self, new_index: EventCounter) {
         self.system_partition.set_commit_index(new_index);
-    }
-
-    fn get_system_event(&mut self, event_counter: EventCounter) -> Option<io::Result<SystemEvent<PersistentEvent>>> {
-        self.get_next_entry(event_counter.saturating_sub(1)).and_then(|index_entry| {
-            if index_entry.counter == event_counter {
-                Some(self.read_event(index_entry))
-            } else {
-                None
-            }
-        })
     }
 
     fn get_next_entry(&self, previous: EventCounter) -> Option<IndexEntry> {
@@ -119,6 +107,28 @@ impl ControllerState for ControllerStateImpl {
     fn get_current_file_offset(&self) -> (SegmentNum, usize) {
         self.system_partition.get_head_position()
     }
+
+    fn get_last_committed(&mut self) -> io::Result<(EventCounter, Term)> {
+        let start_after = self.system_partition.get_commit_index();
+        if start_after == 0 {
+            return Ok((0, 0));
+        }
+        match self.get_next_event(start_after) {
+            Some(result) => result,
+            None => {
+                error!("No SystemEvent was found for the commit index: {}. System partition is in an invalid state!", start_after);
+                Err(io::Error::new(io::ErrorKind::InvalidData, format!("Expected to have a SystemEvent at index: {} since that is the commit index!", start_after)))
+            }
+        }
+    }
+
+    fn get_next_event(&mut self, start_after: EventCounter) -> Option<io::Result<(EventCounter, Term)>> {
+        self.get_next_entry(start_after.saturating_sub(1)).map(|index_entry| {
+            self.read_event(index_entry).map(|system_event| {
+                (start_after, system_event.term())
+            })
+        })
+    }
 }
 
 
@@ -126,22 +136,43 @@ impl ControllerState for ControllerStateImpl {
 #[cfg(test)]
 pub mod mock {
     use super::*;
+    use std::collections::BTreeMap;
 
+    #[derive(Debug)]
     pub struct MockControllerState {
         pub commit_index: EventCounter,
         pub all_connections: HashMap<ConnectionId, ConnectionRef>,
+        pub system_events: BTreeMap<EventCounter, MockSystemEvent>,
     }
 
     impl MockControllerState {
         pub fn new() -> MockControllerState {
-            MockControllerState::with_commit_index(0)
+            MockControllerState {
+                commit_index: 0,
+                all_connections: HashMap::new(),
+                system_events: BTreeMap::new(),
+            }
         }
 
-        pub fn with_commit_index(index: EventCounter) -> MockControllerState {
-            MockControllerState {
-                commit_index: index,
-                all_connections: HashMap::new(),
+        pub fn with_commit_index(mut self, index: EventCounter) -> MockControllerState {
+            self.set_commit_index(index);
+            self
+        }
+
+        pub fn with_connection(mut self, conn: ConnectionRef) -> Self {
+            self.add_connection(conn);
+            self
+        }
+
+        pub fn with_mocked_events(mut self, events: &[MockSystemEvent]) -> Self {
+            for e in events {
+                self.add_mock_event(e.clone());
             }
+            self
+        }
+
+        pub fn add_mock_event(&mut self, event: MockSystemEvent) {
+            self.system_events.insert(event.id, event);
         }
     }
 
@@ -155,23 +186,41 @@ pub mod mock {
         fn get_connection(&self, connection_id: ConnectionId) -> Option<&ConnectionRef> {
             self.all_connections.get(&connection_id)
         }
-        fn get_system_commit_index(&self) -> EventCounter {
-            unimplemented!()
-        }
-
-        fn get_system_event(&mut self, event_counter: EventCounter) -> Option<io::Result<SystemEvent<PersistentEvent>>> {
-            unimplemented!()
-        }
         fn get_next_entry(&self, event_counter: EventCounter) -> Option<IndexEntry> {
-            unimplemented!()
+            self.system_events.range((event_counter + 1)..).next().map(|(id, sys)| {
+                IndexEntry::new(*id, sys.segment, sys.file_offset)
+            })
         }
 
         fn get_current_file_offset(&self) -> (SegmentNum, usize) {
-            unimplemented!()
+            self.system_events.values().last().map(|sys| {
+                (sys.segment, sys.file_offset)
+            }).unwrap_or((SegmentNum::new_unset(), 0))
         }
         fn set_commit_index(&mut self, new_index: EventCounter) {
-            unimplemented!()
+            self.commit_index = new_index;
         }
+        fn get_last_committed(&mut self) -> io::Result<(EventCounter, Term)> {
+            let commit_idx = self.commit_index;
+            self.system_events.get(&commit_idx).map(|sys| {
+                (sys.id, sys.term)
+            }).ok_or_else(|| {
+                io::Error::new(io::ErrorKind::Other, format!("Test error because there is no stubbed event for the commit index: {}", commit_idx))
+            })
+        }
+        fn get_next_event(&mut self, start_after: EventCounter) -> Option<io::Result<(EventCounter, Term)>> {
+            self.system_events.range((start_after + 1)..).next().map(|(id, sys)| {
+                Ok((*id, sys.term))
+            })
+        }
+    }
+
+    #[derive(Clone, Debug, PartialEq)]
+    pub struct MockSystemEvent {
+        pub id: EventCounter,
+        pub term: Term,
+        pub segment: SegmentNum,
+        pub file_offset: usize,
     }
 
 }

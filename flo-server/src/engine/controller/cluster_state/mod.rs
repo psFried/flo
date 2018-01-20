@@ -1,5 +1,6 @@
 pub mod persistent;
 mod peer_connections;
+mod primary_state;
 
 use std::io;
 use std::sync::{Arc, RwLock};
@@ -8,7 +9,7 @@ use std::time::{Instant, Duration};
 use std::path::Path;
 use std::collections::{HashMap, HashSet};
 
-use event::{EventCounter, ActorId};
+use event::{EventCounter, ActorId, OwnedFloEvent};
 use engine::{ConnectionId, EngineRef};
 use engine::connection_handler::ConnectionControl;
 use engine::controller::{CallRequestVote, VoteResponse};
@@ -17,6 +18,7 @@ use atomics::{AtomicBoolWriter, AtomicBoolReader};
 use super::{ClusterOptions, ConnectionRef, Peer, PeerUpgrade, AppendEntriesResponse, ReceiveAppendEntries, ControllerState};
 use super::peer_connection::{PeerSystemConnection, OutgoingConnectionCreator, OutgoingConnectionCreatorImpl};
 use self::peer_connections::{PeerConnectionManager, PeerConnections};
+use self::primary_state::PrimaryState;
 
 pub use self::persistent::{FilePersistedState, PersistentClusterState};
 
@@ -35,15 +37,16 @@ pub trait ConsensusProcessor: Send {
     fn outgoing_connection_failed(&mut self, connection_id: ConnectionId, address: SocketAddr);
 
     fn request_vote_received(&mut self, from: ConnectionId, request: CallRequestVote);
-    fn vote_response_received(&mut self, now: Instant, from: ConnectionId, response: VoteResponse);
+    fn vote_response_received(&mut self, now: Instant, from: ConnectionId, response: VoteResponse, controller: &mut ControllerState);
 
-    fn append_entries_received(&mut self, append: ReceiveAppendEntries, controller_state: &mut ControllerState);
+    fn append_entries_received(&mut self, connection_id: ConnectionId, append: ReceiveAppendEntries, controller_state: &mut ControllerState);
     fn append_entries_response_received(&mut self, connection_id: ConnectionId, response: AppendEntriesResponse, controller_state: &mut ControllerState);
 }
 
 #[derive(Debug)]
 pub struct ClusterManager {
     state: State,
+    primary_state: Option<PrimaryState>,
     initialization_peers: HashSet<SocketAddr>,
     this_instance_address: SocketAddr,
     election_timeout: Duration,
@@ -55,6 +58,7 @@ pub struct ClusterManager {
     votes_received: HashSet<FloInstanceId>,
     system_partition_primary_address: SystemPrimaryAddressRef,
     shared: Arc<RwLock<SharedClusterState>>,
+    current_primary: Option<FloInstanceId>,
     connection_manager: Box<PeerConnectionManager>,
 }
 
@@ -84,10 +88,12 @@ impl ClusterManager {
 
         ClusterManager {
             state: State::EstablishConnections,
+            primary_state: None,
             election_timeout: Duration::from_millis(election_timeout_millis),
             last_heartbeat: Instant::now(),
             connection_manager: peer_connection_manager,
             votes_received: HashSet::new(),
+            current_primary: None,
             this_instance_address,
             initialization_peers,
             last_applied: 0,
@@ -102,6 +108,10 @@ impl ClusterManager {
     fn transition_state(&mut self, new_state: State) {
         debug!("Transitioning from state: {:?} to {:?}", self.state, new_state);
         self.state = new_state;
+    }
+
+    fn update_last_heartbeat_to_now(&mut self) {
+        self.last_heartbeat = Instant::now();
     }
 
     fn determine_primary_from_peer_upgrade(&mut self, upgrade: PeerUpgrade) {
@@ -177,7 +187,8 @@ impl ClusterManager {
         election_won
     }
 
-    fn transition_to_primary(&mut self) {
+    fn transition_to_primary(&mut self, controller: &mut ControllerState) {
+        info!("Transitioning to system Primary");
         self.transition_state(State::Primary);
         let this_peer = Peer {
             id: self.persistent.this_instance_id,
@@ -185,16 +196,41 @@ impl ClusterManager {
         };
         self.set_new_primary(Some(this_peer));
         self.primary_status_writer.set(true);
+        let primary_state = PrimaryState::new(self.persistent.current_term);
+        self.primary_state = Some(primary_state);
+        self.send_append_entries(controller);
     }
 
     fn set_new_primary(&mut self, primary: Option<Peer>) {
+        let primary_id = primary.as_ref().map(|p| p.id);
+        self.current_primary = primary_id;
         let mut lock = self.shared.write().unwrap();
         lock.system_primary = primary;
     }
 
+    fn set_follower_status(&mut self, primary: Option<Peer>) {
+        info!("Transitioning to follower state with new primary: {:?}", primary);
+        self.primary_status_writer.set(false);
+        self.primary_state = None;
+        self.set_new_primary(primary);
+        self.state = State::Follower;
+    }
+
     fn send_append_entries(&mut self, controller_state: &mut ControllerState) {
-        let term = self.persistent.current_term;
-        self.connection_manager.broadcast_append_entries(term, controller_state);
+        let ClusterManager { ref mut primary_state, ref mut connection_manager, ref persistent, ..} = *self;
+
+        primary_state.as_mut().map(|state| {
+            let all_peers = persistent.cluster_members.iter().map(|peer| peer.id);
+            state.send_append_entries(controller_state, connection_manager.as_mut(), all_peers);
+        });
+    }
+
+    fn append_system_events(&mut self, events: &[OwnedFloEvent]) -> io::Result<EventCounter> {
+        // TODO: actually persist the system events from ApendEntries
+        if !events.is_empty() {
+            error!("Appending of system events was never implemented!!!, ignoring: {:?}", events);
+        }
+        Ok(0)
     }
 }
 
@@ -221,7 +257,7 @@ impl ConsensusProcessor for ClusterManager {
         self.connection_manager.send_to_peer(candidate_id, ConnectionControl::SendVoteResponse(response));
     }
 
-    fn vote_response_received(&mut self, now: Instant, from: ConnectionId, response: VoteResponse) {
+    fn vote_response_received(&mut self, now: Instant, from: ConnectionId, response: VoteResponse, controller: &mut ControllerState) {
         let peer_id = self.connection_manager.get_peer_id(from);
         if peer_id.is_none() {
             error!("Ignoring Vote Response from connection_id: {}: {:?}", from, response);
@@ -231,7 +267,7 @@ impl ConsensusProcessor for ClusterManager {
 
         if response.granted {
             if self.count_vote_response(peer_id) {
-                self.transition_to_primary();
+                self.transition_to_primary(controller);
             }
         } else {
             let response_term = response.term;
@@ -288,8 +324,55 @@ impl ConsensusProcessor for ClusterManager {
         self.state == State::Primary
     }
 
-    fn append_entries_received(&mut self, append: ReceiveAppendEntries, controller_state: &mut ControllerState) {
-        unimplemented!()
+    fn append_entries_received(&mut self, connection_id: ConnectionId, append: ReceiveAppendEntries, controller_state: &mut ControllerState) {
+        let from = self.connection_manager.get_peer_id(connection_id);
+        if from.is_none() {
+            error!("Received AppendEntries from connection_id: {}, which is not a peer connection, received: {:?}", connection_id, append);
+            return;
+        }
+        let peer_id = from.unwrap();
+        let my_current_term = self.persistent.current_term;
+
+        // Check if this message indicates a change of system primary
+        if self.current_primary.map(|current| current != peer_id).unwrap_or(true) {
+            // this message indicates a new primary, so we need to transition
+            // safe unwrap here since we are just receiving a message from this connection
+            let peer_address = controller_state.get_connection(connection_id).map(|conn| conn.remote_address).unwrap();
+            self.set_follower_status(Some(Peer {
+                id: peer_id,
+                address: peer_address
+            }));
+        }
+
+        self.update_last_heartbeat_to_now();
+
+        // TODO: check to see if we have an event at the previous index with a matching term
+        let response = match controller_state.get_next_event(append.prev_entry_index.saturating_sub(1)) {
+            Some(Ok((actual_prev_index, actual_prev_term))) => {
+                if actual_prev_index == append.prev_entry_index && actual_prev_term == append.prev_entry_term {
+                    // TODO: Append the new entries
+                    trace!("AppendEntries looks successful, will append: {} entries and return success", append.events.len());
+                    self.append_system_events(append.events.as_slice()).map(|last_counter| {
+                        Some(last_counter)
+                    }).unwrap_or_else(|io_err| {
+                        error!("Error appending system events: {:?}, returning false", io_err);
+                        None
+                    })
+                } else {
+                    info!("AppendEntries: {:?} does not match the prev index/term stored for this instance: index: {}, term: {}", append, actual_prev_index, actual_prev_term);
+                    None
+                }
+            }
+            other @ _ => {
+                error!("failed to read previous system event at: {} with err: {:?}", append.prev_entry_index, other);
+                None
+            }
+        };
+
+        self.connection_manager.send_to_peer(peer_id, ConnectionControl::SendAppendEntriesResponse(AppendEntriesResponse {
+            term: my_current_term,
+            success: response,
+        }));
     }
 
     fn append_entries_response_received(&mut self, connection_id: ConnectionId, response: AppendEntriesResponse, controller_state: &mut ControllerState) {
@@ -356,12 +439,92 @@ mod test {
     use std::path::{Path, PathBuf};
     use std::collections::HashSet;
     use tempdir::TempDir;
-    use engine::connection_handler::{ConnectionControlSender, ConnectionControlReceiver, ConnectionControl, CallAppendEntries};
-    use engine::controller::peer_connection::{OutgoingConnectionCreator, MockOutgoingConnectionCreator};
+    use engine::connection_handler::{ConnectionControlSender, ConnectionControlReceiver, ConnectionControl, CallAppendEntries, AppendEntriesStart};
     use test_utils::{addr, expect_future_resolved};
+    use engine::event_stream::partition::SegmentNum;
+    use engine::controller::peer_connection::{OutgoingConnectionCreator, MockOutgoingConnectionCreator};
     use engine::controller::cluster_state::peer_connections::mock::{MockPeerConnectionManager, Invocation};
     use engine::controller::controller_messages::mock::mock_connection_ref;
-    use engine::controller::mock::MockControllerState;
+    use engine::controller::mock::{MockControllerState, MockSystemEvent};
+
+    #[test]
+    fn reverts_to_follower_when_append_entries_is_received_from_another_peer() {
+        let start = Instant::now();
+        let temp_dir = TempDir::new("cluster_state_test").unwrap();
+        let connection_manager = MockPeerConnectionManager::new();
+        let peer_1 = Peer {
+            id: FloInstanceId::generate_new(),
+            address: addr("111.222.0.1:1000")
+        };
+        let peer_2 = Peer {
+            id: FloInstanceId::generate_new(),
+            address: addr("111.222.0.2:2000")
+        };
+        let peer_1_connection = 1;
+        let peer_2_connection = 2;
+        connection_manager.stub_peer_connection(peer_1_connection, peer_1.id);
+        connection_manager.stub_peer_connection(peer_2_connection, peer_2.id);
+
+        let mut subject = create_cluster_manager(vec![peer_1.address, peer_2.address], temp_dir.path(), connection_manager.boxed_ref());
+
+        subject.persistent.modify(|state| {
+            state.cluster_members.insert(peer_1.clone());
+            state.cluster_members.insert(peer_2.clone());
+            state.current_term = 5;
+        }).unwrap();
+        subject.last_applied = 99;
+        subject.last_applied_term = 4;
+        subject.state = State::Primary;
+        subject.primary_state = Some(PrimaryState::new(5));
+        subject.last_heartbeat = start;
+
+        let mock_system_events = vec![
+            MockSystemEvent {
+                id: 1,
+                term: 1,
+                segment: SegmentNum::new(1),
+                file_offset: 0,
+            },
+            MockSystemEvent {
+                id: 2,
+                term: 3,
+                segment: SegmentNum::new(1),
+                file_offset: 55,
+            },
+            MockSystemEvent {
+                id: 3,
+                term: 4,
+                segment: SegmentNum::new(2),
+                file_offset: 77,
+            },
+        ];
+
+        let (peer_1_tx, peer_1_rx) = ::engine::connection_handler::create_connection_control_channels();
+        let mut controller_state = MockControllerState::new()
+                .with_commit_index(2)
+                .with_mocked_events(mock_system_events.as_slice())
+                .with_connection(ConnectionRef {
+                    connection_id: peer_1_connection,
+                    remote_address: peer_1.address,
+                    control_sender: peer_1_tx,
+                });
+
+        let append = ReceiveAppendEntries {
+            term: 6,
+            prev_entry_index: 3,
+            prev_entry_term: 4,
+            commit_index: 3,
+            events: Vec::new(),
+        };
+        subject.append_entries_received(peer_1_connection, append, &mut controller_state);
+
+        assert_eq!(State::Follower, subject.state);
+        assert!(subject.primary_state.is_none());
+        let actual = subject.shared.read().unwrap();
+        assert_eq!(Some(peer_1.clone()), actual.system_primary);
+        assert_eq!(Some(peer_1.id), subject.current_primary);
+        assert!(!subject.primary_status_writer.get())
+    }
 
     #[test]
     fn append_entries_is_sent_on_tick_when_state_is_primary() {
@@ -391,12 +554,52 @@ mod test {
         subject.last_applied = 99;
         subject.last_applied_term = 4;
         subject.state = State::Primary;
+        subject.primary_state = Some(PrimaryState::new(5));
         subject.last_heartbeat = start;
 
-        let mut controller_state = MockControllerState::with_commit_index(101);
+        let mock_system_events = vec![
+            MockSystemEvent {
+                id: 1,
+                term: 1,
+                segment: SegmentNum::new(1),
+                file_offset: 0,
+            },
+            MockSystemEvent {
+                id: 2,
+                term: 3,
+                segment: SegmentNum::new(1),
+                file_offset: 55,
+            },
+            MockSystemEvent {
+                id: 3,
+                term: 4,
+                segment: SegmentNum::new(2),
+                file_offset: 77,
+            },
+        ];
+
+        let mut controller_state = MockControllerState::new().with_commit_index(2).with_mocked_events(mock_system_events.as_slice());
         subject.send_append_entries(&mut controller_state);
 
-        connection_manager.verify_in_order(&Invocation::BroadcastAppendEntries { term: 5 })
+        let expected = CallAppendEntries {
+            current_term: 5,
+            commit_index: 2,
+            reader_start_position: Some(AppendEntriesStart {
+                prev_entry_index: 2,
+                prev_entry_term: 3,
+                reader_start_offset: 77,
+                reader_start_segment: SegmentNum::new(2),
+            }),
+        };
+
+        connection_manager.verify_any_order(&Invocation::SendToPeer {
+            peer_id: peer_1.id,
+            connection_control: ConnectionControl::SendAppendEntries(expected.clone()),
+        });
+        connection_manager.verify_any_order(&Invocation::SendToPeer {
+            peer_id: peer_2.id,
+            connection_control: ConnectionControl::SendAppendEntries(expected.clone()),
+        });
     }
 
     #[test]
@@ -481,10 +684,12 @@ mod test {
         subject.last_heartbeat = start;
 
         assert!(subject.votes_received.is_empty());
+
+        let mut mock_controller = MockControllerState::new();
         subject.vote_response_received(t_millis(start, 4), unknown_connection, VoteResponse{
             term: 5,
             granted: true,
-        });
+        }, &mut mock_controller);
         assert!(subject.votes_received.is_empty());
     }
 
@@ -530,10 +735,11 @@ mod test {
         subject.state = State::Voted;
         subject.votes_received.insert(peer_1.id); // simulate one vote having been received already
 
+        let mut controller = MockControllerState::new();
         subject.vote_response_received(t_millis(start, 5), peer_2_connection, VoteResponse {
             term: 7,
             granted: false,
-        });
+        }, &mut controller);
         assert!(subject.votes_received.is_empty());
         assert_eq!(7, subject.persistent.current_term);
         assert_eq!(State::Follower, subject.state);
@@ -570,10 +776,11 @@ mod test {
         subject.last_heartbeat = start;
 
         assert!(subject.votes_received.is_empty());
+        let mut mock_controller = MockControllerState::new();
         subject.vote_response_received(t_millis(start, 4), peer_1_connection, VoteResponse{
             term: 7,
             granted: false
-        });
+        }, &mut mock_controller);
         assert!(subject.votes_received.is_empty());
         assert_eq!(7, subject.persistent.current_term);
     }
@@ -636,15 +843,17 @@ mod test {
 
         subject.vote_response_received(t_millis(election_start, 3), peer_1_connection, VoteResponse {
             term: 6, granted: true
-        });
+        }, &mut controller_state);
         assert_eq!(State::Voted, subject.state);
         subject.vote_response_received(t_millis(election_start, 3), peer_2_connection, VoteResponse {
             term: 6, granted: true
-        });
+        }, &mut controller_state);
         assert_eq!(State::Primary, subject.state);
-        assert!(subject.primary_status_writer.reader().get_relaxed());
+        assert!(subject.primary_status_writer.get());
         let shared = subject.shared.read().unwrap();
         assert!(shared.this_instance_is_primary());
+        let subject_id = subject.persistent.this_instance_id;
+        assert_eq!(Some(subject_id), subject.current_primary);
     }
 
     #[test]
@@ -1025,10 +1234,10 @@ impl ConsensusProcessor for NoOpConsensusProcessor {
     fn is_primary(&self) -> bool {
         true
     }
-    fn vote_response_received(&mut self, now: Instant, from: ConnectionId, response: VoteResponse) {
-
+    fn vote_response_received(&mut self, now: Instant, from: ConnectionId, response: VoteResponse, controller: &mut ControllerState) {
+        unimplemented!()
     }
-    fn append_entries_received(&mut self, append: ReceiveAppendEntries, controller_state: &mut ControllerState) {
+    fn append_entries_received(&mut self, connection_id: ConnectionId, append: ReceiveAppendEntries, controller_state: &mut ControllerState) {
         unimplemented!()
     }
 

@@ -8,8 +8,8 @@ flo-event = { path = "../flo-event" }
 flo-protocol = { path = "../flo-protocol" }
 flo-client-lib = { path = "../flo-client-lib" }
 num_cpus = "^1.2"
-log = "0.3"
-log4rs = "0.4"
+log = "0.4"
+log4rs = "0.8"
 clap = "2.5"
 nom = "2.0"
 byteorder = "1"

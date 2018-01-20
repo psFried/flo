@@ -17,7 +17,6 @@ impl Unpark for NoOpUnpark {
 }
 
 pub fn expect_future_resolved<F, T, E>(future: F) -> Result<T, E> where F: Future<Item=T, Error=E> {
-    let now = Instant::now();
     let mut s = spawn(future);
     let unpark = ::std::sync::Arc::new(NoOpUnpark);
     loop {

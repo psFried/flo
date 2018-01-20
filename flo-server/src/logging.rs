@@ -4,7 +4,7 @@ use log4rs::append::file::FileAppender;
 use log4rs::append::Append;
 use log4rs::init_config;
 
-use log::{LogLevelFilter, LogLevel};
+use log::{LevelFilter, Level};
 
 use std::boxed::Box;
 use std::str::FromStr;
@@ -21,7 +21,7 @@ pub enum LogFileOption {
 #[derive(Debug, PartialEq, Clone)]
 pub struct LogLevelOption {
     module: String,
-    log_level: LogLevel
+    log_level: Level
 }
 
 impl FromStr for LogLevelOption {
@@ -33,7 +33,7 @@ impl FromStr for LogLevelOption {
             return Err(format!("Invalid Log Option: '{}', must be in the format <module>=<level> (with exactly one '=')", s));
         }
 
-        LogLevel::from_str(parts[1]).map_err(|_| {
+        Level::from_str(parts[1]).map_err(|_| {
             format!("invalid log level: '{}'", parts[1])
         }).map(|level| {
             LogLevelOption {
@@ -59,14 +59,14 @@ pub fn init_logging(log_dest: LogFileOption, levels: Vec<LogLevelOption>) {
 
     let override_default = levels.iter().any(|level_opt| DEFAULT_LOG_MODULE == &level_opt.module);
     if !override_default {
-        config = config.logger(Logger::builder().additive(true).build("flo".to_owned(), LogLevelFilter::Info));
+        config = config.logger(Logger::builder().additive(true).build("flo".to_owned(), LevelFilter::Info));
     }
 
     for level_opt in levels {
-        config = config.logger(Logger::builder().additive(true).build(level_opt.module, level_opt.log_level.to_log_level_filter()));
+        config = config.logger(Logger::builder().additive(true).build(level_opt.module, level_opt.log_level.to_level_filter()));
     }
 
-    let root = Root::builder().appender(LOG_APPENDER.to_string()).build(LogLevelFilter::Warn);
+    let root = Root::builder().appender(LOG_APPENDER.to_string()).build(LevelFilter::Warn);
     let config = config.build(root).unwrap();
     init_config(config).unwrap();
 }
@@ -74,9 +74,9 @@ pub fn init_logging(log_dest: LogFileOption, levels: Vec<LogLevelOption>) {
 #[cfg(test)]
 mod test {
     use super::*;
-    use log::LogLevel;
+    use log::Level;
 
-    fn test_valid_log_option(module: &str, level_str: &str, level: LogLevel) {
+    fn test_valid_log_option(module: &str, level_str: &str, level: Level) {
         let input = format!("{}={}", module, level_str);
 
         let result = LogLevelOption::from_str(&input).expect("failed to create log option");
@@ -101,16 +101,16 @@ mod test {
 
     #[test]
     fn log_option_is_created_from_str_with_valid_log_level() {
-        test_valid_log_option("my::module", "trace", LogLevel::Trace);
-        test_valid_log_option("my::module", "TRACE", LogLevel::Trace);
-        test_valid_log_option("my::module", "TraCe", LogLevel::Trace);
-        test_valid_log_option("my::module", "debug", LogLevel::Debug);
-        test_valid_log_option("my::module", "Debug", LogLevel::Debug);
-        test_valid_log_option("my::module", "info", LogLevel::Info);
-        test_valid_log_option("my::module", "iNFo", LogLevel::Info);
-        test_valid_log_option("my::module", "warn", LogLevel::Warn);
-        test_valid_log_option("my::module", "WARN", LogLevel::Warn);
-        test_valid_log_option("my::module", "error", LogLevel::Error);
-        test_valid_log_option("my::module", "erroR", LogLevel::Error);
+        test_valid_log_option("my::module", "trace", Level::Trace);
+        test_valid_log_option("my::module", "TRACE", Level::Trace);
+        test_valid_log_option("my::module", "TraCe", Level::Trace);
+        test_valid_log_option("my::module", "debug", Level::Debug);
+        test_valid_log_option("my::module", "Debug", Level::Debug);
+        test_valid_log_option("my::module", "info", Level::Info);
+        test_valid_log_option("my::module", "iNFo", Level::Info);
+        test_valid_log_option("my::module", "warn", Level::Warn);
+        test_valid_log_option("my::module", "WARN", Level::Warn);
+        test_valid_log_option("my::module", "error", Level::Error);
+        test_valid_log_option("my::module", "erroR", Level::Error);
     }
 }

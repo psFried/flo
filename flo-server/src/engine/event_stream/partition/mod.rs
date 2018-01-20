@@ -70,6 +70,11 @@ impl SegmentNum {
         SegmentNum(0)
     }
 
+    #[cfg(test)]
+    pub fn new(num: u64) -> SegmentNum {
+        SegmentNum(num)
+    }
+
     /// returns true if this segment is non-zero
     pub fn is_set(&self) -> bool {
         self.0 > 0
