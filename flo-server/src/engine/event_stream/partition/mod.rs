@@ -349,7 +349,7 @@ pub fn run_partition(partition_impl: PartitionImpl, primary_server_addr: Arc<RwL
     // drop the join handle and just let the thread go on its own
     // Failures will be detected by the channels used to communicate with the partition
     thread::Builder::new().name(thread_name).spawn(move || {
-        info!("Starting partition: {} of event stream: '{}'", &partition_impl.event_stream_name(), partition_num);
+        info!("Starting partition: {} of event stream: '{}'", partition_num, &partition_impl.event_stream_name());
 
         let mut partition_controller = partition_impl;
 

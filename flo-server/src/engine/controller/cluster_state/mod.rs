@@ -234,7 +234,7 @@ impl ClusterManager {
         self.primary_status_writer.set(false);
         self.primary_state = None;
         self.set_new_primary(primary);
-        self.state = State::Follower;
+        self.transition_state(State::Follower);
     }
 
     fn append_system_events(&mut self, events: &[OwnedFloEvent]) -> io::Result<EventCounter> {

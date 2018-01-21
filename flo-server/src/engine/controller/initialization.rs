@@ -183,7 +183,8 @@ fn init_user_streams(storage_dir: &Path, options: &EventStreamOptions, remote: &
         }
     }
 
-    if !user_streams.contains_key(&options.name) {
+    if !user_streams.contains_key(&options.name) && SYSTEM_STREAM_NAME != options.name.as_str() {
+        info!("Initializing new default event stream: '{}'", options.name);
         let new_stream_dir = storage_dir.join(&options.name);
         let new_stream = init_new_event_stream(
             new_stream_dir,

@@ -6,6 +6,7 @@ use super::{Context, FloCliCommand};
 pub struct ProduceOptions {
     pub host: String,
     pub port: u16,
+    pub event_stream: Option<String>,
     pub namespace: String,
     pub partition: ActorId,
     pub event_data: Vec<Vec<u8>>,
@@ -19,13 +20,29 @@ impl FloCliCommand for Producer {
     type Input = ProduceOptions;
     type Error = String;
 
-    fn run(ProduceOptions{host, port, partition, namespace, event_data, parent_id}: ProduceOptions, output: &Context) -> Result<(), Self::Error> {
+    fn run(ProduceOptions{host, port, event_stream, partition, namespace, event_data, parent_id}: ProduceOptions, output: &Context) -> Result<(), Self::Error> {
         let server_address = format!("{}:{}", host, port);
         output.verbose(format!("Attempting connection to: {:?} to produce {} events", &server_address, event_data.len()));
         SyncConnection::connect_from_str(&server_address, "flo-client-cli", RawCodec, None).map_err(|handshake_err| {
             format!("Error establishing connection to flo server: {}", handshake_err)
         }).and_then(|mut connection| {
             output.debug(format!("connected to {}", &server_address));
+            if let Some(stream) = event_stream {
+                connection.set_event_stream(stream).map_err(|err| {
+                    format!("Error setting event stream: {:?}", err)
+                }).map(|_| {
+                    connection
+                })
+            } else {
+                Ok(connection)
+            }
+
+        }).and_then(|mut connection| {
+            {
+                let status = connection.current_stream().unwrap();
+                output.debug(format!("stream status: {:?}", status));
+                output.normal(format!("Using event stream: '{}'", &status.name));
+            }
 
             event_data.into_iter().fold(Ok(0), |events_produced, event_data| {
                 events_produced.and_then(|count| {

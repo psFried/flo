@@ -23,6 +23,7 @@ mod args {
     pub const VERBOSE: &'static str = "verbose";
     pub const HOST: &'static str = "server-host";
     pub const PORT: &'static str = "server-port";
+    pub const EVENT_STREAM: &'static str = "event-stream";
     pub const NAMESPACE: &'static str = "namespace";
 
     //produce options
@@ -58,6 +59,11 @@ fn create_app_args() -> App<'static, 'static> {
                     .long("port")
                     .help("The port number of the flo server")
                     .default_value("3000"))
+            .arg(Arg::with_name(args::EVENT_STREAM)
+                    .short("e")
+                    .long("event-stream")
+                    .takes_value(true)
+                    .help("The name of the event stream to interact with. Uses the default stream defined by the server if unspecified"))
             .subcommand(SubCommand::with_name(args::PRODUCE)
                     .about("Used to produce events onto the stream")
                     .arg(Arg::with_name(args::NAMESPACE)
@@ -118,6 +124,7 @@ fn main() {
     let context = create_context(&args);
     let host = args.value_of(args::HOST).or_abort_process(&context).to_owned();
     let port = args.value_of(args::PORT).or_abort_process(&context).parse::<u16>().or_abort_with_message("invalid port argument", &context);
+    let event_stream = args.value_of(args::EVENT_STREAM).map(|stream| stream.to_owned());
 
     match args.subcommand() {
         (args::PRODUCE, Some(produce_args)) => {
@@ -128,6 +135,7 @@ fn main() {
             let produce_options = ProduceOptions {
                 host,
                 port,
+                event_stream,
                 namespace,
                 partition,
                 event_data,
@@ -143,13 +151,14 @@ fn main() {
             let batch_size = parse_opt_or_exit::<u32>(args::CONSUME_BATCH, &consume_args, &context);
 
             let consume_opts = CliConsumerOptions {
-                host: host,
-                port: port,
-                namespace: namespace,
-                start_position: start_position,
-                limit: limit,
-                await: await,
-                batch_size: batch_size,
+                host,
+                port,
+                event_stream,
+                namespace,
+                start_position,
+                limit,
+                await,
+                batch_size,
             };
 
             ::client_cli::run::<CliConsumer>(consume_opts, context);

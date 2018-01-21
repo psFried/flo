@@ -86,6 +86,12 @@ impl EngineRef {
     }
 
     pub fn get_stream(&self, stream_name: &str) -> Result<EventStreamRef, ConnectError> {
+        if stream_name == SYSTEM_STREAM_NAME {
+            // user wants to interact with the system stream, so we'll convert it to a "normal" stream ref
+            return Ok(self.system_stream.to_event_stream());
+        }
+
+        // go for a user stream
         let streams = self.event_streams.lock().unwrap();
         if let Some(stream) = streams.get(stream_name).map(|s| s.clone()) {
             Ok(stream)

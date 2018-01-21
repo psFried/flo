@@ -4,6 +4,7 @@ mod await_response;
 mod consume;
 mod request_response;
 mod handshake;
+mod set_event_stream;
 
 pub use self::send_message::{SendMessage, SendError};
 pub use self::await_response::{AwaitResponse, AwaitResponseError};
@@ -11,3 +12,4 @@ pub use self::produce::{ProduceOne, ProduceErr, EventToProduce, ProduceAll, Prod
 pub use self::consume::{Consume, ConsumeError};
 pub use self::request_response::{RequestResponse, RequestResponseError};
 pub use self::handshake::{Handshake, HandshakeError};
+pub use self::set_event_stream::{SetEventStream, SetEventStreamError};

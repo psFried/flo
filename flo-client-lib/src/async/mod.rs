@@ -20,7 +20,7 @@ use event::{FloEventId, ActorId, VersionVector, OwnedFloEvent};
 use codec::EventCodec;
 use self::recv::MessageRecvStream;
 use self::send::MessageSendSink;
-use self::ops::{ProduceOne, ProduceAll, EventToProduce, Consume, Handshake};
+use self::ops::{ProduceOne, ProduceAll, EventToProduce, Consume, Handshake, SetEventStream};
 
 
 pub use self::tcp_connect::{tcp_connect, tcp_connect_with, AsyncTcpClientConnect};
@@ -89,6 +89,14 @@ impl <D: Debug> AsyncConnection<D> {
     /// this function does not actually query the state, but just returns the result from the last query or handshake.
     pub fn current_stream(&self) -> Option<&CurrentStreamState> {
         self.inner.current_stream.as_ref()
+    }
+
+    /// Sets the event stream to use with this connection. If unset, then the default stream configured in the server will
+    /// be used. If the returned future completed successfully, then the connection will use the given event stream for all
+    /// operations from this point forward, and `current_steam` will return a `CurrentStreamState` corresponding to the given
+    /// stream.
+    pub fn set_event_stream<S: Into<String>>(self, new_stream: S) -> SetEventStream<D> {
+        SetEventStream::new(self, new_stream.into())
     }
 
     /// Produce a single event on the stream and await acknowledgement that it was persisted. Returns a future that resolves

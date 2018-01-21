@@ -6,6 +6,7 @@ use flo_client_lib::{Event, FloEventId, VersionVector};
 use std::fmt::{self, Display};
 
 pub struct CliConsumerOptions {
+    pub event_stream: Option<String>,
     pub host: String,
     pub port: u16,
     pub namespace: String,
@@ -23,13 +24,21 @@ impl FloCliCommand for CliConsumer {
     type Error = ConsumerError;
 
     fn run(input: Self::Input, output: &CliContext) -> Result<(), Self::Error> {
-        let CliConsumerOptions { host, port, namespace, limit, await, start_position, batch_size} = input;
-
+        let CliConsumerOptions { host, port, event_stream, namespace, limit, await, start_position, batch_size} = input;
 
         let address = format!("{}:{}", host, port);
 
         output.verbose(format!("Connecting to: {}", &address));
-        let connection = SyncConnection::connect_from_str(&address, "flo-client-cli", LossyStringCodec, batch_size)?;
+        let mut connection = SyncConnection::connect_from_str(&address, "flo-client-cli", LossyStringCodec, batch_size)?;
+
+        if let Some(stream) = event_stream {
+            connection.set_event_stream(stream)?;
+        }
+        {
+            let status = connection.current_stream().unwrap();
+            output.debug(format!("stream status: {:?}", status));
+            output.normal(format!("Using event stream: '{}'", &status.name));
+        }
 
         let mut version_vector = VersionVector::new();
         if let Some(id) = start_position {
