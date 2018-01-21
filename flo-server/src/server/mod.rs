@@ -44,7 +44,7 @@ pub fn run(mut options: ServerOptions) -> io::Result<()> {
     let controller_options = ControllerOptions {
         storage_dir: options.data_dir.clone(),
         default_stream_options: EventStreamOptions{
-            name: system_stream_name(),
+            name: "user".to_owned(),
             num_partitions: 1,
             event_retention: options.event_retention_duration,
             max_segment_duration: options.event_eviction_period,
