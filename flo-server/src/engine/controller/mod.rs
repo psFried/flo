@@ -83,7 +83,7 @@ impl FloController {
                 controller_state.all_connections.insert(connection_id, connection_ref);
             }
             SystemOpType::ConnectionClosed => {
-                // TODO: do we need to inform ConsensusProcessor about the connection in case it is a peer connection?
+                cluster_state.connection_closed(connection_id);
                 controller_state.all_connections.remove(&connection_id);
             }
             SystemOpType::OutgoingConnectionFailed(address) => {

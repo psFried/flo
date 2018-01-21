@@ -20,7 +20,6 @@ pub trait ControllerState {
     fn get_last_committed(&mut self) -> io::Result<(EventCounter, Term)>;
     fn get_next_event(&mut self, start_after: EventCounter) -> Option<io::Result<(EventCounter, Term)>>;
 
-    fn set_commit_index(&mut self, new_index: EventCounter);
     fn get_next_entry(&self, event_counter: EventCounter) -> Option<IndexEntry>;
     fn get_current_file_offset(&self) -> (SegmentNum, usize);
 }
@@ -96,10 +95,6 @@ impl ControllerState for ControllerStateImpl {
         self.all_connections.get(&connection_id)
     }
 
-    fn set_commit_index(&mut self, new_index: EventCounter) {
-        self.system_partition.set_commit_index(new_index);
-    }
-
     fn get_next_entry(&self, previous: EventCounter) -> Option<IndexEntry> {
         self.system_partition.get_next_index_entry(previous)
     }
@@ -155,7 +150,7 @@ pub mod mock {
         }
 
         pub fn with_commit_index(mut self, index: EventCounter) -> MockControllerState {
-            self.set_commit_index(index);
+            self.commit_index = index;
             self
         }
 
@@ -196,9 +191,6 @@ pub mod mock {
             self.system_events.values().last().map(|sys| {
                 (sys.segment, sys.file_offset)
             }).unwrap_or((SegmentNum::new_unset(), 0))
-        }
-        fn set_commit_index(&mut self, new_index: EventCounter) {
-            self.commit_index = new_index;
         }
         fn get_last_committed(&mut self) -> io::Result<(EventCounter, Term)> {
             let commit_idx = self.commit_index;
