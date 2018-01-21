@@ -27,7 +27,7 @@ pub struct PeerConnectionState {
     controller_operation_queue: VecDeque<u32>,
     peer_operation_queue: VecDeque<u32>,
     system_partition_reader: Option<SystemReaderWrapper>,
-    this_instance_id: Option<FloInstanceId>,
+    this_peer_info: Option<Peer>,
     in_progress_append: Option<controller::ReceiveAppendEntries>,
 }
 
@@ -40,7 +40,7 @@ impl PeerConnectionState {
             controller_operation_queue: VecDeque::new(),
             peer_operation_queue: VecDeque::new(),
             system_partition_reader: None,
-            this_instance_id: None,
+            this_peer_info: None,
             in_progress_append: None,
         }
     }
@@ -145,22 +145,27 @@ impl PeerConnectionState {
     pub fn send_append_entries(&mut self, append: CallAppendEntries, state: &mut ConnectionState) -> ConnectionHandlerResult {
         let op_id = self.next_op_id();
         self.peer_operation_queue.push_back(op_id);
-        let this_instance_id = self.get_this_instance_id(state);
+        let this_peer = self.get_this_peer_info(state);
 
         if self.system_partition_reader.is_none() {
             self.system_partition_reader = Some(SystemReaderWrapper::new(state));
         }
         let reader = self.system_partition_reader.as_mut().unwrap();
 
-        reader.send_append_entries(op_id, this_instance_id, append, state)
+        reader.send_append_entries(op_id, this_peer.id, append, state)
     }
 
-    fn get_this_instance_id(&mut self, state: &mut ConnectionState) -> FloInstanceId {
-        if self.this_instance_id.is_none() {
-            let id = state.get_system_stream().with_cluster_state(|cluster_state| cluster_state.this_instance_id);
-            self.this_instance_id = Some(id);
+    fn get_this_peer_info(&mut self, state: &mut ConnectionState) -> Peer {
+        if self.this_peer_info.is_none() {
+            let peer = state.get_system_stream().with_cluster_state(|cluster_state| {
+                Peer {
+                    id: cluster_state.this_instance_id,
+                    address: cluster_state.this_address.clone().unwrap()
+                }
+            });
+            self.this_peer_info = Some(peer);
         }
-        self.this_instance_id.unwrap()
+        self.this_peer_info.as_ref().cloned().unwrap()
     }
 
     pub fn vote_response_received(&mut self, response: protocol::RequestVoteResponse, state: &mut ConnectionState) -> ConnectionHandlerResult {
@@ -270,20 +275,25 @@ impl PeerConnectionState {
         state.set_to_system_stream();
 
         let PeerAnnounce {instance_id, system_primary_id, cluster_members, ..} = announce;
+        let maybe_peer = cluster_members.iter().find(|member| {
+            member.id == instance_id
+        }).map(|member| member_to_peer(member.clone()) );
+
+        if maybe_peer.is_none() {
+            return Err(format!("Received invalid peer announce message. Missing a cluster member for the instance identified as peer: {:?}, in: {:?}", instance_id, cluster_members));
+        }
+
+        let peer = maybe_peer.unwrap();
         let primary = system_primary_id.and_then(|primary_id| {
             cluster_members.iter().find(|member| {
                 member.id == primary_id
-            }).map(|member| {
-                Peer {
-                    id: member.id,
-                    address: member.address,
-                }
-            })
+            }).map(|member| member_to_peer(member.clone()))
         });
+
         let peers = cluster_members.into_iter().map(|member| {
             member_to_peer(member)
         }).collect();
-        state.get_system_stream().connection_upgraded_to_peer(connection_id, announce.instance_id, primary, peers);
+        state.get_system_stream().connection_upgraded_to_peer(connection_id, peer, primary, peers);
         Ok(())
     }
 
@@ -293,12 +303,20 @@ impl PeerConnectionState {
             let instance_id = state.this_instance_id;
             let address = state.this_address.expect("Attempted to send PeerAnnounce, but system is not in cluster mode");
             let system_primary_id = state.system_primary.as_ref().map(|peer| peer.id);
-            let cluster_members = state.peers.iter().map(|peer| {
+            let mut cluster_members = state.peers.iter().map(|peer| {
                 ClusterMember {
                     id: peer.id,
                     address: peer.address,
                 }
             }).collect::<Vec<_>>();
+
+            // The members enumerated in the shared state do not include an entry for this instance, only the _other_ instances
+            // in the cluster. The PeerAnnounce protocol message requires an entry for _every_ member, including this one.
+            // So, we always add an entry for ourselves when creating the message
+            cluster_members.push(ClusterMember {
+                id: instance_id,
+                address
+            });
 
             PeerAnnounce {
                 op_id,

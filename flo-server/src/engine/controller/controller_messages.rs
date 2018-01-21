@@ -61,7 +61,7 @@ pub struct Peer {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PeerUpgrade {
-    pub peer_id: FloInstanceId,
+    pub peer: Peer,
     pub system_primary: Option<Peer>,
     pub cluster_members: Vec<Peer>,
 }
@@ -116,9 +116,9 @@ impl SystemOperation {
         SystemOperation::new(connection_id, SystemOpType::RequestVote(request))
     }
 
-    pub fn connection_upgraded_to_peer(connection_id: ConnectionId, peer_id: FloInstanceId, system_primary: Option<Peer>, cluster_members: Vec<Peer>) -> SystemOperation {
+    pub fn connection_upgraded_to_peer(connection_id: ConnectionId, peer: Peer, system_primary: Option<Peer>, cluster_members: Vec<Peer>) -> SystemOperation {
         let upgrade = PeerUpgrade {
-            peer_id,
+            peer,
             system_primary,
             cluster_members
         };

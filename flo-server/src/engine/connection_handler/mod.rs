@@ -27,6 +27,7 @@ pub fn create_connection_control_channels() -> (ConnectionControlSender, Connect
     ::futures::sync::mpsc::unbounded()
 }
 
+#[derive(Debug)]
 pub struct ConnectionHandler {
     common_state: ConnectionState,
     consumer_state: ConsumerConnectionState,
@@ -147,6 +148,7 @@ impl Sink for ConnectionHandler {
         }.map(|()| {
             AsyncSink::Ready
         }).map_err(|err_string| {
+            warn!("Error in connection handler: '{}' - handler: {:#?}", err_string, self);
             io::Error::new(io::ErrorKind::Other, err_string)
         })
     }
@@ -174,18 +176,6 @@ impl Drop for ConnectionHandler {
         consumer_state.shutdown(common_state);
     }
 }
-
-
-impl Debug for ConnectionHandler {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_struct("ConnectionHandler")
-                .field("common_state", &self.common_state)
-                .field("consumer_state", &self.consumer_state)
-                .field("producer_state", &self.producer_state)
-                .finish()
-    }
-}
-
 
 
 #[cfg(test)]
@@ -225,13 +215,14 @@ mod test {
         fn create_outgoing_peer_connection() -> (ConnectionHandler, Fixture) {
             let (mut subject, mut fixture) = Fixture::create();
             subject.handle_control(ConnectionControl::InitiateOutgoingSystemConnection).unwrap();
+
             let announce = PeerAnnounce {
                 protocol_version: 1,
                 peer_address: fixture.instance_addr,
                 op_id: 1,
                 instance_id: fixture.instance_id,
                 system_primary_id: None,
-                cluster_members: Vec::new(),
+                cluster_members: vec![ClusterMember{id: fixture.instance_id, address: fixture.instance_addr}],
             };
             fixture.assert_sent_to_client(ProtocolMessage::PeerAnnounce(announce.clone()));
 
@@ -240,14 +231,20 @@ mod test {
             let response = PeerAnnounce {
                 peer_address: peer_addr,
                 instance_id: peer_id,
+                cluster_members: vec![ClusterMember {id: peer_id, address: peer_addr}],
                 .. announce
             };
             // get the response
             subject.handle_incoming_message(ProtocolMessage::PeerAnnounce(response)).unwrap();
+
+            let expected_peer = Peer {
+                id: peer_id,
+                address: peer_addr,
+            };
             fixture.assert_sent_to_system_stream(SystemOpType::ConnectionUpgradeToPeer(PeerUpgrade {
-                peer_id,
+                peer: expected_peer.clone(),
                 system_primary: None,
-                cluster_members: Vec::new(),
+                cluster_members: vec![expected_peer.clone()],
             }));
             (subject, fixture)
         }

@@ -78,6 +78,11 @@ impl PartitionReader {
         unimplemented!()
     }
 
+    pub fn set_to_beginning(&mut self) {
+        self.current_segment_reader = None;
+        self.clear_error();
+    }
+
     pub fn set_to(&mut self, segment_num: SegmentNum, offset: usize) -> io::Result<()> {
         if !segment_num.is_set() {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "Cannot set PartitionReader segment to 0"));
@@ -90,6 +95,7 @@ impl PartitionReader {
             self.current_segment_reader = Some(segment);
         }
         self.current_segment_reader.as_mut().unwrap().set_offset(offset);
+        self.clear_error();
         Ok(())
     }
 
@@ -97,6 +103,10 @@ impl PartitionReader {
         self.current_segment_reader.as_ref().map(|segment| {
             (segment.segment_id, segment.current_offset())
         }).unwrap_or((SegmentNum(0), 0))
+    }
+
+    fn clear_error(&mut self) {
+        self.returned_error = false;
     }
 
     fn should_skip(&self, result: &Option<Result<PersistentEvent, io::Error>>) -> bool {

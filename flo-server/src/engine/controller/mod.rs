@@ -77,24 +77,39 @@ impl FloController {
         }
         // TODO: time operation handling and record perf metrics
 
+        let FloController{ref mut cluster_state, ref mut controller_state, ..} = *self;
         match op_type {
             SystemOpType::IncomingConnectionEstablished(connection_ref) => {
-                self.controller_state.all_connections.insert(connection_id, connection_ref);
+                controller_state.all_connections.insert(connection_id, connection_ref);
+            }
+            SystemOpType::ConnectionClosed => {
+                // TODO: do we need to inform ConsensusProcessor about the connection in case it is a peer connection?
+                controller_state.all_connections.remove(&connection_id);
             }
             SystemOpType::OutgoingConnectionFailed(address) => {
-                self.controller_state.all_connections.remove(&connection_id);
-                self.cluster_state.outgoing_connection_failed(connection_id, address);
+                cluster_state.outgoing_connection_failed(connection_id, address);
+                controller_state.all_connections.remove(&connection_id);
             }
             SystemOpType::ConnectionUpgradeToPeer(upgrade) => {
-                let FloController{ref mut cluster_state, ref mut controller_state, ..} = *self;
                 cluster_state.peer_connection_established(upgrade, connection_id, controller_state);
             }
             SystemOpType::Tick => {
-                let FloController{ref mut cluster_state, ref mut controller_state, ..} = *self;
                 cluster_state.tick(op_start_time, controller_state);
             }
-            other @ _ => {
-                warn!("Ignoring SystemOperation: {:?}", other);
+            SystemOpType::RequestVote(request) => {
+                cluster_state.request_vote_received(connection_id, request);
+            }
+            SystemOpType::VoteResponseReceived(response) => {
+                cluster_state.vote_response_received(op_start_time, connection_id, response, controller_state);
+            }
+            SystemOpType::AppendEntriesReceived(append) => {
+                cluster_state.append_entries_received(connection_id, append, controller_state);
+            }
+            SystemOpType::AppendEntriesResponseReceived(response) => {
+                cluster_state.append_entries_response_received(connection_id, response, controller_state);
+            }
+            SystemOpType::PartitionOp(partition_op) => {
+                warn!("Ignoring PartitionOp: {:?}", partition_op);
             }
         }
     }

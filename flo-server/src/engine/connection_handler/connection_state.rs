@@ -1,4 +1,4 @@
-
+use std::fmt::{self, Debug};
 use tokio_core::reactor::Handle;
 
 use protocol::*;
@@ -11,7 +11,6 @@ use super::ConnectionHandlerResult;
 
 const DEFAULT_CONSUME_BATCH_SIZE: u32 = 10_000;
 
-#[derive(Debug)]
 pub struct ConnectionState {
     pub client_name: Option<String>,
     pub connection_id: ConnectionId,
@@ -22,6 +21,16 @@ pub struct ConnectionState {
     pub consume_batch_size: u32,
 }
 
+impl Debug for ConnectionState {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("ConnectionState")
+                .field("connection_id", &self.connection_id)
+                .field("client_name", &self.client_name)
+                .field("event_stream", &self.event_stream.name())
+                .field("consume_batch_size", &self.consume_batch_size)
+                .finish()
+    }
+}
 
 impl ConnectionState {
     pub fn new(connection_id: ConnectionId, client_sender: ClientSender, engine: EngineRef, reactor: Handle) -> ConnectionState {

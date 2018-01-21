@@ -39,6 +39,7 @@ pub fn run(mut options: ServerOptions) -> io::Result<()> {
             event_loop_handles: event_loop_handles.clone(),
         }
     });
+    info!("Using {:?}", cluster_options);
 
     let controller_options = ControllerOptions {
         storage_dir: options.data_dir.clone(),

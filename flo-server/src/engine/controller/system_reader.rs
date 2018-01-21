@@ -27,7 +27,12 @@ impl SystemStreamReader {
 
     /// sets the reader to the given segment and offset if it's not already there
     pub fn set_to(&mut self, segment: SegmentNum, offset: usize) -> io::Result<()> {
-        self.inner.set_to(segment, offset)
+        if segment.is_set() {
+            self.inner.set_to(segment, offset)
+        } else {
+            self.inner.set_to_beginning();
+            Ok(())
+        }
     }
 
     pub fn fill_buffer(&mut self, event_buffer: &mut Vec<SystemEvent<PersistentEvent>>) -> io::Result<usize> {

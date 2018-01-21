@@ -69,8 +69,8 @@ impl SystemStreamRef {
         self.send(op);
     }
 
-    pub fn connection_upgraded_to_peer(&mut self, connection_id: ConnectionId, peer_id: FloInstanceId, system_primary: Option<Peer>, cluster_members: Vec<Peer>) {
-        let op = SystemOperation::connection_upgraded_to_peer(connection_id, peer_id, system_primary, cluster_members);
+    pub fn connection_upgraded_to_peer(&mut self, connection_id: ConnectionId, peer: Peer, system_primary: Option<Peer>, cluster_members: Vec<Peer>) {
+        let op = SystemOperation::connection_upgraded_to_peer(connection_id, peer, system_primary, cluster_members);
         self.send(op);
     }
 

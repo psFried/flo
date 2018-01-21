@@ -35,6 +35,7 @@ pub trait ConsensusProcessor: Send {
     fn is_primary(&self) -> bool;
     fn peer_connection_established(&mut self, upgrade: PeerUpgrade, connection_id: ConnectionId, controller_state: &ControllerState);
     fn outgoing_connection_failed(&mut self, connection_id: ConnectionId, address: SocketAddr);
+    fn connection_closed(&mut self, connection_id: ConnectionId);
 
     fn request_vote_received(&mut self, from: ConnectionId, request: CallRequestVote);
     fn vote_response_received(&mut self, now: Instant, from: ConnectionId, response: VoteResponse, controller: &mut ControllerState);
@@ -115,9 +116,9 @@ impl ClusterManager {
     }
 
     fn determine_primary_from_peer_upgrade(&mut self, upgrade: PeerUpgrade) {
-        let PeerUpgrade { peer_id, system_primary, .. } = upgrade;
+        let PeerUpgrade { peer, system_primary, .. } = upgrade;
         if let Some(primary) = system_primary {
-            info!("Determined primary of {:?} at {}, as told by instance: {:?}", primary.id, primary.address, peer_id);
+            info!("Determined primary of {:?} at {}, as told by instance: {:?}", primary.id, primary.address, peer);
             self.transition_state(State::Follower);
             {
                 let mut lock = self.system_partition_primary_address.write().unwrap();
@@ -128,7 +129,7 @@ impl ClusterManager {
                 shared.system_primary = Some(primary);
             }
         } else {
-            debug!("peer announce from {:?} has unknown primary", peer_id);
+            debug!("peer announce from {:?} has unknown primary", peer);
         }
     }
 
@@ -142,7 +143,10 @@ impl ClusterManager {
     }
 
     fn election_timed_out(&self, now: Instant) -> bool {
-        now - self.last_heartbeat > self.election_timeout
+        // since `now` comes from the original Tick operation, it's possible that the `last_heartbeat` was since updated
+        // and ends up being after `now`. If we don't check for this case, it can cause the controller to panic
+        now > self.last_heartbeat &&
+                (now - self.last_heartbeat) > self.election_timeout
     }
 
     fn start_new_election(&mut self) {
@@ -161,12 +165,26 @@ impl ClusterManager {
             last_log_term: self.last_applied_term,
         });
         self.connection_manager.broadcast_to_peers(connection_control);
-        self.transition_state(State::Voted)
+        self.transition_state(State::Voted);
+        // update the timestamp to make sure that we allow the proper amount of time for this election
+        self.update_last_heartbeat_to_now();
     }
 
     fn can_grant_vote(&self, request: &CallRequestVote) -> bool {
-        (self.persistent.voted_for.is_none() || self.persistent.voted_for == Some(request.candidate_id)) &&
-                self.persistent.current_term <= request.term &&
+        let request_term = request.term;
+        let my_term = self.persistent.current_term;
+
+        if request_term < my_term {
+            return false;
+        } else if request_term == my_term {
+            if self.persistent.voted_for == Some(request.candidate_id) {
+                return true;
+            } else if self.persistent.voted_for.is_some() {
+                return false;
+            }
+        }
+
+        self.persistent.current_term <= request_term &&
                 self.last_applied <= request.last_log_index &&
                 self.last_applied_term <= request.last_log_term &&
                 self.persistent.cluster_members.iter().any(|peer| peer.id == request.candidate_id)
@@ -232,12 +250,26 @@ impl ClusterManager {
         }
         Ok(0)
     }
+
+    fn create_append_result(&mut self, events: &[OwnedFloEvent]) -> Option<EventCounter> {
+        trace!("AppendEntries looks successful, will append: {} entries", events.len());
+        self.append_system_events(events).map(|last_counter| {
+            Some(last_counter)
+        }).unwrap_or_else(|io_err| {
+            error!("Error appending system events: {:?}, returning false", io_err);
+            None
+        })
+    }
 }
 
 impl ConsensusProcessor for ClusterManager {
     fn outgoing_connection_failed(&mut self, connection_id: ConnectionId, address: SocketAddr) {
         self.connection_manager.outgoing_connection_failed(connection_id, address);
         self.connection_resolved(address);
+    }
+
+    fn connection_closed(&mut self, connection_id: ConnectionId) {
+        self.connection_manager.connection_closed(connection_id);
     }
 
     fn request_vote_received(&mut self, from: ConnectionId, request: CallRequestVote) {
@@ -254,6 +286,7 @@ impl ConsensusProcessor for ClusterManager {
             VoteResponse { term: self.persistent.current_term, granted: false, }
         };
 
+        debug!("Got request vote from connection_id: {}: {:?} - sending response: {:?}", from, request, response);
         self.connection_manager.send_to_peer(candidate_id, ConnectionControl::SendVoteResponse(response));
     }
 
@@ -273,8 +306,8 @@ impl ConsensusProcessor for ClusterManager {
             let response_term = response.term;
             debug!("VoteResponse from {:?} was not granted, response term: {}, current_term: {}", peer_id, response_term, self.persistent.current_term);
             if response_term > self.persistent.current_term {
-                info!("Received response term of {}, which is greater than current term of: {}. Updating current term and clearing out {} existing votes",
-                        response_term, self.persistent.current_term, self.votes_received.len());
+                info!("Received response term of {} from peer: {:?}, which is greater than current term of: {}. Updating current term and clearing out {} existing votes",
+                        response_term, peer_id, self.persistent.current_term, self.votes_received.len());
                 self.persistent.modify(|state| {
                     state.current_term = response_term;
                 }).expect(STATE_UPDATE_FAILED);
@@ -286,10 +319,24 @@ impl ConsensusProcessor for ClusterManager {
 
     fn peer_connection_established(&mut self, upgrade: PeerUpgrade, connection_id: ConnectionId, controller_state: &ControllerState) {
         debug!("peer_connection_established: connection_id: {},  {:?}", connection_id, upgrade);
-        let connection = controller_state.get_connection(connection_id)
-                .expect("Expected connection to be in all_connections on peer_connection_established");
+        let connection = controller_state.get_connection(connection_id);
+        if connection.is_none() {
+            debug!("Ignoring peer_connection_established: {:?} for connection_id: {}, because that connection has already been closed",
+                   upgrade, connection_id);
+            return;
+        }
+        let connection = connection.unwrap();
 
-        self.connection_manager.peer_connection_established(upgrade.peer_id, connection);
+        if !self.persistent.cluster_members.contains(&upgrade.peer) {
+            self.persistent.modify(|state| {
+                state.cluster_members.insert(upgrade.peer.clone());
+            }).expect(STATE_UPDATE_FAILED);
+
+            let mut lock = self.shared.write().unwrap();
+            lock.peers.insert(upgrade.peer.clone());
+        }
+
+        self.connection_manager.peer_connection_established(upgrade.peer.clone(), connection);
 
         if State::DeterminePrimary == self.state {
             self.determine_primary_from_peer_upgrade(upgrade);
@@ -346,20 +393,22 @@ impl ConsensusProcessor for ClusterManager {
 
         self.update_last_heartbeat_to_now();
 
-        // TODO: check to see if we have an event at the previous index with a matching term
         let response = match controller_state.get_next_event(append.prev_entry_index.saturating_sub(1)) {
             Some(Ok((actual_prev_index, actual_prev_term))) => {
                 if actual_prev_index == append.prev_entry_index && actual_prev_term == append.prev_entry_term {
-                    // TODO: Append the new entries
-                    trace!("AppendEntries looks successful, will append: {} entries and return success", append.events.len());
-                    self.append_system_events(append.events.as_slice()).map(|last_counter| {
-                        Some(last_counter)
-                    }).unwrap_or_else(|io_err| {
-                        error!("Error appending system events: {:?}, returning false", io_err);
-                        None
-                    })
+                    self.create_append_result(append.events.as_slice())
                 } else {
                     info!("AppendEntries: {:?} does not match the prev index/term stored for this instance: index: {}, term: {}", append, actual_prev_index, actual_prev_term);
+                    None
+                }
+            }
+            None => {
+                if append.prev_entry_index == 0 && append.prev_entry_term == 0 {
+                    // special case for when we're at the very beginning and have literally no events in the log
+                    self.create_append_result(append.events.as_slice())
+                } else {
+                    debug!("System partition with head at: {} is behind AppendEntries with index: {}, term: {}, returning negative result",
+                            self.last_applied, append.prev_entry_index, append.prev_entry_term);
                     None
                 }
             }
@@ -376,7 +425,30 @@ impl ConsensusProcessor for ClusterManager {
     }
 
     fn append_entries_response_received(&mut self, connection_id: ConnectionId, response: AppendEntriesResponse, controller_state: &mut ControllerState) {
-        unimplemented!()
+        let from = self.connection_manager.get_peer_id(connection_id);
+        if from.is_none() {
+            error!("Received AppendEntriesResponse from connection_id: {}, which is not a peer connection. Received: {:?}", connection_id, response);
+            return;
+        }
+        let peer_id = from.unwrap();
+        let response_term = response.term;
+
+        if response_term > self.persistent.current_term {
+            // Apparently, we've fallen behind! This instance is no longer primary, so we need to step down if we haven't already
+            warn!("Peer: {:?} responded with term: {}, which is higher than the current term: {}. Stepping down as primary",
+                  peer_id, response_term, self.persistent.current_term);
+            if self.is_primary() {
+                self.set_follower_status(None);
+            }
+            self.persistent.modify(|state| {
+                state.current_term = response_term;
+            }).expect(STATE_UPDATE_FAILED)
+        }
+
+        if response.success.is_some() && self.is_primary() {
+            let peer_counter = response.success.unwrap();
+            // TODO: confirm entries with partition impl
+        }
     }
 }
 
@@ -446,6 +518,50 @@ mod test {
     use engine::controller::cluster_state::peer_connections::mock::{MockPeerConnectionManager, Invocation};
     use engine::controller::controller_messages::mock::mock_connection_ref;
     use engine::controller::mock::{MockControllerState, MockSystemEvent};
+
+    #[test]
+    fn reverts_to_follower_when_append_entries_response_indicates_term_greater_than_current_term() {
+        let start = Instant::now();
+        let temp_dir = TempDir::new("cluster_state_test").unwrap();
+        let connection_manager = MockPeerConnectionManager::new();
+        let peer_1 = Peer {
+            id: FloInstanceId::generate_new(),
+            address: addr("111.222.0.1:1000")
+        };
+        let peer_2 = Peer {
+            id: FloInstanceId::generate_new(),
+            address: addr("111.222.0.2:2000")
+        };
+        let peer_1_connection = 1;
+        let peer_2_connection = 2;
+        connection_manager.stub_peer_connection(peer_1_connection, peer_1.id);
+        connection_manager.stub_peer_connection(peer_2_connection, peer_2.id);
+
+        let mut subject = create_cluster_manager(vec![peer_1.address, peer_2.address], temp_dir.path(), connection_manager.boxed_ref());
+
+        subject.persistent.modify(|state| {
+            state.cluster_members.insert(peer_1.clone());
+            state.cluster_members.insert(peer_2.clone());
+            state.current_term = 5;
+        }).unwrap();
+        subject.last_applied = 99;
+        subject.last_applied_term = 4;
+        subject.state = State::Primary;
+        subject.primary_state = Some(PrimaryState::new(5));
+        subject.last_heartbeat = start;
+
+        let response = AppendEntriesResponse {
+            term: 6,
+            success: None,
+        };
+        let mut controller = MockControllerState::new();
+        subject.append_entries_response_received(peer_1_connection, response, &mut controller);
+
+        assert_eq!(State::Follower, subject.state);
+        assert!(!subject.is_primary());
+        assert!(subject.primary_state.is_none());
+        assert_eq!(6, subject.persistent.current_term);
+    }
 
     #[test]
     fn reverts_to_follower_when_append_entries_is_received_from_another_peer() {
@@ -994,6 +1110,26 @@ mod test {
     }
 
     #[test]
+    fn vote_is_granted_when_voted_for_is_already_populated_but_candidate_term_is_greater() {
+        vote_test(|subject, request, candidate, peer_2| {
+            subject.last_applied_term = request.last_log_term;
+            subject.last_applied = request.last_log_index;
+            subject.persistent.modify(|state| {
+                state.current_term = request.term - 1;
+                state.voted_for = Some(state.this_instance_id);
+                state.cluster_members.insert(candidate.clone());
+                state.cluster_members.insert(peer_2.clone());
+            }).unwrap();
+
+            VoteExpectation {
+                term: request.term,
+                persistent_voted_for: Some(candidate.id),
+                granted: true
+            }
+        });
+    }
+
+    #[test]
     fn cluster_manager_starts_new_election_after_timeout_elapses() {
         let start = Instant::now();
         let temp_dir = TempDir::new("cluster_state_test").unwrap();
@@ -1055,7 +1191,7 @@ mod test {
 
         let conn_id = 5;
         let upgrade = PeerUpgrade {
-            peer_id: peer_1.id,
+            peer: peer_1.clone(),
             system_primary: Some(peer_2.clone()),
             cluster_members: vec![peer_2.clone()],
         };
@@ -1064,7 +1200,7 @@ mod test {
 
         subject.peer_connection_established(upgrade, conn_id, &controller_state);
         connection_manager.verify_in_order(&Invocation::PeerConnectionEstablished {
-            peer_id: peer_1.id,
+            peer: peer_1.clone(),
             success_connection: connection,
         });
 
@@ -1242,6 +1378,9 @@ impl ConsensusProcessor for NoOpConsensusProcessor {
     }
 
     fn append_entries_response_received(&mut self, connection_id: ConnectionId, response: AppendEntriesResponse, controller_state: &mut ControllerState) {
+        unimplemented!()
+    }
+    fn connection_closed(&mut self, connection_id: ConnectionId) {
         unimplemented!()
     }
 }
