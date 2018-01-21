@@ -46,8 +46,8 @@ impl SystemEvent<OwnedFloEvent> {
     pub fn new(id: FloEventId, parent: Option<FloEventId>, namespace: String, time: Timestamp, data: &SystemEventData) -> SystemEvent<OwnedFloEvent> {
         let term = data.term;
         // TODO: I feel like this is probably a safe unwrap, but might be good to double check
-        let data = ::rmp_serde::to_vec(data).unwrap();
-        let event = OwnedFloEvent::new(id, parent, time, namespace, data);
+        let serialized = data.serialize();
+        let event = OwnedFloEvent::new(id, parent, time, namespace, serialized);
         SystemEvent {
             term,
             wrapped: event
@@ -80,6 +80,12 @@ impl <E: FloEvent> FloEvent for SystemEvent<E> {
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct SystemEventData {
     pub term: Term,
+}
+
+impl SystemEventData {
+    pub fn serialize(&self) -> Vec<u8> {
+        ::rmp_serde::to_vec(self).unwrap()
+    }
 }
 
 

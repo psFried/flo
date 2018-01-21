@@ -74,7 +74,6 @@ impl ConnectionHandler {
             ConnectionControl::SendAppendEntriesResponse(response) => {
                 peer_state.send_append_entries_response(response, common_state)
             }
-            _ => unimplemented!()
         }
     }
 

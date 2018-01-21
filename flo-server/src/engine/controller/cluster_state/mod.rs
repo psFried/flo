@@ -33,6 +33,7 @@ static STATE_UPDATE_FAILED: &'static str = "failed to persist changes to cluster
 pub trait ConsensusProcessor: Send {
     fn tick(&mut self, now: Instant, controller_state: &mut ControllerState);
     fn is_primary(&self) -> bool;
+    fn get_current_term(&self) -> Term;
     fn peer_connection_established(&mut self, upgrade: PeerUpgrade, connection_id: ConnectionId, controller_state: &ControllerState);
     fn outgoing_connection_failed(&mut self, connection_id: ConnectionId, address: SocketAddr);
     fn connection_closed(&mut self, connection_id: ConnectionId);
@@ -42,6 +43,8 @@ pub trait ConsensusProcessor: Send {
 
     fn append_entries_received(&mut self, connection_id: ConnectionId, append: ReceiveAppendEntries, controller_state: &mut ControllerState);
     fn append_entries_response_received(&mut self, connection_id: ConnectionId, response: AppendEntriesResponse, controller_state: &mut ControllerState);
+
+    fn send_append_entries(&mut self, controller_state: &mut ControllerState);
 }
 
 #[derive(Debug)]
@@ -234,15 +237,6 @@ impl ClusterManager {
         self.state = State::Follower;
     }
 
-    fn send_append_entries(&mut self, controller_state: &mut ControllerState) {
-        let ClusterManager { ref mut primary_state, ref mut connection_manager, ref persistent, ..} = *self;
-
-        primary_state.as_mut().map(|state| {
-            let all_peers = persistent.cluster_members.iter().map(|peer| peer.id);
-            state.send_append_entries(controller_state, connection_manager.as_mut(), all_peers);
-        });
-    }
-
     fn append_system_events(&mut self, events: &[OwnedFloEvent]) -> io::Result<EventCounter> {
         // TODO: actually persist the system events from ApendEntries
         if !events.is_empty() {
@@ -263,6 +257,16 @@ impl ClusterManager {
 }
 
 impl ConsensusProcessor for ClusterManager {
+
+    fn send_append_entries(&mut self, controller_state: &mut ControllerState) {
+        let ClusterManager { ref mut primary_state, ref mut connection_manager, ref persistent, ..} = *self;
+
+        primary_state.as_mut().map(|state| {
+            let all_peers = persistent.cluster_members.iter().map(|peer| peer.id);
+            state.send_append_entries(controller_state, connection_manager.as_mut(), all_peers);
+        });
+    }
+
     fn outgoing_connection_failed(&mut self, connection_id: ConnectionId, address: SocketAddr) {
         self.connection_manager.outgoing_connection_failed(connection_id, address);
         self.connection_resolved(address);
@@ -449,6 +453,9 @@ impl ConsensusProcessor for ClusterManager {
             let peer_counter = response.success.unwrap();
             // TODO: confirm entries with partition impl
         }
+    }
+    fn get_current_term(&self) -> Term {
+        self.persistent.current_term
     }
 }
 
@@ -1363,7 +1370,7 @@ impl ConsensusProcessor for NoOpConsensusProcessor {
         panic!("invalid operation for a NoOpConsensusProcessor. This should not happen");
     }
     fn request_vote_received(&mut self, from: ConnectionId, request: CallRequestVote) {
-
+        panic!("invalid operation for a NoOpConsensusProcessor. This should not happen");
     }
     fn tick(&mut self, now: Instant, controller_state: &mut ControllerState) {
     }
@@ -1371,16 +1378,22 @@ impl ConsensusProcessor for NoOpConsensusProcessor {
         true
     }
     fn vote_response_received(&mut self, now: Instant, from: ConnectionId, response: VoteResponse, controller: &mut ControllerState) {
-        unimplemented!()
+        panic!("invalid operation for a NoOpConsensusProcessor. This should not happen");
     }
     fn append_entries_received(&mut self, connection_id: ConnectionId, append: ReceiveAppendEntries, controller_state: &mut ControllerState) {
-        unimplemented!()
+        panic!("invalid operation for a NoOpConsensusProcessor. This should not happen");
     }
 
     fn append_entries_response_received(&mut self, connection_id: ConnectionId, response: AppendEntriesResponse, controller_state: &mut ControllerState) {
-        unimplemented!()
+        panic!("invalid operation for a NoOpConsensusProcessor. This should not happen");
     }
     fn connection_closed(&mut self, connection_id: ConnectionId) {
-        unimplemented!()
+
+    }
+    fn send_append_entries(&mut self, _controller_state: &mut ControllerState) {
+        // do nothing
+    }
+    fn get_current_term(&self) -> Term {
+        0
     }
 }

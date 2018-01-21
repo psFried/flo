@@ -1,6 +1,7 @@
 mod util;
 mod consumer_manager;
 mod commit_manager;
+mod pending_produce;
 
 use std::io;
 use std::collections::VecDeque;
@@ -19,6 +20,7 @@ use engine::ConnectionId;
 use self::util::get_segment_files;
 use self::consumer_manager::ConsumerManager;
 use self::commit_manager::CommitManager;
+use self::pending_produce::PendingProduceOperations;
 
 const FIRST_SEGMENT_NUM: SegmentNum = SegmentNum(1);
 
@@ -54,6 +56,9 @@ pub struct PartitionImpl {
 
     /// determines when events are committed
     commit_manager: CommitManager,
+
+    /// handles notifying producers when their events have been committed
+    pending_produce_operations: PendingProduceOperations,
 }
 
 impl PartitionImpl {
@@ -107,6 +112,7 @@ impl PartitionImpl {
             primary: status_reader,
             reader_refs: reader_refs,
             consumer_manager: ConsumerManager::new(),
+            pending_produce_operations: PendingProduceOperations::new(partition_num),
         })
     }
 
@@ -131,6 +137,7 @@ impl PartitionImpl {
             primary: status_reader,
             reader_refs: SharedReaderRefsMut::new(),
             consumer_manager: ConsumerManager::new(),
+            pending_produce_operations: PendingProduceOperations::new(partition_num),
         })
     }
 
@@ -139,7 +146,12 @@ impl PartitionImpl {
     }
 
     pub fn events_acknowledged(&mut self, peer_id: FloInstanceId, counter: EventCounter) {
-        self.commit_manager.acknowledgement_received(peer_id, counter);
+        let new_index = self.commit_manager.acknowledgement_received(peer_id, counter);
+        if let Some(committed_event) = new_index {
+            // This acknowledgement has caused a new event to be commmitted. Notify the producers of the successful operations
+            // and also notify any consumers of committed events
+
+        }
     }
 
     pub fn event_stream_name(&self) -> &str {
@@ -166,6 +178,10 @@ impl PartitionImpl {
         self.partition_num
     }
 
+    pub fn stop_consumer(&mut self, connection_id: ConnectionId) {
+        self.consumer_manager.remove(connection_id);
+    }
+
     pub fn process(&mut self, operation: Operation) -> io::Result<()> {
         trace!("Partition: {}, got operation: {:?}", self.partition_num, operation);
 
@@ -180,15 +196,11 @@ impl PartitionImpl {
                 self.handle_consume(connection_id, consume_op)
             }
             OpType::StopConsumer => {
-                self.consumer_manager.remove(connection_id);
+                self.stop_consumer(connection_id);
                 Ok(())
             }
             OpType::Tick => {
                 self.expire_old_events();
-                Ok(())
-            }
-            other @ _ => {
-                warn!("received unexpected OpType: {:?}", other);
                 Ok(())
             }
         }
@@ -216,15 +228,25 @@ impl PartitionImpl {
         });
     }
 
-    fn handle_produce(&mut self, produce: ProduceOperation) -> io::Result<()> {
+    pub fn handle_produce(&mut self, produce: ProduceOperation) -> io::Result<()> {
         let ProduceOperation {client, op_id, events} = produce;
         let result = self.append_all(events);
-        if let Err(e) = result.as_ref() {
-            error!("Failed to handle produce operation for op_id: {}, err: {:?}", op_id, e);
+
+        match result {
+            Ok(id) => {
+                if self.commit_manager.is_standalone() {
+                    // No biggie if the receiving end has hung up already. The operation will still be considered complete and successful
+                    let _ = client.complete(Ok(id));
+                } else {
+                    self.pending_produce_operations.add(op_id, id.event_counter, client);
+                }
+            }
+            Err(io_err) => {
+                error!("Failed to handle produce operation for op_id: {}, err: {:?}", op_id, io_err);
+                let _ = client.complete(Err(io_err));
+            }
         }
-        // No biggie if the receiving end has hung up already. The operation will still be considered complete and successful
-        // TODO: Consider logging this if the receiving end has hung up already?
-        let _ = client.send(result);
+        // TODO: separate out error that gets returned to connection handler so that we can also return an io::Error from this function if one occurs
         Ok(())
     }
 
@@ -334,7 +356,7 @@ impl PartitionImpl {
         self.segments.front().map(|s| s.segment_num).unwrap_or(SegmentNum(0))
     }
 
-    fn handle_consume(&mut self, connection_id: ConnectionId, consume: ConsumeOperation) -> io::Result<()> {
+    pub fn handle_consume(&mut self, connection_id: ConnectionId, consume: ConsumeOperation) -> io::Result<()> {
         let ConsumeOperation {client_sender, filter, start_exclusive, notifier} = consume;
         let reader = self.create_reader(connection_id, filter, start_exclusive);
 
@@ -490,13 +512,12 @@ mod test {
                 data: "the lazy dog".to_owned().into_bytes(),
             },
         ];
-        partition.append_all(events);
+        partition.append_all(events).expect("failed to append events");
         assert_eq!(0, partition.get_commit_index());
 
         let mut reader = partition.create_reader(3, EventFilter::All, 0);
         assert!(reader.read_next_committed().is_none());
 
-        let mut event_count = 0;
         for _ in 0..4 {
             reader.read_next_uncommitted().expect("read uncommitted returned None").expect("failed to read uncommitted");
         }

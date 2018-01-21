@@ -12,13 +12,15 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 use std::collections::HashMap;
 use std::io;
+use std::time::Instant;
 
+use protocol::{ProduceEvent, Term};
 use event::EventCounter;
 use engine::ConnectionId;
 use engine::event_stream::{EventStreamRef,
                                EventStreamRefMut,
                                EventStreamOptions};
-use engine::event_stream::partition::{PersistentEvent, IndexEntry, SegmentNum};
+use engine::event_stream::partition::{self, PersistentEvent, IndexEntry, SegmentNum};
 use engine::event_stream::partition::controller::PartitionImpl;
 use self::cluster_state::ConsensusProcessor;
 
@@ -42,9 +44,9 @@ pub fn create_system_partition_channels() -> (SystemPartitionSender, SystemParti
 }
 
 
-
-/// A specialized event stream that always has exactly one partition and manages the cluster state and consensus
-/// Of course there is no cluster state and thus no consensus at the moment, but we'll just leave this here...
+/// A specialized event stream that always has exactly one partition and manages the cluster state and consensus processor
+/// The `ConsensusProcessor` manages most operations on the `ControllerState`. If this instance is running in standalone mode
+/// then all operations will basically just immediately succeed
 #[allow(dead_code)]
 pub struct FloController {
     controller_state: ControllerStateImpl,
@@ -109,7 +111,7 @@ impl FloController {
                 cluster_state.append_entries_response_received(connection_id, response, controller_state);
             }
             SystemOpType::PartitionOp(partition_op) => {
-                warn!("Ignoring PartitionOp: {:?}", partition_op);
+                handle_partition_op(connection_id, op_start_time, partition_op, cluster_state.as_mut(), controller_state);
             }
         }
     }
@@ -122,5 +124,66 @@ impl FloController {
 }
 
 
+fn handle_partition_op(connection_id: ConnectionId, op_start_time: Instant, op: partition::OpType,
+                       cluster_state: &mut ConsensusProcessor, controller_state: &mut ControllerStateImpl) {
+    use engine::event_stream::partition::OpType::*;
+    match op {
+        Produce(produce_op) => {
+            produce_system_events(produce_op, cluster_state, controller_state);
+        }
+        Consume(consume_op) => {
+            // `handle_consume` always just returns `Ok(())` at the moment anyway. Should probably just change it to unit return type
+            let _ = controller_state.system_partition.handle_consume(connection_id, consume_op);
+        }
+        StopConsumer => {
+            controller_state.system_partition.stop_consumer(connection_id);
+        }
+        Tick => {
+            // only used by the partition to expire old events, which we do not do for the system partition.
+            // anyway, nothing is creating these operations anyway
+        }
+    }
+}
+
+fn produce_system_events(mut produce_op: partition::ProduceOperation, cluster_state: &mut ConsensusProcessor, controller_state: &mut ControllerStateImpl) {
+    if cluster_state.is_primary() {
+        let term = cluster_state.get_current_term();
+        let convert_result = convert_to_system_events(&mut produce_op.events, term);
+
+        if let Err(err) = convert_result {
+            // We're done here
+            produce_op.client.complete(Err(err));
+        } else {
+            // hand off the modified operation to the partition, which will complete it
+            let result = controller_state.system_partition.handle_produce(produce_op);
+            if let Err(partition_err) = result {
+                error!("Partition error creating new system events: {:?}", partition_err);
+            } else {
+                // success! send out AppendEntries
+                cluster_state.send_append_entries(controller_state)
+            }
+        }
+    } else {
+        let err = io::Error::new(io::ErrorKind::Other, "Not primary");
+        produce_op.client.complete(Err(err));
+    }
+}
+
+
+fn convert_to_system_events(events: &mut Vec<ProduceEvent>, term: Term) -> io::Result<()> {
+    for event in events.iter_mut() {
+        // TODO: Once system events have any sort of body, this function will need to change a bit
+        // for now, we'll just make sure that the body is empty
+        // in the future, we'll attempt to deserialize the body as a SystemEventType
+        if event.data.is_empty() {
+            let new_body = SystemEventData { term };
+            let serialized = new_body.serialize();
+            event.data = serialized;
+        } else {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid system event body"));
+        }
+    }
+    Ok(())
+}
 
 

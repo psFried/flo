@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::collections::HashMap;
 use std::io;
 
-use protocol::Term;
+use protocol::{Term, FloInstanceId};
 use event::EventCounter;
 use engine::ConnectionId;
 use engine::controller::{ConnectionRef, SystemEvent};
@@ -22,6 +22,8 @@ pub trait ControllerState {
 
     fn get_next_entry(&self, event_counter: EventCounter) -> Option<IndexEntry>;
     fn get_current_file_offset(&self) -> (SegmentNum, usize);
+
+    fn add_system_replication_node(&mut self, peer: FloInstanceId);
 }
 
 pub struct ControllerStateImpl {
@@ -124,6 +126,9 @@ impl ControllerState for ControllerStateImpl {
             })
         })
     }
+    fn add_system_replication_node(&mut self, peer: FloInstanceId) {
+        self.system_partition.add_replication_node(peer);
+    }
 }
 
 
@@ -204,6 +209,10 @@ pub mod mock {
             self.system_events.range((start_after + 1)..).next().map(|(id, sys)| {
                 Ok((*id, sys.term))
             })
+        }
+
+        fn add_system_replication_node(&mut self, peer: FloInstanceId) {
+            unimplemented!()
         }
     }
 

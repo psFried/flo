@@ -50,6 +50,10 @@ impl CommitManager {
         }
     }
 
+    pub fn is_standalone(&self) -> bool {
+        self.min_required_for_commit == 0
+    }
+
     pub fn update_commit_index(&mut self, new_index: EventCounter) {
         self.commit_index.set_if_greater(new_index as usize);
     }
