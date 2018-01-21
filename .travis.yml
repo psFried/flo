@@ -1,4 +1,6 @@
+sudo: false
 language: rust
+cache: cargo
 env:
   global:
     - RUST_BACKTRACE=1
@@ -17,4 +19,4 @@ matrix:
       os: osx
     - rust: nightly
       os: osx
-script: cargo test --all --no-fail-fast
+script: cargo test --all
