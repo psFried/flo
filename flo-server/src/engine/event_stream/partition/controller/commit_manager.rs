@@ -54,6 +54,10 @@ impl CommitManager {
         self.commit_index.set_if_greater(new_index as usize);
     }
 
+    pub fn get_commit_index(&self) -> EventCounter {
+        self.commit_index.get() as EventCounter
+    }
+
     pub fn add_member(&mut self, peer_id: FloInstanceId) {
         self.peers.push((peer_id, 0));
         let new_ack_requirement = self.compute_min_required();

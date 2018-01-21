@@ -340,7 +340,7 @@ pub fn initialize_new_partition(partition_num: ActorId,
 
 pub fn run_partition(partition_impl: PartitionImpl, primary_server_addr: Arc<RwLock<Option<SocketAddr>>>) -> io::Result<PartitionRef> {
     let partition_num = partition_impl.partition_num();
-    let event_counter_reader = partition_impl.event_counter_reader();
+    let commit_index_reader = partition_impl.commit_index_reader();
     let primary_status_reader = partition_impl.primary_status_reader();
     let event_stream_name = partition_impl.event_stream_name().to_owned();
     let (tx, rx) = create_partition_channels();
@@ -372,7 +372,7 @@ pub fn run_partition(partition_impl: PartitionImpl, primary_server_addr: Arc<RwL
 
     let partition = PartitionRef::new(event_stream_name,
                                       partition_num,
-                                      event_counter_reader,
+                                      commit_index_reader,
                                       primary_status_reader,
                                       tx,
                                       primary_server_addr);

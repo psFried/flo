@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use chrono::{Duration};
 
 use atomics::{AtomicCounterWriter, AtomicCounterReader, AtomicBoolReader};
-use protocol::ProduceEvent;
+use protocol::{ProduceEvent, FloInstanceId};
 use event::{ActorId, FloEventId, EventCounter, FloEvent, Timestamp, time};
 use super::{SharedReaderRefs, SharedReaderRefsMut, Operation, OpType, ProduceOperation, ConsumeOperation, PartitionReader, EventFilter, SegmentNum};
 use super::segment::Segment;
@@ -18,6 +18,7 @@ use engine::event_stream::{EventStreamOptions, HighestCounter};
 use engine::ConnectionId;
 use self::util::get_segment_files;
 use self::consumer_manager::ConsumerManager;
+use self::commit_manager::CommitManager;
 
 const FIRST_SEGMENT_NUM: SegmentNum = SegmentNum(1);
 
@@ -41,8 +42,6 @@ pub struct PartitionImpl {
     /// Shared EventCounter for all partitions in the event stream. Serves as a Lamport clock to help reason about relative
     /// order of events across multiple partitions. Used to generate new `EventCounter`s when events are appended
     event_stream_highest_counter: HighestCounter,
-    /// Tracks the highest committed event in this partition. This value is shared with the `ConnectionHandler`s
-    partition_highest_committed: AtomicCounterWriter,
     /// Whether this instance is the primary for this partition. This value is set by `FloController`, since it requires
     /// consensus to modify which instance is primary for a partition.
     primary: AtomicBoolReader,
@@ -52,6 +51,9 @@ pub struct PartitionImpl {
 
     /// consumers each have a notifier added here
     consumer_manager: ConsumerManager,
+
+    /// determines when events are committed
+    commit_manager: CommitManager,
 }
 
 impl PartitionImpl {
@@ -80,7 +82,7 @@ impl PartitionImpl {
         //TODO: differentiate between highest committed and highest uncommitted when initializing existing partition
         let current_greatest_id = index.greatest_event_counter();
         highest_counter.set_if_greater(current_greatest_id);
-        let partition_id_counter = AtomicCounterWriter::with_value(current_greatest_id as usize);
+        let partition_commit_counter = AtomicCounterWriter::with_value(current_greatest_id as usize);
 
         // TODO: factor out a more legit method of timing and logging perf stats
         let init_time = start_time.elapsed();
@@ -101,7 +103,7 @@ impl PartitionImpl {
             segments: initialized_segments,
             index: index,
             event_stream_highest_counter: highest_counter,
-            partition_highest_committed: partition_id_counter,
+            commit_manager: CommitManager::new(partition_commit_counter),
             primary: status_reader,
             reader_refs: reader_refs,
             consumer_manager: ConsumerManager::new(),
@@ -125,27 +127,35 @@ impl PartitionImpl {
             segments: VecDeque::with_capacity(4),
             index: PartitionIndex::new(partition_num),
             event_stream_highest_counter: highest_counter,
-            partition_highest_committed: AtomicCounterWriter::zero(),
+            commit_manager: CommitManager::new(AtomicCounterWriter::with_value(0)),
             primary: status_reader,
             reader_refs: SharedReaderRefsMut::new(),
             consumer_manager: ConsumerManager::new(),
         })
     }
 
+    pub fn add_replication_node(&mut self, peer: FloInstanceId) {
+        self.commit_manager.add_member(peer);
+    }
+
+    pub fn events_acknowledged(&mut self, peer_id: FloInstanceId, counter: EventCounter) {
+        self.commit_manager.acknowledgement_received(peer_id, counter);
+    }
+
     pub fn event_stream_name(&self) -> &str {
         &self.event_stream_name
     }
 
-    pub fn event_counter_reader(&self) -> AtomicCounterReader {
-        self.partition_highest_committed.reader()
+    pub fn commit_index_reader(&self) -> AtomicCounterReader {
+        self.commit_manager.get_commit_index_reader()
     }
 
     pub fn set_commit_index(&mut self, new_index: EventCounter) {
-        self.partition_highest_committed.set_if_greater(new_index as usize);
+        self.commit_manager.update_commit_index(new_index)
     }
 
     pub fn get_commit_index(&self) -> EventCounter {
-        self.partition_highest_committed.get() as EventCounter
+        self.commit_manager.get_commit_index()
     }
 
     pub fn primary_status_reader(&self) -> AtomicBoolReader {
@@ -357,7 +367,7 @@ impl PartitionImpl {
             }
         };
 
-        let commit_index_reader = self.partition_highest_committed.reader();
+        let commit_index_reader = self.commit_index_reader();
         PartitionReader::new(connection_id,
                              self.partition_num,
                              filter,
@@ -423,7 +433,95 @@ mod test {
     const CONNECTION: ConnectionId = 55;
 
     #[test]
-    fn partition_impl_integration_test() {
+    fn events_are_committed_when_acknowledged_by_a_majority() {
+        let status = AtomicBoolWriter::with_value(true);
+        let options = EventStreamOptions {
+            name: "superduper".to_owned(),
+            num_partitions: 1,
+            event_retention: Duration::seconds(20),
+            max_segment_duration: Duration::seconds(5),
+            segment_max_size_bytes: 256,
+        };
+        let tempdir = TempDir::new("partition_persist_events_and_read_them_back").unwrap();
+
+        // Init a new partition and append a bunch of events in two groups
+        let mut partition = PartitionImpl::init_new(PARTITION_NUM,
+                                                    tempdir.path().to_owned(),
+                                                    &options,
+                                                    status.reader(),
+                                                    HighestCounter::zero()).unwrap();
+
+        let peer_1 = FloInstanceId::generate_new();
+        let peer_2 = FloInstanceId::generate_new();
+        let peer_3 = FloInstanceId::generate_new();
+        let peer_4 = FloInstanceId::generate_new();
+        partition.add_replication_node(peer_1);
+        partition.add_replication_node(peer_2);
+        partition.add_replication_node(peer_3);
+        partition.add_replication_node(peer_4);
+
+        let events = vec![
+            ProduceEvent {
+                op_id: 3,
+                partition: PARTITION_NUM,
+                namespace: "/foo/bar".to_owned(),
+                parent_id: None,
+                data: "the quick".to_owned().into_bytes(),
+            },
+            ProduceEvent {
+                op_id: 3,
+                partition: PARTITION_NUM,
+                namespace: "/foo/bar".to_owned(),
+                parent_id: None,
+                data: "brown fox".to_owned().into_bytes(),
+            },
+            ProduceEvent {
+                op_id: 3,
+                partition: PARTITION_NUM,
+                namespace: "/foo/bar".to_owned(),
+                parent_id: None,
+                data: "jumped over".to_owned().into_bytes(),
+            },
+            ProduceEvent {
+                op_id: 3,
+                partition: PARTITION_NUM,
+                namespace: "/foo/bar".to_owned(),
+                parent_id: None,
+                data: "the lazy dog".to_owned().into_bytes(),
+            },
+        ];
+        partition.append_all(events);
+        assert_eq!(0, partition.get_commit_index());
+
+        let mut reader = partition.create_reader(3, EventFilter::All, 0);
+        assert!(reader.read_next_committed().is_none());
+
+        let mut event_count = 0;
+        for _ in 0..4 {
+            reader.read_next_uncommitted().expect("read uncommitted returned None").expect("failed to read uncommitted");
+        }
+
+        partition.events_acknowledged(peer_1, 2);
+        assert_eq!(0, partition.get_commit_index());
+
+        partition.events_acknowledged(peer_3, 3);
+        assert_eq!(2, partition.get_commit_index()); // 3 of 5 acknowledge at least event 2
+
+        partition.events_acknowledged(peer_2, 4);
+        assert_eq!(3, partition.get_commit_index());
+
+        reader.set_to_beginning();
+
+        for _ in 0..3 {
+            reader.read_next_committed().expect("read committed returned None").expect("failed to read committed");
+        }
+
+        let last_event = reader.read_next_committed();
+        assert!(last_event.is_none());
+    }
+
+    #[test]
+    fn events_are_persisted_and_can_be_read_after_reinitializing_in_the_same_directory() {
         let _ = ::env_logger::init();
 
         let status = AtomicBoolWriter::with_value(true);

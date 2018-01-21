@@ -73,7 +73,7 @@ pub fn start_controller(options: ControllerOptions, remote: Remote) -> io::Resul
     }).collect::<HashMap<String, EventStreamRef>>();
     let shared_stream_refs = Arc::new(Mutex::new(shared_stream_refs));
 
-    let system_highest_counter = system_partition.event_counter_reader();
+    let system_commit_index_reader = system_partition.commit_index_reader();
     let (system_partition_tx, system_partition_rx) = ::engine::controller::create_system_partition_channels();
 
     let (shared_state, file_cluster_state) = if use_cluster_mode {
@@ -90,7 +90,7 @@ pub fn start_controller(options: ControllerOptions, remote: Remote) -> io::Resul
 
     let engine_ref = create_engine_ref(shared_stream_refs.clone(),
                                        system_partition.get_shared_reader_refs(),
-                                       system_highest_counter,
+                                       system_commit_index_reader,
                                        system_primary_status_writer.reader(),
                                        system_primary_address.clone(),
                                        system_partition_tx,

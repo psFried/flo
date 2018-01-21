@@ -2,6 +2,7 @@ use rmp_serde::decode::Error;
 
 use protocol::Term;
 use event::{FloEvent, FloEventId, OwnedFloEvent, EventCounter, ActorId, Timestamp, time};
+use engine::event_stream::EventStreamOptions;
 use engine::event_stream::partition::PersistentEvent;
 
 #[derive(Debug, PartialEq)]
@@ -76,7 +77,7 @@ impl <E: FloEvent> FloEvent for SystemEvent<E> {
     }
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct SystemEventData {
     pub term: Term,
 }

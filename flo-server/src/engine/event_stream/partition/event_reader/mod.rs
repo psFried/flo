@@ -2,7 +2,7 @@ mod namespace;
 
 use std::io;
 
-use event::{FloEvent, ActorId};
+use event::{FloEvent, ActorId, EventCounter};
 
 use engine::ConnectionId;
 use engine::event_stream::partition::{SharedReaderRefs, SegmentNum};
@@ -43,6 +43,7 @@ pub struct PartitionReader {
     current_segment_reader: Option<SegmentReader>,
     segment_readers_ref: SharedReaderRefs,
     returned_error: bool,
+    next_buffer: Option<PersistentEvent>,
 }
 
 
@@ -63,6 +64,7 @@ impl PartitionReader {
             current_segment_reader: current_reader,
             segment_readers_ref: segment_refs,
             returned_error: false,
+            next_buffer: None,
         }
     }
 
@@ -75,12 +77,26 @@ impl PartitionReader {
     }
 
     pub fn read_next_committed(&mut self) -> Option<io::Result<PersistentEvent>> {
-        unimplemented!()
+        let result = self.read_next_uncommitted();
+        let commit_index = self.commit_index_reader.load_relaxed() as EventCounter;
+        let buffer = match &result {
+            &Some(Ok(ref event)) if event.id().event_counter > commit_index => true,
+            _ => false,
+        };
+
+        if buffer {
+            // hold onto this event until later
+            let event = result.unwrap().unwrap();
+            self.next_buffer = Some(event);
+            None
+        } else {
+            result
+        }
     }
 
     pub fn set_to_beginning(&mut self) {
         self.current_segment_reader = None;
-        self.clear_error();
+        self.reset();
     }
 
     pub fn set_to(&mut self, segment_num: SegmentNum, offset: usize) -> io::Result<()> {
@@ -95,7 +111,7 @@ impl PartitionReader {
             self.current_segment_reader = Some(segment);
         }
         self.current_segment_reader.as_mut().unwrap().set_offset(offset);
-        self.clear_error();
+        self.reset();
         Ok(())
     }
 
@@ -105,8 +121,9 @@ impl PartitionReader {
         }).unwrap_or((SegmentNum(0), 0))
     }
 
-    fn clear_error(&mut self) {
+    fn reset(&mut self) {
         self.returned_error = false;
+        self.next_buffer = None;
     }
 
     fn should_skip(&self, result: &Option<Result<PersistentEvent, io::Error>>) -> bool {
@@ -130,6 +147,9 @@ impl PartitionReader {
     fn read_next(&mut self) -> Option<io::Result<PersistentEvent>> {
         if self.returned_error {
             return None;
+        } else if self.next_buffer.is_some() {
+            let next = self.next_buffer.take().unwrap();
+            return Some(Ok(next));
         }
 
         if self.current_reader_is_exhausted() {
