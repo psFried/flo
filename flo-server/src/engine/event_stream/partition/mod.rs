@@ -31,7 +31,10 @@ pub use self::ops::{OpType,
                     ConsumeResponseReceiver,
                     ConsumeResponder,
                     ConsumerNotifier,
-};
+                    ReplicateOperation,
+                    ReplicateResultReceiver,
+                    ReplicateResultSender,
+                    ReplicationResult};
 pub use self::event_reader::{PartitionReader, EventFilter};
 pub use self::segment::PersistentEvent;
 pub use self::index::IndexEntry;

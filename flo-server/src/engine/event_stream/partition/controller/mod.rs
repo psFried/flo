@@ -12,7 +12,8 @@ use chrono::{Duration};
 use atomics::{AtomicCounterWriter, AtomicCounterReader, AtomicBoolReader};
 use protocol::{ProduceEvent, FloInstanceId};
 use event::{ActorId, FloEventId, EventCounter, FloEvent, Timestamp, time};
-use super::{SharedReaderRefs, SharedReaderRefsMut, Operation, OpType, ProduceOperation, ConsumeOperation, PartitionReader, EventFilter, SegmentNum};
+use super::{SharedReaderRefs, SharedReaderRefsMut, Operation, OpType, ProduceOperation, ConsumeOperation, PartitionReader,
+            EventFilter, SegmentNum, ReplicateOperation, ReplicationResult};
 use super::segment::Segment;
 use super::index::{PartitionIndex, IndexEntry};
 use engine::event_stream::{EventStreamOptions, HighestCounter};
@@ -199,6 +200,10 @@ impl PartitionImpl {
                 self.stop_consumer(connection_id);
                 Ok(())
             }
+            OpType::Replicate(rep) => {
+                self.handle_replicate(rep)
+                Ok(())
+            }
             OpType::Tick => {
                 self.expire_old_events();
                 Ok(())
@@ -214,6 +219,50 @@ impl PartitionImpl {
         if let Some(drop_through_index) = expired_segment_index {
             self.drop_segments_through_index(drop_through_index);
         }
+    }
+
+    // returns unit, since we have to send a result back to the connection handler, regardless of outcome
+    fn handle_replicate(&mut self, ReplicateOperation{op_id, client_sender, events, prev_event_counter, prev_event_term}: ReplicateOperation) {
+        // TODO: think about handling empty `events` vec. maybe best to handle that in the connection handler?
+        // TODO: ensure that we are in Follower status and that the events came from the leader
+        let result = self.replicate_events(op_id, events);
+        let response = result.unwrap_or_else(|io_err| {
+            let head = self.index.greatest_event_counter();
+            error!("Error handling replicate operation with op_id: {}, io error: '{}', sending fail response with head: {}", op_id, io_err, head);
+            ReplicationResult {
+                op_id,
+                success: false,
+                highest_event_counter: head,
+            }
+        });
+        client_sender.complete(response);
+    }
+
+    /// persists events in this partition. Panics if `events` is empty
+    fn replicate_events<F: FloEvent>(&mut self, op_id: u32, events: Vec<F>) -> io::Result<ReplicationResult> {
+        let commit_index = self.commit_manager.get_commit_index();
+        let current_head = self.index.greatest_event_counter();
+
+        // ignore any events with id < commit_index
+        let first_repl_event_index = events.iter().enumerate().find(|e| e.id().event_counter > commit_index);
+        if first_repl_event_index.is_none() {
+            // All the events in this message have already been committed, so just return our current commit index
+            return Ok(ReplicationResult {
+                op_id: op_id,
+                success: true, // success = true because the log is consistent. We just happen to have all these entries already
+                highest_event_counter: commit_index,
+            });
+        }
+        let mut first_event_to_append = first_repl_event_index.unwrap();
+
+        // now we may still skip events that are uncommitted if the event id and crc matches what we already have in the log
+
+        // if any uncommitted events have a different crc, then mark that event and all the events that come after it as deleted
+        // at this point, we should be in a state where the last non-deleted event in the log is the same as the previous event info in the message
+
+        // append entries starting at `first_event_to_append`
+
+        unimplemented!()
     }
 
     fn drop_segments_through_index(&mut self, segment_index: usize) {
@@ -276,7 +325,7 @@ impl PartitionImpl {
         Ok(FloEventId::new(self.partition_num, event_counter))
     }
 
-    fn append(&mut self, event: &EventToProduce) -> io::Result<()> {
+    fn append<E: FloEvent>(&mut self, event: &E) -> io::Result<()> {
         use super::SegmentNum;
         use super::segment::AppendResult;
 

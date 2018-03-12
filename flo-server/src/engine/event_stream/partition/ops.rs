@@ -8,8 +8,8 @@ use futures::sync::oneshot;
 
 use engine::event_stream::partition::{EventFilter, PartitionReader};
 use engine::ConnectionId;
-use protocol::ProduceEvent;
-use event::{FloEventId, EventCounter};
+use protocol::{ProduceEvent, Term};
+use event::{OwnedFloEvent, FloEventId, EventCounter};
 
 pub type ProduceResult = Result<FloEventId, io::Error>;
 pub type ProduceResponder = oneshot::Sender<ProduceResult>;
@@ -68,10 +68,35 @@ impl Debug for ConsumeOperation {
     }
 }
 
+#[derive(Debug, PartialEq, Clone)]
+pub struct ReplicationResult {
+    pub op_id: u32,
+    pub success: bool,
+    pub highest_event_counter: EventCounter
+}
+pub type ReplicateResultSender = oneshot::Sender<ReplicationResult>;
+pub type ReplicateResultReceiver = oneshot::Receiver<ReplicationResult>;
+
+#[derive(Debug)]
+pub struct ReplicateOperation {
+    pub client_sender: ReplicateResultSender,
+    pub op_id: u32,
+    pub prev_event_counter: EventCounter,
+    pub prev_event_term: Term,
+    pub events: Vec<OwnedFloEvent>,
+}
+
+impl PartialEq for ReplicateOperation {
+    fn eq(&self, other: &ReplicateOperation) -> bool {
+        self.events == other.events
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub enum OpType {
     Produce(ProduceOperation),
     Consume(ConsumeOperation),
+    Replicate(ReplicateOperation),
     StopConsumer,
     Tick,
 }
@@ -117,6 +142,22 @@ impl Operation {
             events: events
         };
         let op = Operation::new(connection_id, OpType::Produce(produce));
+        (op, rx)
+    }
+
+    pub fn replicate(connection_id: ConnectionId, op_id: u32, prev_event_counter: EventCounter, prev_event_term: Term, events: Vec<OwnedFloEvent>) -> (Operation, ReplicateResultReceiver) {
+        let (tx, rx) = oneshot::channel();
+        let rep = ReplicateOperation {
+            client_sender: tx,
+            prev_event_counter,
+            prev_event_term,
+            events,
+        };
+        let op = Operation {
+            connection_id,
+            client_message_recv_time: Instant::now(),
+            op_type: OpType::Replicate(rep),
+        };
         (op, rx)
     }
 

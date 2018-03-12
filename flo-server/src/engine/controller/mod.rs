@@ -138,6 +138,9 @@ fn handle_partition_op(connection_id: ConnectionId, op_start_time: Instant, op: 
         StopConsumer => {
             controller_state.system_partition.stop_consumer(connection_id);
         }
+        Replicate(_) => {
+            error!("Received normal Replicate operation from connection_id: {} in system partition", connection_id);
+        }
         Tick => {
             // only used by the partition to expire old events, which we do not do for the system partition.
             // anyway, nothing is creating these operations anyway
