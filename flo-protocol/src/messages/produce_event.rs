@@ -1,6 +1,6 @@
 
 use nom::{be_u32, be_u16};
-use event::{OwnedFloEvent, FloEventId, ActorId};
+use event::{EventData, OwnedFloEvent, FloEventId, ActorId};
 use serializer::Serializer;
 use super::{ProtocolMessage, parse_str, parse_event_id};
 
@@ -30,6 +30,17 @@ pub struct ProduceEvent {
     pub data: Vec<u8>,
 }
 
+impl EventData for ProduceEvent {
+    fn event_namespace(&self) -> &str {
+        self.namespace.as_str()
+    }
+    fn event_parent_id(&self) -> Option<FloEventId> {
+        self.parent_id
+    }
+    fn event_data(&self) -> &[u8] {
+        self.data.as_slice()
+    }
+}
 
 named!{pub parse_new_producer_event<ProtocolMessage<OwnedFloEvent>>,
     chain!(

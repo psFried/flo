@@ -4,4 +4,6 @@ version = "0.2.0"
 authors = ["pfried <philipsfried@gmail.com>"]
 
 [dependencies]
-chrono = "^0.2"
+chrono = "^0.4.0"
+crc = "^1.0"
+byteorder = "1"
