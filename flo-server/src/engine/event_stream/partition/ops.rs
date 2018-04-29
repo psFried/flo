@@ -149,6 +149,7 @@ impl Operation {
         let (tx, rx) = oneshot::channel();
         let rep = ReplicateOperation {
             client_sender: tx,
+            op_id,
             prev_event_counter,
             prev_event_term,
             events,

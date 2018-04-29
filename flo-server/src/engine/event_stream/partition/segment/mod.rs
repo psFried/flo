@@ -212,8 +212,6 @@ mod test {
 
     #[test]
     fn write_one_event_to_segment_and_read_it_back() {
-        let _ = ::env_logger::init();
-
         let tmpdir = TempDir::new("write_events_to_segment").unwrap();
         let event = event(1);
         let segment_num = SegmentNum(1);

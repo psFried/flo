@@ -156,7 +156,7 @@ impl PartitionImpl {
     }
 
     pub fn event_stream_name(&self) -> &str {
-        &self.event_stream_name
+        self.event_stream_name.as_str()
     }
 
     pub fn commit_index_reader(&self) -> AtomicCounterReader {
@@ -201,7 +201,7 @@ impl PartitionImpl {
                 Ok(())
             }
             OpType::Replicate(rep) => {
-                self.handle_replicate(rep)
+                self.handle_replicate(rep);
                 Ok(())
             }
             OpType::Tick => {
@@ -244,11 +244,11 @@ impl PartitionImpl {
         let current_head = self.index.greatest_event_counter();
 
         // ignore any events with id < commit_index
-        let first_repl_event_index = events.iter().enumerate().find(|e| e.id().event_counter > commit_index);
+        let first_repl_event_index = events.iter().position(|e| e.id().event_counter > commit_index);
         if first_repl_event_index.is_none() {
             // All the events in this message have already been committed, so just return our current commit index
             return Ok(ReplicationResult {
-                op_id: op_id,
+                op_id,
                 success: true, // success = true because the log is consistent. We just happen to have all these entries already
                 highest_event_counter: commit_index,
             });
