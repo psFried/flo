@@ -28,6 +28,27 @@ pub struct ProduceEvent {
     /// The event payload. As far as the flo server is concerned, this is just an opaque byte array. Note that events with
     /// 0-length bodies are perfectly fine.
     pub data: Vec<u8>,
+    /// The crc32c of the event
+    pub crc: u32,
+}
+
+impl ProduceEvent {
+    pub fn new(op_id: u32, partition: ActorId, namespace: String, parent_id: Option<FloEventId>, data: Vec<u8>, crc: u32) -> ProduceEvent {
+        ProduceEvent {
+            op_id, partition, namespace, parent_id, data, crc
+        }
+    }
+
+    pub fn with_crc(op_id: u32, partition: ActorId, namespace: String, parent_id: Option<FloEventId>, data: Vec<u8>) -> ProduceEvent {
+        let mut evt = ProduceEvent { op_id, partition, namespace, parent_id, data, crc: 0 };
+        evt.set_crc();
+        evt
+    }
+
+    pub fn set_crc(&mut self) {
+        let new_crc = self.compute_data_crc();
+        self.crc = new_crc;
+    }
 }
 
 impl EventData for ProduceEvent {
@@ -40,11 +61,15 @@ impl EventData for ProduceEvent {
     fn event_data(&self) -> &[u8] {
         self.data.as_slice()
     }
+    fn get_precomputed_crc(&self) -> Option<u32> {
+        Some(self.crc)
+    }
 }
 
 named!{pub parse_new_producer_event<ProtocolMessage<OwnedFloEvent>>,
     chain!(
         _tag: tag!(&[PRODUCE_EVENT]) ~
+        crc: be_u32 ~
         namespace: parse_str ~
         parent_id: parse_event_id ~
         op_id: be_u32 ~
@@ -56,6 +81,7 @@ named!{pub parse_new_producer_event<ProtocolMessage<OwnedFloEvent>>,
                 parent_id: parent_id,
                 op_id: op_id,
                 partition: partition,
+                crc: crc,
                 data: Vec::with_capacity(data_len as usize),
             })
         }
@@ -68,6 +94,7 @@ pub fn serialize_new_produce_header(header: &ProduceEvent, buf: &mut [u8]) -> us
     }).unwrap_or((0, 0));
 
     Serializer::new(buf).write_u8(PRODUCE_EVENT)
+                        .write_u32(header.crc)
                         .write_string(&header.namespace)
                         .write_u64(counter)
                         .write_u16(actor)

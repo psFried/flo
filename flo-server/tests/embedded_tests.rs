@@ -9,6 +9,8 @@ extern crate chrono;
 
 extern crate log;
 
+mod test_utils;
+
 use std::fmt::Debug;
 use std::thread;
 use std::time::Duration;
@@ -16,6 +18,7 @@ use std::time::Duration;
 use tokio_core::reactor::Core;
 use futures::{Stream, Future};
 
+use test_utils::init_logger;
 use flo_server::embedded::{EmbeddedFloServer, ControllerOptions, EventStreamOptions, run_embedded_server};
 
 use flo_client_lib::{VersionVector, FloEventId, Event, EventCounter, ActorId};
@@ -30,8 +33,9 @@ fn codec() -> Box<EventCodec<EventData=String>> {
 }
 
 
+
 fn integration_test<F>(test_name: &'static str, stream_opts: EventStreamOptions, fun: F) where F: Fn(EmbeddedFloServer, Core) {
-    let _ = env_logger::init();
+    init_logger();
     println!("starting test: {}", test_name);
 
     let dir_name = test_name.replace("\\w", "-");

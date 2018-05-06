@@ -11,7 +11,7 @@ use chrono::{Duration};
 
 use atomics::{AtomicCounterWriter, AtomicCounterReader, AtomicBoolReader};
 use protocol::{ProduceEvent, FloInstanceId};
-use event::{ActorId, FloEventId, EventCounter, FloEvent, Timestamp, time};
+use event::{ActorId, FloEventId, EventCounter, FloEvent, EventData, Timestamp, time};
 use super::{SharedReaderRefs, SharedReaderRefsMut, Operation, OpType, ProduceOperation, ConsumeOperation, PartitionReader,
             EventFilter, SegmentNum, ReplicateOperation, ReplicationResult};
 use super::segment::Segment;
@@ -460,6 +460,24 @@ struct EventToProduce {
     produce: ProduceEvent,
 }
 
+impl EventData for EventToProduce {
+    fn event_namespace(&self) -> &str {
+        self.produce.event_namespace()
+    }
+
+    fn event_parent_id(&self) -> Option<FloEventId> {
+        self.produce.event_parent_id()
+    }
+
+    fn event_data(&self) -> &[u8] {
+        self.produce.event_data()
+    }
+
+    fn get_precomputed_crc(&self) -> Option<u32> {
+        self.produce.get_precomputed_crc()
+    }
+}
+
 impl FloEvent for EventToProduce {
     fn id(&self) -> &FloEventId {
         &self.id
@@ -532,34 +550,34 @@ mod test {
         partition.add_replication_node(peer_4);
 
         let events = vec![
-            ProduceEvent {
-                op_id: 3,
-                partition: PARTITION_NUM,
-                namespace: "/foo/bar".to_owned(),
-                parent_id: None,
-                data: "the quick".to_owned().into_bytes(),
-            },
-            ProduceEvent {
-                op_id: 3,
-                partition: PARTITION_NUM,
-                namespace: "/foo/bar".to_owned(),
-                parent_id: None,
-                data: "brown fox".to_owned().into_bytes(),
-            },
-            ProduceEvent {
-                op_id: 3,
-                partition: PARTITION_NUM,
-                namespace: "/foo/bar".to_owned(),
-                parent_id: None,
-                data: "jumped over".to_owned().into_bytes(),
-            },
-            ProduceEvent {
-                op_id: 3,
-                partition: PARTITION_NUM,
-                namespace: "/foo/bar".to_owned(),
-                parent_id: None,
-                data: "the lazy dog".to_owned().into_bytes(),
-            },
+            ProduceEvent::with_crc(
+                3,
+                PARTITION_NUM,
+                "/foo/bar".to_owned(),
+                None,
+                "the quick".to_owned().into_bytes(),
+            ),
+            ProduceEvent::with_crc(
+                3,
+                PARTITION_NUM,
+                "/foo/bar".to_owned(),
+                None,
+                "brown fox".to_owned().into_bytes(),
+            ),
+            ProduceEvent::with_crc(
+                3,
+                PARTITION_NUM,
+                "/foo/bar".to_owned(),
+                None,
+                "jumped over".to_owned().into_bytes(),
+            ),
+            ProduceEvent::with_crc(
+                3,
+                PARTITION_NUM,
+                "/foo/bar".to_owned(),
+                None,
+                "the lazy dog".to_owned().into_bytes(),
+            ),
         ];
         partition.append_all(events).expect("failed to append events");
         assert_eq!(0, partition.get_commit_index());
@@ -618,20 +636,20 @@ mod test {
                 client: client_tx,
                 op_id: 3,
                 events: vec![
-                    ProduceEvent {
-                        op_id: 3,
-                        partition: PARTITION_NUM,
-                        namespace: "/foo/bar".to_owned(),
-                        parent_id: None,
-                        data: "the quick".to_owned().into_bytes(),
-                    },
-                    ProduceEvent {
-                        op_id: 3,
-                        partition: PARTITION_NUM,
-                        namespace: "/foo/bar".to_owned(),
-                        parent_id: None,
-                        data: "brown fox".to_owned().into_bytes(),
-                    }
+                    ProduceEvent::with_crc(
+                        3,
+                        PARTITION_NUM,
+                        "/foo/bar".to_owned(),
+                        None,
+                        "the quick".to_owned().into_bytes(),
+                    ),
+                    ProduceEvent::with_crc(
+                        3,
+                        PARTITION_NUM,
+                        "/foo/bar".to_owned(),
+                        None,
+                        "brown fox".to_owned().into_bytes(),
+                    )
                 ],
             };
 
@@ -645,13 +663,13 @@ mod test {
             assert!(reader.next().is_none());
 
             let moar_events = (0..100).map(|_| {
-                ProduceEvent {
-                    op_id: 4,
-                    partition: PARTITION_NUM,
-                    namespace: "/boo/hoo".to_owned(),
-                    parent_id: None,
-                    data: "stew".to_owned().into_bytes()
-                }
+                ProduceEvent::with_crc(
+                    4,
+                    PARTITION_NUM,
+                    "/boo/hoo".to_owned(),
+                    None,
+                    "stew".to_owned().into_bytes()
+                )
             }).collect::<Vec<_>>();
 
             let (client_tx, _client_rx) = oneshot::channel();

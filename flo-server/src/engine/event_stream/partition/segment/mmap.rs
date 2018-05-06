@@ -271,28 +271,28 @@ mod test {
     #[test]
     fn read_event_returns_error_when_namespace_length_is_too_large() {
         assert_read_err("namespace length too large", |buf| {
-            buf[41] = 56;
+            buf[45] = 56;
         })
     }
 
     #[test]
     fn read_event_returns_error_when_namespace_length_is_too_small() {
         assert_read_err("mismatched lengths", |buf| {
-            buf[43] = 7; //make the namespace length 7 instead of 8
+            buf[47] = 7; //make the namespace length 7 instead of 8
         })
     }
 
     #[test]
     fn read_event_returns_error_when_data_length_is_too_large() {
         assert_read_err("mismatched lengths", |buf| {
-            buf[55] = 6; //make the data length 6 instead of 5
+            buf[59] = 6; //make the data length 6 instead of 5
         })
     }
 
     #[test]
     fn read_event_returns_error_when_data_length_is_too_small() {
         assert_read_err("mismatched lengths", |buf| {
-            buf[55] = 4; //make the data length 4 instead of 5
+            buf[59] = 4; //make the data length 4 instead of 5
         })
     }
 

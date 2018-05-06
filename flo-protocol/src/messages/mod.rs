@@ -24,7 +24,7 @@ mod append_entries;
 mod request_vote;
 mod flo_instance_id;
 
-use nom::{be_u64, be_u32, be_u16, be_u8};
+use nom::{be_u64, be_u32, be_u16, be_u8, IResult};
 use event::{time, OwnedFloEvent, FloEvent, FloEventId, Timestamp};
 use serializer::Serializer;
 use std::net::SocketAddr;
@@ -552,13 +552,13 @@ mod test {
 
     #[test]
     fn serde_receive_event() {
-        let event = OwnedFloEvent {
-            id: FloEventId::new(4, 5),
-            timestamp: time::from_millis_since_epoch(99),
-            parent_id: Some(FloEventId::new(4, 3)),
-            namespace: "/foo/bar".to_owned(),
-            data: vec![9; 99],
-        };
+        let event = OwnedFloEvent::new(
+            FloEventId::new(4, 5),
+            Some(FloEventId::new(4, 3)),
+            time::from_millis_since_epoch(99),
+            "/foo/bar".to_owned(),
+            vec![9; 99],
+        );
         let message = ProtocolMessage::ReceiveEvent(event.clone());
         let result = serde_with_body(&message, true);
         assert_eq!(message, result);
@@ -609,13 +609,13 @@ mod test {
 
     #[test]
     fn parse_producer_event_parses_the_header_but_not_the_data() {
-        let input = ProduceEvent {
-            namespace: "/the/namespace".to_owned(),
-            parent_id: Some(FloEventId::new(123, 456)),
-            op_id: 9,
-            partition: 7,
-            data: vec![9; 5]
-        };
+        let input = ProduceEvent::with_crc(
+            9,
+            7,
+            "/the/namespace".to_owned(),
+            Some(FloEventId::new(123, 456)),
+            vec![9; 5]
+        );
         let mut message_input = ProtocolMessage::ProduceEvent(input.clone());
         let message_result = ser_de(&mut message_input);
 
@@ -656,6 +656,7 @@ mod test {
     fn this_works_how_i_think_it_does() {
         let input = vec![
             3,
+            0, 0, 0, 0,
             0, 0, 0, 0, 0, 0, 1, 34,  0, 1,
             0, 0, 0, 0, 0, 0, 0, 0,   0, 0,
             0, 0, 1, 93, 77, 45, 214, 26,
@@ -663,7 +664,7 @@ mod test {
         ];
 
         let result = parse_any(&input);
-        let expected = IResult::Incomplete(Needed::Size(12164));
+        let expected = IResult::Incomplete(Needed::Size(12168));
         assert_eq!(expected, result);
     }
 }

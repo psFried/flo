@@ -387,27 +387,27 @@ mod test {
     #[test]
     fn produce_all_produces_multiple_events_in_sequence() {
         let expected_sent = vec![
-            ProtocolMessage::ProduceEvent(ProduceEvent {
-                op_id: 1,
-                partition: 1,
-                namespace: "/foo".to_owned(),
-                parent_id: None,
-                data: Vec::new(),
-            }),
-            ProtocolMessage::ProduceEvent(ProduceEvent {
-                op_id: 2,
-                partition: 2,
-                namespace: "/bar".to_owned(),
-                parent_id: None,
-                data: Vec::new(),
-            }),
-            ProtocolMessage::ProduceEvent(ProduceEvent {
-                op_id: 3,
-                partition: 3,
-                namespace: "/baz".to_owned(),
-                parent_id: None,
-                data: Vec::new(),
-            })
+            ProtocolMessage::ProduceEvent(ProduceEvent::with_crc(
+                1,
+                1,
+                "/foo".to_owned(),
+                None,
+                Vec::new(),
+            )),
+            ProtocolMessage::ProduceEvent(ProduceEvent::with_crc(
+                2,
+                2,
+                "/bar".to_owned(),
+                None,
+                Vec::new(),
+            )),
+            ProtocolMessage::ProduceEvent(ProduceEvent::with_crc(
+                3,
+                3,
+                "/baz".to_owned(),
+                None,
+                Vec::new(),
+            ))
         ];
         let to_recv = vec![
             ProtocolMessage::AckEvent(EventAck{
@@ -577,22 +577,22 @@ mod test {
 
         let to_receive = vec![
             ProtocolMessage::CursorCreated(CursorInfo{ op_id: consume_op_id, batch_size: 1 }),
-            ProtocolMessage::ReceiveEvent(OwnedFloEvent {
-                id: FloEventId::new(3, 4),
-                timestamp: time::from_millis_since_epoch(8),
-                parent_id: None,
-                namespace: "/foo/bar".to_owned(),
-                data: "first event data".as_bytes().to_owned(),
-            }),
+            ProtocolMessage::ReceiveEvent(OwnedFloEvent::new(
+                FloEventId::new(3, 4),
+                None,
+                time::from_millis_since_epoch(8),
+                "/foo/bar".to_owned(),
+                "first event data".as_bytes().to_owned(),
+            )),
             ProtocolMessage::EndOfBatch,
             ProtocolMessage::AwaitingEvents,
-            ProtocolMessage::ReceiveEvent(OwnedFloEvent {
-                id: FloEventId::new(3, 5),
-                timestamp: time::from_millis_since_epoch(9),
-                parent_id: Some(FloEventId::new(3, 4)),
-                namespace: "/foo/bar".to_owned(),
-                data: "second event data".as_bytes().to_owned(),
-            }),
+            ProtocolMessage::ReceiveEvent(OwnedFloEvent::new(
+                FloEventId::new(3, 5),
+                Some(FloEventId::new(3, 4)),
+                time::from_millis_since_epoch(9),
+                "/foo/bar".to_owned(),
+                "second event data".as_bytes().to_owned(),
+            )),
         ];
         let receiver = MockReceiveStream::will_produce(to_receive);
         let (sender, mut send_verify) = MockSendStream::new();

@@ -377,13 +377,13 @@ mod test {
     fn receive_event_returns_error_when_no_event_was_expected() {
         let (mut subject, mut fixture) = Fixture::create_outgoing_peer_connection();
 
-        let event = OwnedFloEvent {
-            id: FloEventId::new(0, 457),
-            timestamp: time::now(),
-            parent_id: None,
-            namespace: "/system/foo".to_owned(),
-            data: vec![1, 2, 3, 4, 5],
-        };
+        let event = OwnedFloEvent::new(
+            FloEventId::new(0, 457),
+            None,
+            time::now(),
+            "/system/foo".to_owned(),
+            vec![1, 2, 3, 4, 5],
+        );
         let result = subject.handle_incoming_message(ProtocolMessage::ReceiveEvent(event.clone()));
         assert!(result.is_err());
 
@@ -411,22 +411,22 @@ mod test {
 
         subject.handle_incoming_message(append).unwrap();
         fixture.assert_nothing_sent_to_system_stream();
-        let event1 = OwnedFloEvent {
-            id: FloEventId::new(0, 457),
-            timestamp: time::now(),
-            parent_id: None,
-            namespace: "/system/foo".to_owned(),
-            data: vec![1, 2, 3, 4, 5],
-        };
+        let event1 = OwnedFloEvent::new(
+            FloEventId::new(0, 457),
+            None,
+            time::now(),
+            "/system/foo".to_owned(),
+            vec![1, 2, 3, 4, 5],
+        );
         subject.handle_incoming_message(ProtocolMessage::ReceiveEvent(event1.clone())).unwrap();
         fixture.assert_nothing_sent_to_system_stream();
-        let event2 = OwnedFloEvent {
-            id: FloEventId::new(0, 457),
-            timestamp: time::now(),
-            parent_id: None,
-            namespace: "/system/foo".to_owned(),
-            data: vec![1, 2, 3, 4, 5],
-        };
+        let event2 = OwnedFloEvent::new(
+            FloEventId::new(0, 457),
+            None,
+            time::now(),
+            "/system/foo".to_owned(),
+            vec![1, 2, 3, 4, 5],
+        );
         subject.handle_incoming_message(ProtocolMessage::ReceiveEvent(event2.clone())).unwrap();
 
         let expected = SystemOpType::AppendEntriesReceived(ReceiveAppendEntries {

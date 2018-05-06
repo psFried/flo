@@ -1,7 +1,8 @@
+use std::fmt::Debug;
 use rmp_serde::decode::Error;
 
 use protocol::Term;
-use event::{FloEvent, FloEventId, OwnedFloEvent, EventCounter, ActorId, Timestamp, time};
+use event::{FloEvent, EventData, FloEventId, OwnedFloEvent, EventCounter, ActorId, Timestamp, time};
 use engine::event_stream::EventStreamOptions;
 use engine::event_stream::partition::PersistentEvent;
 
@@ -52,6 +53,24 @@ impl SystemEvent<OwnedFloEvent> {
             term,
             wrapped: event
         }
+    }
+}
+
+impl <E: FloEvent> EventData for SystemEvent<E> {
+    fn event_namespace(&self) -> &str {
+        self.wrapped.event_namespace()
+    }
+
+    fn event_parent_id(&self) -> Option<FloEventId> {
+        self.wrapped.event_parent_id()
+    }
+
+    fn event_data(&self) -> &[u8] {
+        self.wrapped.event_data()
+    }
+
+    fn get_precomputed_crc(&self) -> Option<u32> {
+        self.wrapped.get_precomputed_crc()
     }
 }
 
