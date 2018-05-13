@@ -35,7 +35,7 @@ impl MmapInner {
         }
     }
 
-    unsafe fn get_write_slice(&self, start_offset: usize) -> &mut [u8] {
+    pub unsafe fn get_write_slice(&self, start_offset: usize) -> &mut [u8] {
         let mmap = &mut *self.region.get();
         &mut mmap.as_mut_slice()[start_offset..]
     }

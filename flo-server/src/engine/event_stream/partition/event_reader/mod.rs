@@ -128,7 +128,7 @@ impl PartitionReader {
 
     fn should_skip(&self, result: &Option<Result<PersistentEvent, io::Error>>) -> bool {
         if let Some(Ok(ref event)) = *result {
-            !self.filter.matches(event)
+            !event.is_deleted() && !self.filter.matches(event)
         } else {
             false
         }

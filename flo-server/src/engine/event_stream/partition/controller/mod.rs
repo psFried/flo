@@ -147,11 +147,17 @@ impl PartitionImpl {
     }
 
     pub fn events_acknowledged(&mut self, peer_id: FloInstanceId, counter: EventCounter) {
+        if !self.is_current_primary() {
+            debug!("partition: {} ignoring events_acknowledged from peer: {} with counter: {} because this instance is no longer primary",
+                    self.partition_num, peer_id, counter);
+            return;
+        }
+
         let new_index = self.commit_manager.acknowledgement_received(peer_id, counter);
         if let Some(committed_event) = new_index {
             // This acknowledgement has caused a new event to be commmitted. Notify the producers of the successful operations
             // and also notify any consumers of committed events
-
+            self.pending_produce_operations.commit_success(committed_event);
         }
     }
 
@@ -181,6 +187,10 @@ impl PartitionImpl {
 
     pub fn stop_consumer(&mut self, connection_id: ConnectionId) {
         self.consumer_manager.remove(connection_id);
+    }
+
+    pub fn is_current_primary(&self) -> bool {
+        self.primary.get_relaxed()
     }
 
     pub fn process(&mut self, operation: Operation) -> io::Result<()> {
@@ -239,30 +249,95 @@ impl PartitionImpl {
     }
 
     /// persists events in this partition. Panics if `events` is empty
-    fn replicate_events<F: FloEvent>(&mut self, op_id: u32, events: Vec<F>) -> io::Result<ReplicationResult> {
+    pub fn replicate_events<F: FloEvent>(&mut self, op_id: u32, events: Vec<F>) -> io::Result<ReplicationResult> {
         let commit_index = self.commit_manager.get_commit_index();
         let current_head = self.index.greatest_event_counter();
 
-        // ignore any events with id < commit_index
+        // ignore any events with id.event_counter < commit_index
+        // We don't bother checking CRCs for these, since they are already committed
         let first_repl_event_index = events.iter().position(|e| e.id().event_counter > commit_index);
         if first_repl_event_index.is_none() {
             // All the events in this message have already been committed, so just return our current commit index
             return Ok(ReplicationResult {
                 op_id,
                 success: true, // success = true because the log is consistent. We just happen to have all these entries already
-                highest_event_counter: commit_index,
+                highest_event_counter: self.index.greatest_event_counter(),
             });
         }
-        let mut first_event_to_append = first_repl_event_index.unwrap();
 
+        let index_of_first_uncommitted = first_repl_event_index.unwrap();
         // now we may still skip events that are uncommitted if the event id and crc matches what we already have in the log
+        // so we'll check these new events against what we already have to see if they match. This will return a slice of events to append
+        // checking the events against the ones we already have could result in an error, so we may return early here
+        let (invalidate_start_counter, events_to_replicate) = self.check_events_to_replicate_against_existing(&events[index_of_first_uncommitted..])?;
 
-        // if any uncommitted events have a different crc, then mark that event and all the events that come after it as deleted
+        // if any uncommitted events had a different crc, then mark that event and all the events that come after it as deleted
+        for start_of_invalid_events in invalidate_start_counter {
+            self.invalidate_uncommitted_events(start_of_invalid_events);
+        }
+
         // at this point, we should be in a state where the last non-deleted event in the log is the same as the previous event info in the message
+        // append entries starting at `index_of_first_to_replicate`
+        self.append_replicated_events(events_to_replicate)?;
+        Ok(ReplicationResult{
+            op_id,
+            success: true,
+            highest_event_counter: self.index.greatest_event_counter(),
+        })
+    }
 
-        // append entries starting at `first_event_to_append`
+    /// Checks a new sequence of events to replicate against the events that may already be persisted to see if we need to
+    /// either A, delete any existing uncommitted events because the new ones are different, or B, skip writing any of the
+    /// new events if we already have them persisted
+    fn check_events_to_replicate_against_existing<'a>(&mut self, to_replicate: &'a [impl FloEvent]) -> io::Result<(Option<EventCounter>, &'a [impl FloEvent])> {
+        let my_start_id = to_replicate[0].id().event_counter;
+        let my_reader = self.create_reader(0, EventFilter::All, my_start_id);
+        let mut index_of_first_to_replicate = 0;
+        let mut invalidate_start_counter: Option<EventCounter> = None;
 
+        for persisted_event_result in my_reader {
+            if index_of_first_to_replicate >= to_replicate.len() {
+                break; // There will be no work to do here
+            }
+
+            let persisted_event = persisted_event_result?; // return the io error if we failed to read the event we already have
+            let existing_event_id = persisted_event.id();
+
+            let new_event = &to_replicate[index_of_first_to_replicate]; // safe since we check the index bounds above
+
+            if PartitionImpl::are_same_event(&persisted_event, new_event) {
+                // If the two events are the same, then we can skip persisting the new one
+                index_of_first_to_replicate += 1;
+            } else {
+                // if the two events are different, then it's because the uncommitted events that we have need to be deleted
+                // We'll start at this event and invalidate (mark deleted) it and every event that follows it
+                invalidate_start_counter = Some(persisted_event.id().event_counter);
+                break;
+            }
+        }
+
+        let events_to_replicate = &to_replicate[index_of_first_to_replicate..];
+        Ok((invalidate_start_counter, events_to_replicate))
+    }
+
+    fn append_replicated_events<E: FloEvent>(&mut self, events: &[E]) -> io::Result<()> {
+        if !events.is_empty() {
+            debug!("partition: {} replicating {} new events starting with event_counter: {}", self.partition_num, events.len(), events[0].id().event_counter)
+        }
+        for event in events {
+            self.append(event)?;
+        }
+        Ok(())
+    }
+
+    fn invalidate_uncommitted_events(&mut self, start_inclusive: EventCounter) {
+        info!("Invalidating existing uncommitted events for partition: {}, starting with event_counter: {}",
+              self.partition_num, start_inclusive);
         unimplemented!()
+    }
+
+    fn are_same_event<E: FloEvent, N: FloEvent>(existing: &E, new: &N) -> bool {
+        existing.id() == new.id() && existing.get_or_compute_crc() == new.get_or_compute_crc()
     }
 
     fn drop_segments_through_index(&mut self, segment_index: usize) {
@@ -325,6 +400,7 @@ impl PartitionImpl {
         Ok(FloEventId::new(self.partition_num, event_counter))
     }
 
+    /// Writes the event to disk and updates the index so that we know where it is
     fn append<E: FloEvent>(&mut self, event: &E) -> io::Result<()> {
         use super::SegmentNum;
         use super::segment::AppendResult;
@@ -520,6 +596,68 @@ mod test {
 
     const PARTITION_NUM: ActorId = 1;
     const CONNECTION: ConnectionId = 55;
+
+    #[test]
+    fn events_are_replicated_from_a_peer() {
+        let status = AtomicBoolWriter::with_value(true);
+        let options = EventStreamOptions {
+            name: "superduper".to_owned(),
+            num_partitions: 1,
+            event_retention: Duration::seconds(20),
+            max_segment_duration: Duration::seconds(5),
+            segment_max_size_bytes: 256,
+        };
+        let tempdir = TempDir::new("partition_persist_events_and_read_them_back").unwrap();
+
+        // Init a new partition and append a bunch of events in two groups
+        let mut partition = PartitionImpl::init_new(PARTITION_NUM,
+                                                    tempdir.path().to_owned(),
+                                                    &options,
+                                                    status.reader(),
+                                                    HighestCounter::zero()).unwrap();
+
+        let peer_1 = FloInstanceId::generate_new();
+        let peer_2 = FloInstanceId::generate_new();
+        let peer_3 = FloInstanceId::generate_new();
+        let peer_4 = FloInstanceId::generate_new();
+        partition.add_replication_node(peer_1);
+        partition.add_replication_node(peer_2);
+        partition.add_replication_node(peer_3);
+        partition.add_replication_node(peer_4);
+
+        let events = vec![
+            ProduceEvent::with_crc(
+                3,
+                PARTITION_NUM,
+                "/foo/bar".to_owned(),
+                None,
+                "the quick".to_owned().into_bytes(),
+            ),
+            ProduceEvent::with_crc(
+                3,
+                PARTITION_NUM,
+                "/foo/bar".to_owned(),
+                None,
+                "brown fox".to_owned().into_bytes(),
+            ),
+            ProduceEvent::with_crc(
+                3,
+                PARTITION_NUM,
+                "/foo/bar".to_owned(),
+                None,
+                "jumped over".to_owned().into_bytes(),
+            ),
+            ProduceEvent::with_crc(
+                3,
+                PARTITION_NUM,
+                "/foo/bar".to_owned(),
+                None,
+                "the lazy dog".to_owned().into_bytes(),
+            ),
+        ];
+        partition.append_all(events).expect("failed to append events");
+
+    }
 
     #[test]
     fn events_are_committed_when_acknowledged_by_a_majority() {

@@ -6,6 +6,46 @@ use event::{FloEvent, EventData, OwnedFloEvent, FloEventId, Timestamp, time};
 use engine::event_stream::partition::segment::mmap::{MmapRef};
 
 
+mod offsets {
+    pub const TOTAL_LEN_START: usize = 0;
+    pub const TOTAL_LEN_LEN: usize = 4;
+
+    pub const HEADER_MARKER_START: usize = TOTAL_LEN_START + TOTAL_LEN_LEN;
+    pub const HEADER_MARKER_LEN: usize = 8;
+
+    pub const CRC_START: usize = HEADER_MARKER_START + HEADER_MARKER_LEN;
+    pub const CRC_LEN: usize = 4;
+
+    pub const ID_START: usize = CRC_START + CRC_LEN;
+
+    pub const ID_PARTITION_LEN: usize = 2;
+    pub const ID_COUNTER_LEN: usize = 8;
+    pub const ID_LEN: usize = ID_PARTITION_LEN + ID_COUNTER_LEN;
+
+    pub const PARENT_ID_START: usize = ID_START + ID_LEN;
+
+    pub const TIMESTAMP_START: usize = PARENT_ID_START + ID_LEN;
+    pub const TIMESTAMP_LEN: usize = 8;
+
+    pub const NS_LEN_START: usize = TIMESTAMP_START + TIMESTAMP_LEN;
+    pub const NS_LEN_LEN: usize = 4;
+
+    pub const NS_BYTES_START: usize = NS_LEN_START + NS_LEN_LEN;
+
+    pub fn data_len_start(namespace_len: usize) -> usize {
+        NS_BYTES_START + namespace_len
+    }
+    pub const DATA_LEN_LEN: usize = 4;
+
+    pub fn data_bytes_start(namespace_len: usize) -> usize {
+        data_len_start(namespace_len) + 4
+    }
+
+    pub const MIN_EVENT_LEN: usize = NS_BYTES_START + DATA_LEN_LEN;
+}
+
+static HEADER_NORMAL: &[u8; 8] = b"FLO_EVT\n";
+static HEADER_DELETED: &[u8; 8] = b"FLO_DEL\n";
 
 #[derive(Debug, Clone)]
 pub struct PersistentEvent {
@@ -21,7 +61,7 @@ impl PersistentEvent {
         // Don't change this function without also changing `write_event` below!
         //
         // 4 for total_size +     start = 0
-        // 8 for header marker +  start = 8
+        // 8 for header marker +  start = 4
         // 4 for crc +            start = 12
         // 10 for id +            start = 16
         // 10 for parent_id +     start = 26
@@ -32,11 +72,25 @@ impl PersistentEvent {
         // y for data             start = 52 + x = ?
         //
         // = 52 + x + y
-        52u32 + event.namespace().len() as u32 + event.data_len()
+        offsets::MIN_EVENT_LEN as u32 + event.namespace().len() as u32 + event.data_len()
     }
 
     pub fn total_repr_len(&self) -> usize {
         PersistentEvent::get_repr_length(self) as usize
+    }
+
+    pub fn is_deleted(&self) -> bool {
+        let marker_buf = self.as_buf(offsets::HEADER_MARKER_START, offsets::HEADER_MARKER_LEN);
+        marker_buf != &HEADER_NORMAL[..]
+    }
+
+    pub unsafe fn set_deleted(&mut self) {
+        use std::io::Write;
+
+        let start_offset = self.file_offset + offsets::HEADER_MARKER_START;
+        let mut buffer = self.raw_data.get_write_slice(start_offset);
+        // this write can't really fail, since we already know that there's space in the slice
+        let _ = buffer.write_all(HEADER_DELETED);
     }
 
     pub unsafe fn write_unchecked<E: FloEvent>(event: &E, buffer: &mut [u8]) {
@@ -67,42 +121,47 @@ impl PersistentEvent {
         })
     }
 
+    //TODO: currently PersistentEvent does not validate the crc. Not sure if it's worth it or not
     fn validate(buffer: &[u8]) -> io::Result<(FloEventId, u32)> {
-        if buffer.len() < 52 {
+        use self::offsets::*;
+
+        if buffer.len() < MIN_EVENT_LEN {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "buffer is not large enough"));
         }
 
-        let total_len = BigEndian::read_u32(&buffer[..4]);
+        let total_len = BigEndian::read_u32(&buffer[..TOTAL_LEN_LEN]);
 
-        let header_bytes = &buffer[4..12];
-        if header_bytes != b"FLO_EVT\n" {
+        let header_bytes = &buffer[HEADER_MARKER_START..(HEADER_MARKER_START + HEADER_MARKER_LEN)];
+        if header_bytes != HEADER_NORMAL && header_bytes != HEADER_DELETED {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid marker bytes"));
         }
 
-        let crc_buf = &buffer[12..16];
-        let crc = BigEndian::read_u32(crc_buf);
-
-        let partition_buf = &buffer[16..18];
+        let partition_buf = &buffer[ID_START..(ID_START + ID_PARTITION_LEN)];
         let partition_num = BigEndian::read_u16(partition_buf);
-        let counter_buf = &buffer[18..26];
+        let counter_buf = &buffer[(ID_START + ID_PARTITION_LEN)..(ID_START + ID_LEN)];
         let counter = BigEndian::read_u64(counter_buf);
 
         // check the namespace and data lengths to ensure that they line up OK
-        let ns_len = BigEndian::read_u32(&buffer[44..48]);
+        let ns_len = BigEndian::read_u32(&buffer[NS_LEN_START..(NS_LEN_START + NS_LEN_LEN)]);
 
-        if ns_len as usize + 52 > buffer.len() {
+        if ns_len as usize + MIN_EVENT_LEN > buffer.len() {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "namespace length too large"));
         }
 
-        let data_len_pos = 48usize + ns_len as usize;
-        let data_len_buf = &buffer[data_len_pos..(data_len_pos + 4)];
+        let data_len_pos = data_len_start(ns_len as usize);
+        let data_len_buf = &buffer[data_len_pos..(data_len_pos + DATA_LEN_LEN)];
         let data_len = BigEndian::read_u32(data_len_buf);
 
-        if total_len != 52 + ns_len + data_len {
+        if total_len != MIN_EVENT_LEN as u32 + ns_len + data_len {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "mismatched lengths"));
         }
 
         Ok((FloEventId::new(partition_num, counter), total_len))
+    }
+
+    fn read_value_unchecked<V, F>(&self, start: usize, len: usize, fun: F) -> V where F: Fn(&[u8]) -> V {
+        let buffer_slice = self.as_buf(start, len);
+        fun(buffer_slice)
     }
 
     fn as_buf(&self, start: usize, len: usize) -> &[u8] {
@@ -219,7 +278,7 @@ fn write_event_unchecked<E: FloEvent>(buffer: &mut [u8], event: &E, total_size: 
 
     Serializer::new(buffer)
             .write_u32(total_size)
-            .write_bytes(b"FLO_EVT\n")
+            .write_bytes(HEADER_NORMAL)
             .write_u32(event.get_or_compute_crc())
             .write_u16(event.id().actor)
             .write_u64(event.id().event_counter)
