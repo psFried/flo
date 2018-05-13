@@ -38,7 +38,7 @@ impl SystemStreamReader {
     pub fn fill_buffer(&mut self, event_buffer: &mut Vec<SystemEvent<PersistentEvent>>) -> io::Result<usize> {
         event_buffer.clear();
         while event_buffer.len() < SYSTEM_READER_BATCH_SIZE {
-            let next = self.inner.next();
+            let next = self.inner.read_next_uncommitted();
             if let Some(next_result) = next {
                 let event = next_result?; // return if read failed
                 let event_id = *event.id();

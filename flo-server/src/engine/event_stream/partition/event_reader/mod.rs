@@ -121,6 +121,14 @@ impl PartitionReader {
         }).unwrap_or((SegmentNum(0), 0))
     }
 
+    pub fn into_iter_uncommitted(self) -> PartitionIterUncommitted {
+        PartitionIterUncommitted(self)
+    }
+
+    pub fn into_iter_committed(self) -> PartitionIterCommitted {
+        PartitionIterCommitted(self)
+    }
+
     fn reset(&mut self) {
         self.returned_error = false;
         self.next_buffer = None;
@@ -176,11 +184,36 @@ impl PartitionReader {
     }
 }
 
-impl Iterator for PartitionReader {
+pub struct PartitionIterUncommitted(PartitionReader);
+
+impl Iterator for PartitionIterUncommitted {
     type Item = io::Result<PersistentEvent>;
 
-    fn next(&mut self) -> Option<Self::Item> {
-        self.read_next_uncommitted()
+    fn next(&mut self) -> Option<<Self as Iterator>::Item> {
+        self.0.read_next_uncommitted()
+    }
+}
+
+impl Into<PartitionReader> for PartitionIterUncommitted {
+    fn into(self) -> PartitionReader {
+        self.0
+    }
+}
+
+
+pub struct PartitionIterCommitted(PartitionReader);
+
+impl Iterator for PartitionIterCommitted {
+    type Item = io::Result<PersistentEvent>;
+
+    fn next(&mut self) -> Option<<Self as Iterator>::Item> {
+        self.0.read_next_committed()
+    }
+}
+
+impl Into<PartitionReader> for PartitionIterCommitted {
+    fn into(self) -> PartitionReader {
+        self.0
     }
 }
 

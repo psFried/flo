@@ -295,7 +295,7 @@ impl PartitionImpl {
         let mut index_of_first_to_replicate = 0;
         let mut invalidate_start_counter: Option<EventCounter> = None;
 
-        for persisted_event_result in my_reader {
+        for persisted_event_result in my_reader.into_iter_uncommitted() {
             if index_of_first_to_replicate >= to_replicate.len() {
                 break; // There will be no work to do here
             }
@@ -588,6 +588,7 @@ mod test {
     use futures::sync::oneshot;
 
     use super::*;
+    use event::{OwnedFloEvent, FloEventId, time::from_millis_since_epoch};
     use protocol::ProduceEvent;
     use engine::event_stream::partition::{ProduceOperation, EventFilter, PartitionReader};
     use engine::event_stream::{EventStreamOptions, HighestCounter};
@@ -597,8 +598,12 @@ mod test {
     const PARTITION_NUM: ActorId = 1;
     const CONNECTION: ConnectionId = 55;
 
+    fn event_id(counter: EventCounter) -> FloEventId {
+        FloEventId::new(PARTITION_NUM, counter)
+    }
+
     #[test]
-    fn events_are_replicated_from_a_peer() {
+    fn events_are_replicated_from_a_peer_when_none_of_them_already_exist() {
         let status = AtomicBoolWriter::with_value(true);
         let options = EventStreamOptions {
             name: "superduper".to_owned(),
@@ -626,37 +631,47 @@ mod test {
         partition.add_replication_node(peer_4);
 
         let events = vec![
-            ProduceEvent::with_crc(
-                3,
-                PARTITION_NUM,
-                "/foo/bar".to_owned(),
+            OwnedFloEvent::new(
+                event_id(1),
                 None,
+                from_millis_since_epoch(1),
+                "/foo/bar".to_owned(),
                 "the quick".to_owned().into_bytes(),
             ),
-            ProduceEvent::with_crc(
-                3,
-                PARTITION_NUM,
-                "/foo/bar".to_owned(),
+            OwnedFloEvent::new(
+                event_id(2),
                 None,
+                from_millis_since_epoch(3),
+                "/foo/bar".to_owned(),
                 "brown fox".to_owned().into_bytes(),
             ),
-            ProduceEvent::with_crc(
-                3,
-                PARTITION_NUM,
-                "/foo/bar".to_owned(),
+            OwnedFloEvent::new(
+                event_id(3),
                 None,
+                from_millis_since_epoch(5),
+                "/foo/bar".to_owned(),
                 "jumped over".to_owned().into_bytes(),
             ),
-            ProduceEvent::with_crc(
-                3,
-                PARTITION_NUM,
-                "/foo/bar".to_owned(),
+            OwnedFloEvent::new(
+                event_id(4),
                 None,
+                from_millis_since_epoch(7),
+                "/foo/bar".to_owned(),
                 "the lazy dog".to_owned().into_bytes(),
             ),
         ];
-        partition.append_all(events).expect("failed to append events");
 
+        let op_id = 567;
+        let result = partition.replicate_events(op_id, events.clone()).expect("Failed to replicate events");
+        assert!(result.success);
+        assert_eq!(op_id, result.op_id);
+        assert_eq!(4, result.highest_event_counter);
+
+        let reader = partition.create_reader(0, EventFilter::All, 0);
+        let persisted_events = reader.into_iter_uncommitted().map(|e| {
+            e.expect("Failed to read event").to_owned_event()
+        }).collect::<Vec<_>>();
+        assert_eq!(events, persisted_events);
     }
 
     #[test]
@@ -798,7 +813,7 @@ mod test {
             assert_eq!(b"the quick", event.data());
             let event2 = reader.read_next_uncommitted().expect("read_next returned None").expect("read_next returned error");
             assert_eq!(b"brown fox", event2.data());
-            assert!(reader.next().is_none());
+            assert!(reader.read_next_uncommitted().is_none());
 
             let moar_events = (0..100).map(|_| {
                 ProduceEvent::with_crc(
@@ -819,7 +834,7 @@ mod test {
             }).expect("failed to persist large batch");
 
             let mut total = 0;
-            for result in reader {
+            for result in reader.into_iter_uncommitted() {
                 result.expect("failed to read event");
                 total += 1;
             }
@@ -832,7 +847,7 @@ mod test {
         let mut partition = result.expect("Failed to init partitionImpl");
 
         let reader = partition.create_reader(77, EventFilter::All, 0);
-        let count = reader.map(|read_result| {
+        let count = reader.into_iter_uncommitted().map(|read_result| {
             read_result.expect("failed to read event after re-init");
         }).count();
         assert_eq!(102, count);
