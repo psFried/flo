@@ -158,6 +158,7 @@ impl PartitionImpl {
             // This acknowledgement has caused a new event to be commmitted. Notify the producers of the successful operations
             // and also notify any consumers of committed events
             self.pending_produce_operations.commit_success(committed_event);
+            self.consumer_manager.notify_committed();
         }
     }
 
@@ -167,10 +168,6 @@ impl PartitionImpl {
 
     pub fn commit_index_reader(&self) -> AtomicCounterReader {
         self.commit_manager.get_commit_index_reader()
-    }
-
-    pub fn set_commit_index(&mut self, new_index: EventCounter) {
-        self.commit_manager.update_commit_index(new_index)
     }
 
     pub fn get_commit_index(&self) -> EventCounter {
@@ -278,7 +275,12 @@ impl PartitionImpl {
 
         // at this point, we should be in a state where the last non-deleted event in the log is the same as the previous event info in the message
         // append entries starting at `index_of_first_to_replicate`
-        self.append_replicated_events(events_to_replicate)?;
+        if !events_to_replicate.is_empty() {
+            let id_of_first_replicated = events_to_replicate[0].id().event_counter;
+            self.append_replicated_events(events_to_replicate)?; // return early if the actual write fails
+
+            self.notify_consumers_events_appended(id_of_first_replicated);
+        }
         Ok(ReplicationResult{
             op_id,
             success: true,
@@ -381,6 +383,9 @@ impl PartitionImpl {
 
         let timestamp = time::now();
         let mut event_counter = new_highest - event_count as u64;
+
+        // keep track of the first event that gets added, since this is what we pass to `notify_consumers_events_appended`
+        let first_event_id = event_counter;
         for produce_event in events {
             event_counter += 1;
             let event = EventToProduce {
@@ -393,11 +398,23 @@ impl PartitionImpl {
         }
         debug!("partition: {} finished appending {} events ending with counter: {}", self.partition_num, event_count, event_counter);
 
+        // may update the commit index if we're in standalone mode, we we want this to be before the fence
+        self.commit_manager.events_written(new_highest);
+
         // fence to make sure that events are actually done being saved prior to the notify, since
         // consumers may then immediately read that region of memory
         ::std::sync::atomic::fence(::std::sync::atomic::Ordering::SeqCst);
-        self.consumer_manager.notify_uncommitted();
+
+        self.notify_consumers_events_appended(first_event_id);
         Ok(FloEventId::new(self.partition_num, event_counter))
+    }
+
+    fn notify_consumers_events_appended(&mut self, first_event_added: EventCounter) {
+        if self.get_commit_index() >= first_event_added {
+           self.consumer_manager.notify_committed()
+        } else {
+            self.consumer_manager.notify_uncommitted()
+        }
     }
 
     /// Writes the event to disk and updates the index so that we know where it is
@@ -482,14 +499,18 @@ impl PartitionImpl {
     }
 
     pub fn handle_consume(&mut self, connection_id: ConnectionId, consume: ConsumeOperation) -> io::Result<()> {
-        let ConsumeOperation {client_sender, filter, start_exclusive, notifier} = consume;
+        let ConsumeOperation {client_sender, filter, start_exclusive, notifier, consume_uncommitted} = consume;
         let reader = self.create_reader(connection_id, filter, start_exclusive);
 
         // We don't really care if the receiving end has hung up already
         // but we don't want to actually add the notifier to the consumer manager in that case
         let result = client_sender.send(reader);
         if let Ok(_) = result {
-            self.consumer_manager.add_uncommitted(notifier);
+            if consume_uncommitted {
+                self.consumer_manager.add_uncommitted(notifier);
+            } else {
+                self.consumer_manager.add_committed(notifier);
+            }
         }
         Ok(())
     }

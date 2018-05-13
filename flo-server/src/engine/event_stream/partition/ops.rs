@@ -51,6 +51,7 @@ pub struct ConsumeOperation {
     pub client_sender: oneshot::Sender<PartitionReader>,
     pub filter: EventFilter,
     pub start_exclusive: EventCounter,
+    pub consume_uncommitted: bool,
     pub notifier: Box<ConsumerNotifier>,
 }
 
@@ -58,13 +59,18 @@ impl PartialEq for ConsumeOperation {
     fn eq(&self, other: &ConsumeOperation) -> bool {
         self.filter == other.filter &&
                 self.start_exclusive == other.start_exclusive &&
+                self.consume_uncommitted == other.consume_uncommitted &&
                 self.notifier.connection_id() == other.notifier.connection_id()
     }
 }
 
 impl Debug for ConsumeOperation {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "ConsumeOperation {{ filter: {:?}, start_exclusive: {} }}", self.filter, self.start_exclusive)
+        f.debug_struct("ConsumeOperation")
+                .field("filter", &self.filter)
+                .field("start_exclusive", &self.start_exclusive)
+                .field("consume_uncommitted", &self.consume_uncommitted)
+                .finish()
     }
 }
 
@@ -118,13 +124,14 @@ impl Operation {
         }
     }
 
-    pub fn consume(connection_id: ConnectionId, notifier: Box<ConsumerNotifier>, filter: EventFilter, start_exclusive: EventCounter) -> (Operation, ConsumeResponseReceiver) {
+    pub fn consume(connection_id: ConnectionId, notifier: Box<ConsumerNotifier>, filter: EventFilter, start_exclusive: EventCounter, consume_uncommitted: bool) -> (Operation, ConsumeResponseReceiver) {
         let (tx, rx) = oneshot::channel();
         let consume = ConsumeOperation {
             client_sender: tx,
-            filter: filter,
-            start_exclusive: start_exclusive,
-            notifier: notifier,
+            filter,
+            start_exclusive,
+            notifier,
+            consume_uncommitted,
         };
         let op = Operation::new(connection_id, OpType::Consume(consume));
         (op, rx)

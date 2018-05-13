@@ -4,6 +4,9 @@ extern crate nom;
 #[macro_use]
 extern crate log;
 
+#[macro_use]
+extern crate bitflags;
+
 extern crate flo_event as event;
 extern crate byteorder;
 extern crate chrono;

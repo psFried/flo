@@ -338,6 +338,7 @@ dependencies = [
 name = "flo-protocol"
 version = "0.2.0"
 dependencies = [
+ "bitflags 1.0.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "byteorder 1.2.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "chrono 0.4.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "flo-event 0.2.0",

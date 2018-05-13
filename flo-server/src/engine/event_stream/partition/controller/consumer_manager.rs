@@ -31,6 +31,8 @@ impl ConsumerManager {
     }
 
     pub fn notify_committed(&mut self) {
+        // consumers of uncommitted events should also get notified so that they can send out an update about the commit index
+        self.notify_uncommitted();
         do_notify("committed", &mut self.committed);
     }
 

@@ -77,12 +77,13 @@ impl ConsumerConnectionState {
     }
 
     pub fn handle_start_consuming(&mut self, start: NewConsumerStart, connection: &mut ConnectionState) -> ConnectionHandlerResult {
-        let NewConsumerStart {op_id, version_vector, namespace, max_events} = start;
+        let NewConsumerStart {op_id, version_vector, namespace, max_events, options} = start;
         let event_limit = if max_events == CONSUME_UNLIMITED {
             None
         } else {
             Some(max_events)
         };
+        let consume_uncommitted = options.contains(ConsumerFlags::ConsumeUncommitted);
 
         match EventFilter::parse(&namespace) {
             Ok(filter) => {
@@ -94,11 +95,11 @@ impl ConsumerConnectionState {
                     let partition = id.actor;
                     let notifier = pending_consume.create_notifier(connection_id);
 
-                    let send_result = connection.event_stream.get_partition(partition).unwrap().consume(connection_id,
-                                                                                                     op_id,
-                                                                                                     notifier,
-                                                                                                     filter.clone(),
-                                                                                                     start);
+                    //TODO: don't call unwrap so that an invalid partition id in the version vector doesn't cause the connection handler to panic
+                    let send_result = connection.event_stream
+                                                .get_partition(partition)
+                                                .unwrap()
+                                                .consume(connection_id, op_id, notifier, filter.clone(), start, consume_uncommitted);
 
                     let receiver = send_result.map_err(|err| {
                         format!("Failed to send consume operation to partition: {} : {:?}", partition, err)

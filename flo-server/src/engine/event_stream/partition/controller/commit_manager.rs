@@ -54,7 +54,13 @@ impl CommitManager {
         self.min_required_for_commit == 0
     }
 
-    pub fn update_commit_index(&mut self, new_index: EventCounter) {
+    pub fn events_written(&mut self, highest_event_counter: EventCounter) {
+        if self.is_standalone() {
+            self.update_commit_index(highest_event_counter);
+        }
+    }
+
+    fn update_commit_index(&mut self, new_index: EventCounter) {
         self.commit_index.set_if_greater(new_index as usize);
     }
 

@@ -613,6 +613,7 @@ mod test {
         let expected_sent = vec![
             ProtocolMessage::NewStartConsuming(NewConsumerStart {
                 op_id: consume_op_id,
+                options: Default::default(),
                 version_vector: vec![FloEventId::new(1, 2), FloEventId::new(2, 8), FloEventId::new(3, 4)],
                 max_events: 2,
                 namespace: "/foo/*".to_owned(),

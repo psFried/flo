@@ -47,7 +47,7 @@ pub use self::peer_announce::{PeerAnnounce, ClusterMember};
 pub use self::error::{ErrorMessage, ErrorKind};
 pub use self::produce_event::ProduceEvent;
 pub use self::event_ack::EventAck;
-pub use self::consume_start::{NewConsumerStart, CONSUME_UNLIMITED};
+pub use self::consume_start::{NewConsumerStart, ConsumerFlags, CONSUME_UNLIMITED};
 pub use self::cursor_info::CursorInfo;
 pub use self::event_stream_status::{EventStreamStatus, PartitionStatus};
 pub use self::set_event_stream::SetEventStream;
@@ -532,6 +532,7 @@ mod test {
         ];
         test_serialize_then_deserialize(&ProtocolMessage::NewStartConsuming(NewConsumerStart{
             op_id: 321,
+            options: ConsumerFlags::default(),
             version_vector: version_vec,
             max_events: 987,
             namespace: "/foo/bar/*".to_owned(),
@@ -543,6 +544,7 @@ mod test {
         let vv = vec![FloEventId::new(1, 0)];
         let msg = ProtocolMessage::NewStartConsuming(NewConsumerStart {
             op_id: 3,
+            options: ConsumerFlags::ConsumeUncommitted,
             version_vector: vv,
             max_events: 1,
             namespace: "/foo/*".to_owned(),
