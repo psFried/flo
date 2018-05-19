@@ -73,6 +73,7 @@ fn message_to_owned(server_msg: SendProtocolMessage) -> ClientProtocolMessage {
         ProtocolMessage::SystemAppendResponse(op) => ProtocolMessage::SystemAppendResponse(op),
         ProtocolMessage::RequestVote(op) => ProtocolMessage::RequestVote(op),
         ProtocolMessage::VoteResponse(op) => ProtocolMessage::VoteResponse(op),
+        ProtocolMessage::CommitIndexUpdated(id) => ProtocolMessage::CommitIndexUpdated(id),
     }
 }
 

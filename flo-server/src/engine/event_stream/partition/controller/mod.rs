@@ -270,7 +270,7 @@ impl PartitionImpl {
 
         // if any uncommitted events had a different crc, then mark that event and all the events that come after it as deleted
         for start_of_invalid_events in invalidate_start_counter {
-            self.invalidate_uncommitted_events(start_of_invalid_events);
+            self.invalidate_uncommitted_events(start_of_invalid_events)?;
         }
 
         // at this point, we should be in a state where the last non-deleted event in the log is the same as the previous event info in the message
@@ -332,10 +332,18 @@ impl PartitionImpl {
         Ok(())
     }
 
-    fn invalidate_uncommitted_events(&mut self, start_inclusive: EventCounter) {
+    fn invalidate_uncommitted_events(&mut self, start_inclusive: EventCounter) -> io::Result<()> {
         info!("Invalidating existing uncommitted events for partition: {}, starting with event_counter: {}",
               self.partition_num, start_inclusive);
-        unimplemented!()
+        let reader = self.create_reader(0, EventFilter::All, start_inclusive - 1);
+
+        for event_result in reader.into_iter_uncommitted() {
+            let mut event = event_result?;
+            unsafe {
+                event.set_deleted();
+            }
+        }
+        Ok(())
     }
 
     fn are_same_event<E: FloEvent, N: FloEvent>(existing: &E, new: &N) -> bool {

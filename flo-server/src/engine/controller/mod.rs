@@ -151,9 +151,9 @@ fn handle_partition_op(connection_id: ConnectionId, op_start_time: Instant, op: 
 fn produce_system_events(mut produce_op: partition::ProduceOperation, cluster_state: &mut ConsensusProcessor, controller_state: &mut ControllerStateImpl) {
     if cluster_state.is_primary() {
         let term = cluster_state.get_current_term();
-        let convert_result = convert_to_system_events(&mut produce_op.events, term);
+        let validate_result = validate_system_event(&mut produce_op.events, term);
 
-        if let Err(err) = convert_result {
+        if let Err(err) = validate_result {
             // We're done here
             produce_op.client.complete(Err(err));
         } else {
@@ -173,17 +173,10 @@ fn produce_system_events(mut produce_op: partition::ProduceOperation, cluster_st
 }
 
 
-fn convert_to_system_events(events: &mut Vec<ProduceEvent>, term: Term) -> io::Result<()> {
-    for event in events.iter_mut() {
-        // TODO: Once system events have any sort of body, this function will need to change a bit
-        // for now, we'll just make sure that the body is empty
-        // in the future, we'll attempt to deserialize the body as a SystemEventType
+fn validate_system_event(events: &Vec<ProduceEvent>, term: Term) -> io::Result<()> {
+    for event in events.iter() {
         if event.data.is_empty() {
-            let new_body = SystemEventData { term };
-            let serialized = new_body.serialize();
-            event.data = serialized;
-        } else {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid system event body"));
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "Event has no body"));
         }
     }
     Ok(())

@@ -3,7 +3,6 @@ use rmp_serde::decode::Error;
 
 use protocol::Term;
 use event::{FloEvent, EventData, FloEventId, OwnedFloEvent, EventCounter, ActorId, Timestamp, time};
-use engine::event_stream::EventStreamOptions;
 use engine::event_stream::partition::PersistentEvent;
 
 #[derive(Debug, PartialEq)]
@@ -46,7 +45,6 @@ impl Into<PersistentEvent> for SystemEvent<PersistentEvent> {
 impl SystemEvent<OwnedFloEvent> {
     pub fn new(id: FloEventId, parent: Option<FloEventId>, namespace: String, time: Timestamp, data: &SystemEventData) -> SystemEvent<OwnedFloEvent> {
         let term = data.term;
-        // TODO: I feel like this is probably a safe unwrap, but might be good to double check
         let serialized = data.serialize();
         let event = OwnedFloEvent::new(id, parent, time, namespace, serialized);
         SystemEvent {

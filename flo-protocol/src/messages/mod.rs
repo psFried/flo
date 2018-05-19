@@ -24,7 +24,7 @@ mod append_entries;
 mod request_vote;
 mod flo_instance_id;
 
-use nom::{be_u64, be_u32, be_u16, be_u8, IResult};
+use nom::{be_u64, be_u32, be_u16, be_u8};
 use event::{time, OwnedFloEvent, FloEvent, FloEventId, Timestamp};
 use serializer::Serializer;
 use std::net::SocketAddr;
@@ -68,6 +68,7 @@ pub mod headers {
     pub const NEXT_BATCH: u8 = 13;
     pub const END_OF_BATCH: u8 = 14;
     pub const STOP_CONSUMING: u8 = 15;
+    pub const COMMIT_INDEX_UPDATED: u8 = 20;
 }
 
 use self::headers::*;
@@ -83,6 +84,8 @@ pub enum ProtocolMessage<E: FloEvent> {
     AwaitingEvents,
     /// Always the first message sent by the client to the server
     Announce(ClientAnnounce),
+    /// Sent to consumers of uncommitted events to let them know when events become committed
+    CommitIndexUpdated(FloEventId),
     /// send by the server to a client in response to a StartConsuming message to indicate the start of a series of events
     CursorCreated(CursorInfo),
     /// Sent by the server to notify a consumer that it has reached the end of a batch and that more events can be sent
@@ -205,6 +208,14 @@ named!{parse_bool<bool>, map!(::nom::be_u8, |val| { val == 1 } )}
 
 named!{parse_awaiting_events<ProtocolMessage<OwnedFloEvent>>, map!(tag!(&[AWAITING_EVENTS]), |_| {ProtocolMessage::AwaitingEvents})}
 
+named!{parse_commit_index_updated<ProtocolMessage<OwnedFloEvent>>, chain!(
+    _tag: tag!(&[COMMIT_INDEX_UPDATED]) ~
+    id: parse_non_zero_event_id,
+    || {
+        ProtocolMessage::CommitIndexUpdated(id)
+    }
+)}
+
 named!{parse_next_batch<ProtocolMessage<OwnedFloEvent>>, map!(tag!(&[NEXT_BATCH]), |_| {ProtocolMessage::NextBatch})}
 
 named!{parse_end_of_batch<ProtocolMessage<OwnedFloEvent>>, map!(tag!(&[END_OF_BATCH]), |_| {ProtocolMessage::EndOfBatch})}
@@ -225,6 +236,7 @@ named!{pub parse_any<ProtocolMessage<OwnedFloEvent>>, alt!(
         parse_awaiting_events |
         parse_new_producer_event |
         parse_next_batch |
+        parse_commit_index_updated |
         parse_end_of_batch |
         parse_stop_consuming |
         parse_cursor_created |
@@ -258,6 +270,13 @@ impl <E: FloEvent> ProtocolMessage<E> {
             }
             ProtocolMessage::ReceiveEvent(ref event) => {
                 serialize_receive_event_header(event, buf)
+            }
+            ProtocolMessage::CommitIndexUpdated(ref id) => {
+                Serializer::new(buf)
+                        .write_u8(COMMIT_INDEX_UPDATED)
+                        .write_u64(id.event_counter)
+                        .write_u16(id.actor)
+                        .finish()
             }
             ProtocolMessage::CursorCreated(ref info) => {
                 serialize_cursor_created(info, buf)
@@ -378,6 +397,12 @@ mod test {
 
     fn addr(addr_string: &str) -> SocketAddr {
         ::std::str::FromStr::from_str(addr_string).unwrap()
+    }
+
+    #[test]
+    fn serde_commit_index_updated() {
+        let message = ProtocolMessage::CommitIndexUpdated(FloEventId::new(5, 6));
+        test_serialize_then_deserialize(&message);
     }
 
     #[test]
