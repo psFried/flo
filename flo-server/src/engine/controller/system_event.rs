@@ -7,31 +7,26 @@ use engine::event_stream::partition::PersistentEvent;
 
 #[derive(Debug, PartialEq)]
 pub struct SystemEvent<E: FloEvent> {
-    term: Term,
     wrapped: E,
+    deserialized_data: SystemEventData
 }
 
 impl <E: FloEvent> SystemEvent<E> {
 
     pub fn from_event(event: E) -> Result<SystemEvent<E>, Error> {
-        let term = {
-
-            let data = ::rmp_serde::decode::from_slice::<SystemEventData>(event.data())?;
-            data.term
-
-        };
+        let data = ::rmp_serde::decode::from_slice::<SystemEventData>(event.data())?;
         Ok(SystemEvent{
-            term,
-            wrapped: event
+            wrapped: event,
+            deserialized_data: data
         })
     }
 
     pub fn term(&self) -> Term {
-        self.term
+        self.system_data().term
     }
 
-    pub fn system_data(&self) -> Result<SystemEventData, Error> {
-        ::rmp_serde::from_slice(self.data())
+    pub fn system_data(&self) -> &SystemEventData {
+        &self.deserialized_data
     }
 }
 
@@ -43,13 +38,12 @@ impl Into<PersistentEvent> for SystemEvent<PersistentEvent> {
 
 
 impl SystemEvent<OwnedFloEvent> {
-    pub fn new(id: FloEventId, parent: Option<FloEventId>, namespace: String, time: Timestamp, data: &SystemEventData) -> SystemEvent<OwnedFloEvent> {
-        let term = data.term;
+    pub fn new(id: FloEventId, parent: Option<FloEventId>, namespace: String, time: Timestamp, data: SystemEventData) -> SystemEvent<OwnedFloEvent> {
         let serialized = data.serialize();
         let event = OwnedFloEvent::new(id, parent, time, namespace, serialized);
         SystemEvent {
-            term,
-            wrapped: event
+            wrapped: event,
+            deserialized_data: data,
         }
     }
 }
@@ -94,12 +88,27 @@ impl <E: FloEvent> FloEvent for SystemEvent<E> {
     }
 }
 
+
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+pub struct QualifiedPartitionId {
+    pub event_stream: String,
+    pub partition: ActorId,
+}
+
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+pub enum SystemEventKind {
+    ResignPrimary(QualifiedPartitionId),
+    AssignPrimary(QualifiedPartitionId),
+}
+
+
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct SystemEventData {
     pub term: Term,
+    pub kind: SystemEventKind,
 }
 
-impl SystemEventData {
+impl  SystemEventData {
     pub fn serialize(&self) -> Vec<u8> {
         ::rmp_serde::to_vec(self).unwrap()
     }
@@ -122,12 +131,16 @@ mod test {
     fn system_event_data_is_serialized_and_deserialized_inside_system_event() {
         let data = SystemEventData {
             term: 33,
+            kind: SystemEventKind::ResignPrimary(QualifiedPartitionId {
+                event_stream: "whatever".to_owned(),
+                partition: 4
+            })
         };
         let id = FloEventId::new(3, 4);
         let parent = Some(FloEventId::new(2, 3));
         let time = time::from_millis_since_epoch(1234567);
         let namespace = "/system/foo".to_owned();
-        let event = SystemEvent::new(id, parent, namespace, time, &data);
+        let event = SystemEvent::new(id, parent, namespace, time, data);
         let as_owned = event.to_owned_event();
         let result = SystemEvent::from_event(as_owned).unwrap();
         assert_eq!(event, result);
