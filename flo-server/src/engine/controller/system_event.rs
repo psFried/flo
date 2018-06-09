@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 use rmp_serde::decode::Error;
 
-use protocol::Term;
+use protocol::{Term, FloInstanceId};
 use event::{FloEvent, EventData, FloEventId, OwnedFloEvent, EventCounter, ActorId, Timestamp, time};
 use engine::event_stream::partition::PersistentEvent;
 
@@ -98,7 +98,7 @@ pub struct QualifiedPartitionId {
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub enum SystemEventKind {
     ResignPrimary(QualifiedPartitionId),
-    AssignPrimary(QualifiedPartitionId),
+    AssignPrimary(QualifiedPartitionId, FloInstanceId),
 }
 
 

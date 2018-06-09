@@ -84,7 +84,7 @@ pub fn serialize_append_entries(append: &AppendEntriesCall, buf: &mut [u8]) -> u
     Serializer::new(buf)
             .write_u8(APPEND_ENTRIES_CALL_HEADER)
             .write_u32(append.op_id)
-            .write(&append.leader_id)
+            .write_u64(append.leader_id)
             .write_u64(append.term)
             .write_u64(append.prev_entry_term)
             .write_u64(append.prev_entry_index)

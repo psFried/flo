@@ -225,7 +225,7 @@ mod test {
             };
             fixture.assert_sent_to_client(ProtocolMessage::PeerAnnounce(announce.clone()));
 
-            let peer_id = FloInstanceId::generate_new();
+            let peer_id = flo_instance_id::generate_new();
             let peer_addr = addr("127.0.0.1:4000");
             let response = PeerAnnounce {
                 peer_address: peer_addr,
@@ -263,7 +263,7 @@ mod test {
                                              primary.reader(),
                                              tx.clone(),
                                              primary_addr);
-            let instance_id = FloInstanceId::generate_new();
+            let instance_id = flo_instance_id::generate_new();
             let instance_addr = addr("127.0.0.1:3000");
 
             let cluster_state = SharedClusterState {
@@ -398,7 +398,7 @@ mod test {
     fn receiving_append_entries_with_multiple_entries_sends_append_entries_to_system_controller_once_all_events_are_received() {
         let (mut subject, mut fixture) = Fixture::create_outgoing_peer_connection();
 
-        let sender_id = FloInstanceId::generate_new();
+        let sender_id = flo_instance_id::generate_new();
         let append = ProtocolMessage::SystemAppendCall(AppendEntriesCall {
             op_id: 2,
             leader_id: sender_id,
@@ -443,7 +443,7 @@ mod test {
     fn receiving_append_entries_with_0_entries_sends_append_entries_to_system_controller_and_response_is_sent_out() {
         let (mut subject, mut fixture) = Fixture::create_outgoing_peer_connection();
 
-        let sender_id = FloInstanceId::generate_new();
+        let sender_id = flo_instance_id::generate_new();
         let append = ProtocolMessage::SystemAppendCall(AppendEntriesCall {
             op_id: 2,
             leader_id: sender_id,
@@ -525,7 +525,7 @@ mod test {
     #[test]
     fn vote_response_is_sent_to_system_stream_when_one_is_expected() {
         let (mut subject, mut fixture) = Fixture::create_outgoing_peer_connection();
-        let peer_id = FloInstanceId::generate_new();
+        let peer_id = flo_instance_id::generate_new();
         let request_vote = CallRequestVote {
             term: 5,
             candidate_id: peer_id,
@@ -562,7 +562,7 @@ mod test {
         let incoming = RequestVoteCall {
             op_id: 99,
             term: 5,
-            candidate_id: FloInstanceId::generate_new(),
+            candidate_id: flo_instance_id::generate_new(),
             last_log_index: 44,
             last_log_term: 4,
         };
@@ -580,7 +580,7 @@ mod test {
     #[test]
     fn receiving_request_vote_forwards_request_to_system_stream_for_peer_connection_and_response_is_sent_back() {
         let (mut subject, mut fixture) = Fixture::create_outgoing_peer_connection();
-        let peer_id = FloInstanceId::generate_new();
+        let peer_id = flo_instance_id::generate_new();
         let incoming = RequestVoteCall {
             op_id: 99,
             term: 5,

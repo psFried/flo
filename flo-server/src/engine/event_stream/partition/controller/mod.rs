@@ -618,7 +618,7 @@ mod test {
 
     use super::*;
     use event::{OwnedFloEvent, FloEventId, time::from_millis_since_epoch};
-    use protocol::ProduceEvent;
+    use protocol::{ProduceEvent, flo_instance_id};
     use engine::event_stream::partition::{ProduceOperation, EventFilter, PartitionReader};
     use engine::event_stream::{EventStreamOptions, HighestCounter};
     use engine::ConnectionId;
@@ -650,10 +650,10 @@ mod test {
                                                     status.reader(),
                                                     HighestCounter::zero()).unwrap();
 
-        let peer_1 = FloInstanceId::generate_new();
-        let peer_2 = FloInstanceId::generate_new();
-        let peer_3 = FloInstanceId::generate_new();
-        let peer_4 = FloInstanceId::generate_new();
+        let peer_1 = flo_instance_id::generate_new();
+        let peer_2 = flo_instance_id::generate_new();
+        let peer_3 = flo_instance_id::generate_new();
+        let peer_4 = flo_instance_id::generate_new();
         partition.add_replication_node(peer_1);
         partition.add_replication_node(peer_2);
         partition.add_replication_node(peer_3);
@@ -722,10 +722,10 @@ mod test {
                                                     status.reader(),
                                                     HighestCounter::zero()).unwrap();
 
-        let peer_1 = FloInstanceId::generate_new();
-        let peer_2 = FloInstanceId::generate_new();
-        let peer_3 = FloInstanceId::generate_new();
-        let peer_4 = FloInstanceId::generate_new();
+        let peer_1 = flo_instance_id::generate_new();
+        let peer_2 = flo_instance_id::generate_new();
+        let peer_3 = flo_instance_id::generate_new();
+        let peer_4 = flo_instance_id::generate_new();
         partition.add_replication_node(peer_1);
         partition.add_replication_node(peer_2);
         partition.add_replication_node(peer_3);

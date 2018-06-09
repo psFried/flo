@@ -4,7 +4,9 @@ use std::fs::{File, OpenOptions};
 use std::io::{self, Seek, SeekFrom};
 use std::collections::HashSet;
 
-use protocol::{FloInstanceId, Term};
+use event::EventCounter;
+use protocol::Term;
+use protocol::flo_instance_id::{self, FloInstanceId};
 use engine::controller::controller_messages::Peer;
 use super::{ClusterOptions, SharedClusterState};
 
@@ -14,9 +16,7 @@ use super::{ClusterOptions, SharedClusterState};
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct PersistentClusterState {
     pub current_term: Term,
-    #[serde(with = "OptInstanceIdRemote")]
     pub voted_for: Option<FloInstanceId>,
-    #[serde(with = "InstanceIdRemote")]
     pub this_instance_id: FloInstanceId,
     pub cluster_members: HashSet<Peer>,
 }
@@ -32,40 +32,20 @@ impl PersistentClusterState {
             peers: self.cluster_members.clone(),
         }
     }
-}
 
-#[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Copy)]
-#[serde(remote = "FloInstanceId")]
-pub struct InstanceIdRemote{
-    #[serde(getter = "FloInstanceId::as_bytes")]
-    bytes: [u8; 8]
-}
-
-#[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Copy)]
-#[serde(remote = "Option<FloInstanceId>")]
-pub struct OptInstanceIdRemote{
-    #[serde(getter = "id_as_bytes")]
-    bytes: [u8; 8]
-}
-
-fn id_as_bytes(id: &Option<FloInstanceId>) -> [u8; 8] {
-    id.map(|i| i.as_bytes()).unwrap_or([0; 8])
-}
-
-impl Into<Option<FloInstanceId>> for OptInstanceIdRemote {
-    fn into(self) -> Option<FloInstanceId> {
-        let id = FloInstanceId::from_bytes(&self.bytes[..]);
-        if id == FloInstanceId::null() {
-            None
-        } else {
-            Some(id)
+    pub fn generate_new() -> PersistentClusterState {
+        /*
+         TODO: generate new clusterState with a null FloInstanceId and have the primary assign the real one
+         Technically, there's a _very_ small chance that two separate instances could generate the same instance id.
+         The way around this is to have the system primary node just generate and assign all instance ids. This would
+         change the startup procedure significantly to account for that new step before the node enters a normal state
+        */
+        PersistentClusterState {
+            current_term: 0,
+            voted_for: None,
+            this_instance_id: flo_instance_id::generate_new(),
+            cluster_members: HashSet::new(),
         }
-    }
-}
-
-impl Into<FloInstanceId> for InstanceIdRemote {
-    fn into(self) -> FloInstanceId {
-        FloInstanceId::from_bytes(&self.bytes[..])
     }
 }
 
@@ -89,12 +69,7 @@ impl FilePersistedState {
             (file, state)
         } else {
             let file = OpenOptions::new().write(true).read(true).create(true).open(&path)?; // early return on failure
-            let state = PersistentClusterState {
-                current_term: 0,
-                voted_for: None,
-                this_instance_id: FloInstanceId::generate_new(),
-                cluster_members: HashSet::new(),
-            };
+            let state = PersistentClusterState::generate_new();
             info!("Initialized brand new state: {:?}", state);
             (file, state)
         };
@@ -161,15 +136,15 @@ mod test {
             state.current_term = 9;
             state.cluster_members = [
                 Peer {
-                    id: FloInstanceId::generate_new(),
+                    id: flo_instance_id::generate_new(),
                     address: addr("127.0.0.1:3456")
                 },
                 Peer {
-                    id: FloInstanceId::generate_new(),
+                    id: flo_instance_id::generate_new(),
                     address: addr("[2001:873::1]:3000")
                 },
                 Peer {
-                    id: FloInstanceId::generate_new(),
+                    id: flo_instance_id::generate_new(),
                     address: addr("127.0.0.1:456")
                 }
             ].iter().cloned().collect();

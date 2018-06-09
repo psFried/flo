@@ -4,7 +4,7 @@ use nom::{be_u32, be_u16};
 use serializer::{Serializer, FloSerialize};
 use event::OwnedFloEvent;
 use super::{parse_socket_addr, ProtocolMessage, FloInstanceId};
-use super::flo_instance_id::{parse_flo_instance_id, parse_optional_flo_instance_id};
+use super::flo_instance_id::{parse_flo_instance_id, parse_optional_flo_instance_id, NULL_INSTANCE_ID};
 
 pub const PEER_ANNOUNCE: u8 = 7;
 
@@ -27,7 +27,7 @@ pub struct ClusterMember {
 
 impl FloSerialize for ClusterMember {
     fn serialize<'a>(&'a self, serializer: Serializer<'a>) -> Serializer<'a> {
-        serializer.write(&self.id).write_socket_addr(self.address)
+        serializer.write_u64(self.id).write_socket_addr(self.address)
     }
 }
 
@@ -64,9 +64,9 @@ pub fn serialize_peer_announce(announce: &PeerAnnounce, buf: &mut [u8]) -> usize
             .write_u8(PEER_ANNOUNCE)
             .write_u32(announce.protocol_version)
             .write_u32(announce.op_id)
-            .write(&announce.instance_id)
+            .write_u64(announce.instance_id)
             .write_socket_addr(announce.peer_address)
-            .write(&announce.system_primary_id.unwrap_or(FloInstanceId::null()))
+            .write_u64(announce.system_primary_id.unwrap_or(NULL_INSTANCE_ID))
             .write_u16(announce.cluster_members.len() as u16)
             .write_many(announce.cluster_members.iter(), |ser, member| {
                 ser.write(member)

@@ -51,7 +51,7 @@ pub fn serialize_request_vote_call(req: &RequestVoteCall, buf: &mut [u8]) -> usi
             .write_u8(REQUEST_VOTE_CALL_HEADER)
             .write_u32(req.op_id)
             .write_u64(req.term)
-            .write(&req.candidate_id)
+            .write_u64(req.candidate_id)
             .write_u64(req.last_log_index)
             .write_u64(req.last_log_term)
             .finish()

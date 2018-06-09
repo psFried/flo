@@ -317,6 +317,7 @@ mod test {
     use engine::controller::ControllerState;
     use engine::connection_handler::ConnectionControlReceiver;
     use test_utils::{addr, expect_future_resolved};
+    use protocol::flo_instance_id;
 
     fn assert_control_sent(rx: ConnectionControlReceiver, expected: &ConnectionControl) -> ConnectionControlReceiver {
         use futures::Stream;
@@ -341,7 +342,7 @@ mod test {
 
     #[test]
     fn send_to_peer_sends_connection_control_to_a_connected_peer() {
-        let peer_id = FloInstanceId::generate_new();
+        let peer_id = flo_instance_id::generate_new();
         let peer = Peer {
             id: peer_id,
             address: addr("123.4.5.6:3000")
@@ -364,11 +365,11 @@ mod test {
     #[test]
     fn broadcast_sends_control_to_all_connected_peers() {
         let peer_1 = Peer {
-            id: FloInstanceId::generate_new(),
+            id: flo_instance_id::generate_new(),
             address: addr("123.4.5.6:3000")
         };
         let peer_2 = Peer {
-            id: FloInstanceId::generate_new(),
+            id: flo_instance_id::generate_new(),
             address: addr("123.4.5.6:4000")
         };
         let mut creator = MockOutgoingConnectionCreator::new();
@@ -378,7 +379,7 @@ mod test {
         let rx_1 = assert_control_sent(rx_1, &ConnectionControl::InitiateOutgoingSystemConnection);
         let rx_2 = assert_control_sent(rx_2, &ConnectionControl::InitiateOutgoingSystemConnection);
 
-        let candidate = FloInstanceId::generate_new();
+        let candidate = flo_instance_id::generate_new();
         let expected = ConnectionControl::SendRequestVote(CallRequestVote {
             term: 7,
             candidate_id: candidate,
@@ -394,7 +395,7 @@ mod test {
     #[test]
     fn outgoing_connect_success_adds_known_peer_and_connection_closed_sets_it_to_disconnected() {
         let peer_address = addr("123.45.67.8:3000");
-        let peer_id = FloInstanceId::generate_new();
+        let peer_id = flo_instance_id::generate_new();
 
         let mut creator = MockOutgoingConnectionCreator::new();
         let (peer_connection, rx) = creator.stub(peer_address);
@@ -423,7 +424,7 @@ mod test {
     fn known_peers_are_added_to_disconnected_peers_when_struct_is_initialized() {
         let peer_address = addr("123.45.67.8:3000");
         let peer = Peer {
-            id: FloInstanceId::generate_new(),
+            id: flo_instance_id::generate_new(),
             address: peer_address,
         };
         let mut creator = MockOutgoingConnectionCreator::new();

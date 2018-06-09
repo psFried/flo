@@ -8,7 +8,6 @@ use protocol::{FloInstanceId, Term};
 use engine::event_stream::partition::{self, Operation};
 use engine::connection_handler::{ConnectionControl, ConnectionControlSender};
 use engine::ConnectionId;
-use engine::controller::cluster_state::persistent::InstanceIdRemote;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CallRequestVote {
@@ -54,7 +53,6 @@ pub struct AppendEntriesResponse {
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize)]
 pub struct Peer {
-    #[serde(with = "InstanceIdRemote")]
     pub id: FloInstanceId,
     pub address: SocketAddr,
 }

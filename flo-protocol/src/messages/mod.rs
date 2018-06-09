@@ -10,6 +10,7 @@
 //!
 //! All numbers use big endian byte order.
 //! All Strings are newline terminated.
+pub mod flo_instance_id;
 mod client_announce;
 mod peer_announce;
 mod error;
@@ -22,7 +23,6 @@ mod set_event_stream;
 mod receive_event;
 mod append_entries;
 mod request_vote;
-mod flo_instance_id;
 
 use nom::{be_u64, be_u32, be_u16, be_u8};
 use event::{time, OwnedFloEvent, FloEvent, FloEventId, Timestamp};
@@ -420,7 +420,7 @@ mod test {
         let request = RequestVoteCall {
             op_id: 3,
             term: 4,
-            candidate_id: FloInstanceId::generate_new(),
+            candidate_id: flo_instance_id::generate_new(),
             last_log_index: 567,
             last_log_term: 8910,
         };
@@ -441,7 +441,7 @@ mod test {
     fn serde_append_entries_call() {
         let append = AppendEntriesCall {
             op_id: 345,
-            leader_id: FloInstanceId::generate_new(),
+            leader_id: flo_instance_id::generate_new(),
             term: 987,
             prev_entry_term: 986,
             prev_entry_index: 134,
@@ -468,20 +468,20 @@ mod test {
         let announce = PeerAnnounce {
             protocol_version: 9,
             op_id: 6543,
-            instance_id: FloInstanceId::generate_new(),
+            instance_id: flo_instance_id::generate_new(),
             peer_address: addr("[1:3:5::2]:4321"),
-            system_primary_id: Some(FloInstanceId::generate_new()),
+            system_primary_id: Some(flo_instance_id::generate_new()),
             cluster_members: vec![
                 ClusterMember {
-                    id: FloInstanceId::generate_new(),
+                    id: flo_instance_id::generate_new(),
                     address: addr("1.2.3.4:5")
                 },
                 ClusterMember {
-                    id: FloInstanceId::generate_new(),
+                    id: flo_instance_id::generate_new(),
                     address: addr("127.0.0.1:2456")
                 },
                 ClusterMember {
-                    id: FloInstanceId::generate_new(),
+                    id: flo_instance_id::generate_new(),
                     address: addr("192.168.1.1:443")
                 },
             ]
@@ -494,7 +494,7 @@ mod test {
         let addr = ::std::str::FromStr::from_str("123.234.12.1:4321").unwrap();
         let announce = PeerAnnounce {
             protocol_version: 9,
-            instance_id: FloInstanceId::generate_new(),
+            instance_id: flo_instance_id::generate_new(),
             peer_address: addr,
             op_id: 6543,
             system_primary_id: None,

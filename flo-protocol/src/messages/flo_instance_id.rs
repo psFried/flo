@@ -2,59 +2,45 @@
 use std::fmt::{self, Display};
 use serializer::{Serializer, FloSerialize};
 
-/// An opaque identifier used to uniquely identify flo instances.
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
-pub struct FloInstanceId(u64);
+pub type FloInstanceId = u64;
 
-impl FloInstanceId {
+pub const NULL_INSTANCE_ID: FloInstanceId = 0;
 
-    pub fn null() -> FloInstanceId {
-        FloInstanceId(0)
+pub fn generate_new() -> FloInstanceId {
+    let mut value = 0;
+    while value == 0 {
+        value = ::rand::random();
     }
-
-    pub fn generate_new() -> FloInstanceId {
-        let mut value = 0;
-        while value == 0 {
-            value = ::rand::random();
-        }
-        FloInstanceId(value)
-    }
-
-    pub fn as_bytes(&self) -> [u8; 8] {
-        use ::byteorder::{ByteOrder, BigEndian};
-
-        let mut bytes = [0; 8];
-        BigEndian::write_u64(&mut bytes[..], self.0);
-        bytes
-    }
-
-    pub fn from_bytes(bytes: &[u8]) -> FloInstanceId {
-        use ::byteorder::{ByteOrder, BigEndian};
-
-        let b = &bytes[0..8];
-        let num = BigEndian::read_u64(b);
-        FloInstanceId(num)
-    }
+    value
 }
 
-impl Display for FloInstanceId {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "FloInstanceId({})", self.0)
-    }
+pub fn as_bytes(instance_id: FloInstanceId) -> [u8; 8] {
+    use ::byteorder::{ByteOrder, BigEndian};
+
+    let mut bytes = [0; 8];
+    BigEndian::write_u64(&mut bytes[..], instance_id);
+    bytes
+}
+
+pub fn from_bytes(bytes: &[u8]) -> FloInstanceId {
+    use ::byteorder::{ByteOrder, BigEndian};
+
+    let b = &bytes[0..8];
+    BigEndian::read_u64(b)
 }
 
 
-impl FloSerialize for FloInstanceId {
-    fn serialize<'a>(&'a self, serializer: Serializer<'a>) -> Serializer<'a> {
-        serializer.write_u64(self.0)
+named!{pub parse_flo_instance_id<FloInstanceId>, map_res!(::nom::be_u64, |val| {
+    if val == 0 {
+        Err(())
+    } else {
+        Ok(val)
     }
-}
-
-named!{pub parse_flo_instance_id<FloInstanceId>, map!(::nom::be_u64, |val| {FloInstanceId(val) } )}
+})}
 
 named!{pub parse_optional_flo_instance_id<Option<FloInstanceId>>, map!(::nom::be_u64, |val| {
     if val > 0 {
-        Some(FloInstanceId(val))
+        Some(val)
     } else {
         None
     }

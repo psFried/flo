@@ -13,7 +13,7 @@ use event::{EventCounter, ActorId, OwnedFloEvent};
 use engine::{ConnectionId, EngineRef};
 use engine::connection_handler::ConnectionControl;
 use engine::controller::{CallRequestVote, VoteResponse};
-use protocol::{FloInstanceId, Term};
+use protocol::{FloInstanceId, flo_instance_id, Term};
 use atomics::{AtomicBoolWriter, AtomicBoolReader};
 use super::{ClusterOptions, ConnectionRef, Peer, PeerUpgrade, AppendEntriesResponse, ReceiveAppendEntries, ControllerState};
 use super::peer_connection::{PeerSystemConnection, OutgoingConnectionCreator, OutgoingConnectionCreatorImpl};
@@ -254,6 +254,10 @@ impl ClusterManager {
             None
         })
     }
+
+    fn apply_committed(&mut self, commit_index: EventCounter, controller_state: &mut ControllerState) -> io::Result<()> {
+        unimplemented!()
+    }
 }
 
 impl ConsensusProcessor for ClusterManager {
@@ -454,6 +458,7 @@ impl ConsensusProcessor for ClusterManager {
             // TODO: confirm entries with partition impl
         }
     }
+
     fn get_current_term(&self) -> Term {
         self.persistent.current_term
     }
@@ -470,7 +475,7 @@ pub struct SharedClusterState {
 impl SharedClusterState {
     pub fn non_cluster() -> SharedClusterState {
         SharedClusterState {
-            this_instance_id: FloInstanceId::generate_new(),
+            this_instance_id: flo_instance_id::generate_new(),
             this_address: None,
             system_primary: None,
             peers: HashSet::new(),
@@ -532,11 +537,11 @@ mod test {
         let temp_dir = TempDir::new("cluster_state_test").unwrap();
         let connection_manager = MockPeerConnectionManager::new();
         let peer_1 = Peer {
-            id: FloInstanceId::generate_new(),
+            id: flo_instance_id::generate_new(),
             address: addr("111.222.0.1:1000")
         };
         let peer_2 = Peer {
-            id: FloInstanceId::generate_new(),
+            id: flo_instance_id::generate_new(),
             address: addr("111.222.0.2:2000")
         };
         let peer_1_connection = 1;
@@ -576,11 +581,11 @@ mod test {
         let temp_dir = TempDir::new("cluster_state_test").unwrap();
         let connection_manager = MockPeerConnectionManager::new();
         let peer_1 = Peer {
-            id: FloInstanceId::generate_new(),
+            id: flo_instance_id::generate_new(),
             address: addr("111.222.0.1:1000")
         };
         let peer_2 = Peer {
-            id: FloInstanceId::generate_new(),
+            id: flo_instance_id::generate_new(),
             address: addr("111.222.0.2:2000")
         };
         let peer_1_connection = 1;
@@ -655,11 +660,11 @@ mod test {
         let temp_dir = TempDir::new("cluster_state_test").unwrap();
         let connection_manager = MockPeerConnectionManager::new();
         let peer_1 = Peer {
-            id: FloInstanceId::generate_new(),
+            id: flo_instance_id::generate_new(),
             address: addr("111.222.0.1:1000")
         };
         let peer_2 = Peer {
-            id: FloInstanceId::generate_new(),
+            id: flo_instance_id::generate_new(),
             address: addr("111.222.0.2:2000")
         };
         let peer_1_connection = 1;
@@ -731,11 +736,11 @@ mod test {
         let temp_dir = TempDir::new("cluster_state_test").unwrap();
         let connection_manager = MockPeerConnectionManager::new();
         let peer_1 = Peer {
-            id: FloInstanceId::generate_new(),
+            id: flo_instance_id::generate_new(),
             address: addr("111.222.0.1:1000")
         };
         let peer_2 = Peer {
-            id: FloInstanceId::generate_new(),
+            id: flo_instance_id::generate_new(),
             address: addr("111.222.0.2:2000")
         };
         let peer_1_connection = 1;
@@ -781,11 +786,11 @@ mod test {
         let temp_dir = TempDir::new("cluster_state_test").unwrap();
         let connection_manager = MockPeerConnectionManager::new();
         let peer_1 = Peer {
-            id: FloInstanceId::generate_new(),
+            id: flo_instance_id::generate_new(),
             address: addr("111.222.0.1:1000")
         };
         let peer_2 = Peer {
-            id: FloInstanceId::generate_new(),
+            id: flo_instance_id::generate_new(),
             address: addr("111.222.0.2:2000")
         };
         let peer_1_connection = 1;
@@ -822,19 +827,19 @@ mod test {
         let temp_dir = TempDir::new("cluster_state_test").unwrap();
         let connection_manager = MockPeerConnectionManager::new();
         let peer_1 = Peer {
-            id: FloInstanceId::generate_new(),
+            id: flo_instance_id::generate_new(),
             address: addr("111.222.0.1:1000")
         };
         let peer_2 = Peer {
-            id: FloInstanceId::generate_new(),
+            id: flo_instance_id::generate_new(),
             address: addr("111.222.0.2:2000")
         };
         let peer_3 = Peer {
-            id: FloInstanceId::generate_new(),
+            id: flo_instance_id::generate_new(),
             address: addr("111.222.0.2:3000")
         };
         let peer_4 = Peer {
-            id: FloInstanceId::generate_new(),
+            id: flo_instance_id::generate_new(),
             address: addr("111.222.0.2:4000")
         };
         let peer_1_connection = 1;
@@ -874,11 +879,11 @@ mod test {
         let temp_dir = TempDir::new("cluster_state_test").unwrap();
         let connection_manager = MockPeerConnectionManager::new();
         let peer_1 = Peer {
-            id: FloInstanceId::generate_new(),
+            id: flo_instance_id::generate_new(),
             address: addr("111.222.0.1:1000")
         };
         let peer_2 = Peer {
-            id: FloInstanceId::generate_new(),
+            id: flo_instance_id::generate_new(),
             address: addr("111.222.0.2:2000")
         };
         let peer_1_connection = 1;
@@ -914,19 +919,19 @@ mod test {
         let temp_dir = TempDir::new("cluster_state_test").unwrap();
         let connection_manager = MockPeerConnectionManager::new();
         let peer_1 = Peer {
-            id: FloInstanceId::generate_new(),
+            id: flo_instance_id::generate_new(),
             address: addr("111.222.0.1:1000")
         };
         let peer_2 = Peer {
-            id: FloInstanceId::generate_new(),
+            id: flo_instance_id::generate_new(),
             address: addr("111.222.0.2:2000")
         };
         let peer_3 = Peer {
-            id: FloInstanceId::generate_new(),
+            id: flo_instance_id::generate_new(),
             address: addr("111.222.0.2:3000")
         };
         let peer_4 = Peer {
-            id: FloInstanceId::generate_new(),
+            id: flo_instance_id::generate_new(),
             address: addr("111.222.0.2:4000")
         };
         let peer_1_connection = 1;
@@ -1142,11 +1147,11 @@ mod test {
         let temp_dir = TempDir::new("cluster_state_test").unwrap();
         let connection_manager = MockPeerConnectionManager::new();
         let peer_1 = Peer {
-            id: FloInstanceId::generate_new(),
+            id: flo_instance_id::generate_new(),
             address: addr("111.222.0.1:3000")
         };
         let peer_2 = Peer {
-            id: FloInstanceId::generate_new(),
+            id: flo_instance_id::generate_new(),
             address: addr("111.222.0.2:3000")
         };
         let mut subject = create_cluster_manager(vec![peer_1.address, peer_2.address], temp_dir.path(), connection_manager.boxed_ref());
@@ -1181,11 +1186,11 @@ mod test {
         let temp_dir = TempDir::new("cluster_state_test").unwrap();
         let connection_manager = MockPeerConnectionManager::new();
         let peer_1 = Peer {
-            id: FloInstanceId::generate_new(),
+            id: flo_instance_id::generate_new(),
             address: addr("111.222.0.1:3000")
         };
         let peer_2 = Peer {
-            id: FloInstanceId::generate_new(),
+            id: flo_instance_id::generate_new(),
             address: addr("111.222.0.2:3000")
         };
         let mut subject = create_cluster_manager(vec![peer_1.address, peer_2.address], temp_dir.path(), connection_manager.boxed_ref());
@@ -1249,12 +1254,12 @@ mod test {
 
     #[test]
     fn shared_state_this_instance_is_primary_returns_false_when_system_primary_does_not_match() {
-        let this_id = FloInstanceId::generate_new();
+        let this_id = flo_instance_id::generate_new();
         let this_addr = addr("127.0.0.1:3000");
         let subject = SharedClusterState {
             this_instance_id: this_id,
             this_address: Some(this_addr),
-            system_primary: Some(Peer {id: FloInstanceId::generate_new(), address: this_addr}),
+            system_primary: Some(Peer {id: flo_instance_id::generate_new(), address: this_addr}),
             peers: HashSet::new(),
         };
         assert!(!subject.this_instance_is_primary());
@@ -1262,7 +1267,7 @@ mod test {
 
     #[test]
     fn shared_state_this_instance_is_primary_returns_false_when_system_primary_is_none() {
-        let this_id = FloInstanceId::generate_new();
+        let this_id = flo_instance_id::generate_new();
         let this_addr = addr("127.0.0.1:3000");
         let subject = SharedClusterState {
             this_instance_id: this_id,
@@ -1275,7 +1280,7 @@ mod test {
 
     #[test]
     fn shared_state_this_instance_is_primary_returns_true_when_this_instance_id_matches_primary() {
-        let this_id = FloInstanceId::generate_new();
+        let this_id = flo_instance_id::generate_new();
         let this_addr = addr("127.0.0.1:3000");
         let subject = SharedClusterState {
             this_instance_id: this_id,
@@ -1325,11 +1330,11 @@ mod test {
         let temp_dir = TempDir::new("cluster_state_test").unwrap();
         let connection_manager = MockPeerConnectionManager::new();
         let peer_1 = Peer {
-            id: FloInstanceId::generate_new(),
+            id: flo_instance_id::generate_new(),
             address: addr("111.222.0.1:3000")
         };
         let peer_2 = Peer {
-            id: FloInstanceId::generate_new(),
+            id: flo_instance_id::generate_new(),
             address: addr("111.222.0.2:3000")
         };
         let mut subject = create_cluster_manager(vec![peer_1.address, peer_2.address], temp_dir.path(), connection_manager.boxed_ref());

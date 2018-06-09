@@ -105,26 +105,6 @@ impl PrimaryState {
         }
     }
 
-    pub fn append_entries_response(&mut self, peer_id: FloInstanceId, ack_through: Option<EventCounter>,
-                                   controller: &mut ControllerState, connection_manager: &mut PeerConnectionManager) {
-        if let Some(new_counter) = ack_through {
-            // TODO: peer has acknowledged events through this index, tell the partitionImpl about the ack and see if it allows us to commit any events
-            if log_enabled!(::log::Level::Debug) {
-                let current = self.peer_positions.get(&peer_id);
-                debug!("Received acknowledgement from peer_id: {:?}, new_position: {}, old_position: {:?}", peer_id, new_counter, current);
-            }
-            self.peer_positions.insert(peer_id, Position::TrackingFrom(new_counter));
-        } else {
-            // If the peer did not acknowledge the last append, then we take their last known position and move it back.
-            // We move it back by 8, because that's the current batch size, but the actual amount is only a matter of efficiency.
-            // This amount does not affect correctness.
-            let current_position = self.get_peer_position(&peer_id);
-            let new_position = current_position.saturating_sub(8);
-            debug!("peer_id: {} did NOT acknowledge last append entries, changing position from {} to {}", peer_id, current_position, new_position);
-            self.peer_positions.insert(peer_id, Position::SetStart(new_position));
-        }
-    }
-
     fn get_peer_position(&self, peer: &FloInstanceId) -> EventCounter {
         self.peer_positions.get(peer).map(|position| {
             match *position {

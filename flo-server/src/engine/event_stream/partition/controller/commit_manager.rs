@@ -88,6 +88,7 @@ impl CommitManager {
 #[cfg(test)]
 mod test {
     use super::*;
+    use protocol::flo_instance_id;
 
     fn subject_with_peers(peers: &[FloInstanceId]) -> CommitManager {
         let mut subject = CommitManager::new(AtomicCounterWriter::with_value(0));
@@ -100,10 +101,10 @@ mod test {
     #[test]
     fn commit_index_is_incremented_when_a_majority_of_all_members_have_acknowledged_an_event_greater_than_the_one_acknowledged() {
         let peers = [
-            FloInstanceId::generate_new(),
-            FloInstanceId::generate_new(),
-            FloInstanceId::generate_new(),
-            FloInstanceId::generate_new()
+            flo_instance_id::generate_new(),
+            flo_instance_id::generate_new(),
+            flo_instance_id::generate_new(),
+            flo_instance_id::generate_new()
         ];
         let mut subject = subject_with_peers(&peers[..]);
         let commit_reader = subject.get_commit_index_reader();
@@ -126,10 +127,10 @@ mod test {
     #[test]
     fn commit_index_is_incremented_when_a_majority_of_all_members_have_acknowledged_a_specific_event() {
         let peers = [
-            FloInstanceId::generate_new(),
-            FloInstanceId::generate_new(),
-            FloInstanceId::generate_new(),
-            FloInstanceId::generate_new()
+            flo_instance_id::generate_new(),
+            flo_instance_id::generate_new(),
+            flo_instance_id::generate_new(),
+            flo_instance_id::generate_new()
         ];
         let mut subject = subject_with_peers(&peers[..]);
 
@@ -146,25 +147,25 @@ mod test {
 
         assert_eq!(0, subject.min_required_for_commit);
 
-        subject.add_member(FloInstanceId::generate_new());
+        subject.add_member(flo_instance_id::generate_new());
         assert_eq!(1, subject.peers.len());
         assert_eq!(1, subject.min_required_for_commit); // 2 of 2
 
-        subject.add_member(FloInstanceId::generate_new());
+        subject.add_member(flo_instance_id::generate_new());
         assert_eq!(2, subject.peers.len());
         assert_eq!(1, subject.min_required_for_commit); // 2 of 3
 
-        subject.add_member(FloInstanceId::generate_new());
+        subject.add_member(flo_instance_id::generate_new());
         assert_eq!(3, subject.peers.len());
         assert_eq!(2, subject.min_required_for_commit); // 3 of 4
 
-        subject.add_member(FloInstanceId::generate_new());
+        subject.add_member(flo_instance_id::generate_new());
         assert_eq!(4, subject.peers.len());
         assert_eq!(2, subject.min_required_for_commit); // 3 of 5
 
-        subject.add_member(FloInstanceId::generate_new());
-        subject.add_member(FloInstanceId::generate_new());
-        subject.add_member(FloInstanceId::generate_new());
+        subject.add_member(flo_instance_id::generate_new());
+        subject.add_member(flo_instance_id::generate_new());
+        subject.add_member(flo_instance_id::generate_new());
 
         assert_eq!(4, subject.min_required_for_commit); // 5 of 8
     }
