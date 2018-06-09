@@ -26,7 +26,7 @@ use self::cluster_state::ConsensusProcessor;
 
 pub use self::initialization::{start_controller, ControllerOptions, ClusterOptions};
 pub use self::system_stream::SystemStreamRef;
-pub use self::system_event::{SystemEvent, SystemEventData, SystemEventKind, QualifiedPartitionId};
+pub use self::system_event::{SystemEvent, SystemEventData, SystemEventKind};
 pub use self::system_reader::{SystemStreamReader, SYSTEM_READER_BATCH_SIZE};
 pub use self::controller_messages::*;
 pub use self::cluster_state::{SharedClusterState, ClusterStateReader};
@@ -147,22 +147,25 @@ fn handle_partition_op(connection_id: ConnectionId, _op_start_time: Instant, op:
     }
 }
 
-fn produce_system_events(mut produce_op: partition::ProduceOperation, cluster_state: &mut ConsensusProcessor, controller_state: &mut ControllerStateImpl) {
+fn produce_system_events(produce_op: partition::ProduceOperation, cluster_state: &mut ConsensusProcessor, controller_state: &mut ControllerStateImpl) {
     if cluster_state.is_primary() {
         let term = cluster_state.get_current_term();
-        let validate_result = validate_system_event(&mut produce_op.events, term);
-
-        if let Err(err) = validate_result {
-            // We're done here
-            let _ = produce_op.client.send(Err(err));
-        } else {
-            // hand off the modified operation to the partition, which will complete it
-            let result = controller_state.system_partition.handle_produce(produce_op);
-            if let Err(partition_err) = result {
-                error!("Partition error creating new system events: {:?}", partition_err);
-            } else {
-                // success! send out AppendEntries
-                cluster_state.send_append_entries(controller_state)
+        
+        match validate_system_event(&produce_op.events, term) {
+            Ok(()) => {
+                // hand off the modified operation to the partition, which will complete it
+                
+                let result = controller_state.system_partition.handle_produce(produce_op);
+                if let Err(partition_err) = result {
+                    error!("Partition error creating new system events: {:?}", partition_err);
+                } else {
+                    // success! send out AppendEntries
+                    cluster_state.send_append_entries(controller_state)
+                }
+            }
+            Err(err) => {
+                // We're done here
+                let _ = produce_op.client.send(Err(err));
             }
         }
     } else {
@@ -172,11 +175,9 @@ fn produce_system_events(mut produce_op: partition::ProduceOperation, cluster_st
 }
 
 
-fn validate_system_event(events: &Vec<ProduceEvent>, _term: Term) -> io::Result<()> {
+fn validate_system_event(events: &Vec<ProduceEvent>, term: Term) -> io::Result<()> {
     for event in events.iter() {
-        if event.data.is_empty() {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "Event has no body"));
-        }
+        self::system_event::validate_data(event.data.as_slice(), term)?;
     }
     Ok(())
 }

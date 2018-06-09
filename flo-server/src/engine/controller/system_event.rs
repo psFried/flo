@@ -20,6 +20,7 @@ impl <E: FloEvent> SystemEvent<E> {
         })
     }
 
+
     pub fn term(&self) -> Term {
         self.system_data().term
     }
@@ -27,6 +28,21 @@ impl <E: FloEvent> SystemEvent<E> {
     pub fn system_data(&self) -> &SystemEventData {
         &self.deserialized_data
     }
+}
+
+pub fn validate_data(event_data: &[u8], term: Term) -> ::std::io::Result<()> {
+    use std::io;
+    ::rmp_serde::decode::from_slice::<SystemEventData>(event_data).map_err(|serde_err| {
+        io::Error::new(io::ErrorKind::InvalidData, format!("Invalid system event body: {}", serde_err))
+    }).and_then(|system_data| {
+        if system_data.term == term {
+            Ok(())
+        } else {
+            let msg = format!("Refusing to produce event with term: {} because current term of {} is greater", 
+                    system_data.term, term);
+            Err(io::Error::new(io::ErrorKind::InvalidData, msg))
+        }
+    })
 }
 
 impl Into<PersistentEvent> for SystemEvent<PersistentEvent> {
@@ -89,17 +105,22 @@ impl <E: FloEvent> FloEvent for SystemEvent<E> {
 
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-pub struct QualifiedPartitionId {
-    pub event_stream: String,
-    pub partition: ActorId,
+pub struct ClusterMemberJoining {
+    new_member: FloInstanceId,
 }
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-pub enum SystemEventKind {
-    ResignPrimary(QualifiedPartitionId),
-    AssignPrimary(QualifiedPartitionId, FloInstanceId),
+pub struct ClusterMemberJoined {
+    new_member: FloInstanceId,
+    new_member_partition_num: ActorId,
 }
 
+
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+pub enum SystemEventKind {
+    NewClusterMemberJoining(ClusterMemberJoining),
+    NewClusterMemberJoined(ClusterMemberJoined),
+}
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct SystemEventData {
@@ -131,9 +152,8 @@ mod test {
     fn system_event_data_is_serialized_and_deserialized_inside_system_event() {
         let data = SystemEventData {
             term: 33,
-            kind: SystemEventKind::ResignPrimary(QualifiedPartitionId {
-                event_stream: "whatever".to_owned(),
-                partition: 4
+            kind: SystemEventKind::NewClusterMemberJoining(ClusterMemberJoining {
+                new_member: 555,
             })
         };
         let id = FloEventId::new(3, 4);
