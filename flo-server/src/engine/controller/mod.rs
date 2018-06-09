@@ -9,18 +9,17 @@ mod system_reader;
 mod controller_state;
 
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 use std::io;
 use std::time::Instant;
 
 use protocol::{ProduceEvent, Term};
-use event::EventCounter;
 use engine::ConnectionId;
 use engine::event_stream::{EventStreamRef,
                                EventStreamRefMut,
                                EventStreamOptions};
-use engine::event_stream::partition::{self, PersistentEvent, IndexEntry, SegmentNum};
+use engine::event_stream::partition;
 use engine::event_stream::partition::controller::PartitionImpl;
 use self::cluster_state::ConsensusProcessor;
 
@@ -124,7 +123,7 @@ impl FloController {
 }
 
 
-fn handle_partition_op(connection_id: ConnectionId, op_start_time: Instant, op: partition::OpType,
+fn handle_partition_op(connection_id: ConnectionId, _op_start_time: Instant, op: partition::OpType,
                        cluster_state: &mut ConsensusProcessor, controller_state: &mut ControllerStateImpl) {
     use engine::event_stream::partition::OpType::*;
     match op {
@@ -155,7 +154,7 @@ fn produce_system_events(mut produce_op: partition::ProduceOperation, cluster_st
 
         if let Err(err) = validate_result {
             // We're done here
-            produce_op.client.complete(Err(err));
+            let _ = produce_op.client.send(Err(err));
         } else {
             // hand off the modified operation to the partition, which will complete it
             let result = controller_state.system_partition.handle_produce(produce_op);
@@ -168,12 +167,12 @@ fn produce_system_events(mut produce_op: partition::ProduceOperation, cluster_st
         }
     } else {
         let err = io::Error::new(io::ErrorKind::Other, "Not primary");
-        produce_op.client.complete(Err(err));
+        let _  = produce_op.client.send(Err(err));
     }
 }
 
 
-fn validate_system_event(events: &Vec<ProduceEvent>, term: Term) -> io::Result<()> {
+fn validate_system_event(events: &Vec<ProduceEvent>, _term: Term) -> io::Result<()> {
     for event in events.iter() {
         if event.data.is_empty() {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "Event has no body"));

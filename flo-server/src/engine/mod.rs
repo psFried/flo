@@ -5,7 +5,6 @@ pub mod controller;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicUsize};
-use std::net::SocketAddr;
 
 use protocol::ProtocolMessage;
 use event::{OwnedFloEvent, ActorId};

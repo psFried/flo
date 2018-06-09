@@ -6,7 +6,7 @@ use std::fmt::Debug;
 use std::io;
 
 use tokio_core::reactor::{Handle, Remote};
-use futures::{Stream, Sink, StartSend, AsyncSink, Async, Poll};
+use futures::{Stream, Sink, StartSend, Poll};
 
 use protocol::ProtocolMessage;
 use flo_client_lib::async::{AsyncConnection, MessageReceiver, MessageSender, ClientProtocolMessage};

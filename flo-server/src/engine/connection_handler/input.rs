@@ -1,5 +1,5 @@
 
-use protocol::{FloInstanceId, Term};
+use protocol::Term;
 use event::EventCounter;
 use engine::ReceivedProtocolMessage;
 use engine::controller::{CallRequestVote, VoteResponse, AppendEntriesResponse};

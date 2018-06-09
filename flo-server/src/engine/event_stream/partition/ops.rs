@@ -2,7 +2,6 @@
 use std::io;
 use std::fmt::{self, Debug};
 use std::time::Instant;
-use std::net::SocketAddr;
 
 use futures::sync::oneshot;
 

@@ -569,7 +569,7 @@ mod test {
         let vv = vec![FloEventId::new(1, 0)];
         let msg = ProtocolMessage::NewStartConsuming(NewConsumerStart {
             op_id: 3,
-            options: ConsumerFlags::ConsumeUncommitted,
+            options: ConsumerFlags::CONSUME_UNCOMMITTED,
             version_vector: vv,
             max_events: 1,
             namespace: "/foo/*".to_owned(),

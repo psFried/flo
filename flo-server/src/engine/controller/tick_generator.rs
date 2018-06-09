@@ -6,7 +6,7 @@ use futures::{Stream, Future};
 use rand::distributions::{Range, IndependentSample};
 use rand::thread_rng;
 
-use engine::controller::{SystemPartitionSender, SystemStreamRef};
+use engine::controller::SystemStreamRef;
 
 #[derive(Debug)]
 enum TickError {

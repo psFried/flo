@@ -1,10 +1,5 @@
-mod system;
-
-use std::collections::HashMap;
 use std::fmt::Debug;
 use std::net::SocketAddr;
-use std::io;
-use tokio_core::reactor::Handle;
 use tokio_core::net::TcpStream;
 use futures::Future;
 
@@ -13,12 +8,6 @@ use engine::connection_handler::{create_connection_control_channels, ConnectionC
 use engine::controller::ConnectionRef;
 use event_loops::LoopHandles;
 use flo_io::create_connection_handler;
-use self::system::PeerConnectionImpl;
-
-pub use self::system::{PeerSystemConnection, PendingSystemConnection};
-
-pub type ConnectionSendResult<T> = Result<(), T>;
-
 
 /// Trait for creating outgoing connections (clever name, I know).
 pub trait OutgoingConnectionCreator: Debug + Send + 'static {

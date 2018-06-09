@@ -4,11 +4,10 @@ use std::fs::{File, OpenOptions};
 use std::io::{self, Seek, SeekFrom};
 use std::collections::HashSet;
 
-use event::EventCounter;
 use protocol::Term;
 use protocol::flo_instance_id::{self, FloInstanceId};
 use engine::controller::controller_messages::Peer;
-use super::{ClusterOptions, SharedClusterState};
+use super::SharedClusterState;
 
 /// Holds all the cluster state that we want to survive a reboot.
 /// We always persist the `FloInstanceId` because we prefer that to be stable across reboots. We do _not_ want to persist

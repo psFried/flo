@@ -1,8 +1,7 @@
-use std::fmt::Debug;
 use rmp_serde::decode::Error;
 
 use protocol::{Term, FloInstanceId};
-use event::{FloEvent, EventData, FloEventId, OwnedFloEvent, EventCounter, ActorId, Timestamp, time};
+use event::{FloEvent, EventData, FloEventId, OwnedFloEvent, ActorId, Timestamp};
 use engine::event_stream::partition::PersistentEvent;
 
 #[derive(Debug, PartialEq)]
@@ -118,6 +117,7 @@ impl  SystemEventData {
 #[cfg(test)]
 mod test {
     use super::*;
+    use event::time;
 
     #[test]
     fn from_event_returns_error_when_event_data_cannot_be_deserialized() {

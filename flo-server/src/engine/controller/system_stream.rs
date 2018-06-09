@@ -1,12 +1,10 @@
 use std::net::SocketAddr;
 
-use protocol::FloInstanceId;
-use engine::event_stream::partition::{PartitionRef, Operation, SharedReaderRefs, PartitionReader, SegmentNum};
+use engine::event_stream::partition::{PartitionRef, SharedReaderRefs};
 use engine::event_stream::EventStreamRef;
 use engine::controller::{SystemPartitionSender, SystemOperation, ConnectionRef, Peer, CallRequestVote, VoteResponse, SystemStreamReader, ReceiveAppendEntries, AppendEntriesResponse};
 use engine::controller::cluster_state::{SharedClusterState, ClusterStateReader};
 use engine::ConnectionId;
-use atomics::{AtomicBoolReader, AtomicCounterReader};
 
 
 #[derive(Clone, Debug)]

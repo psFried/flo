@@ -1,12 +1,10 @@
 use std::net::SocketAddr;
 use std::time::Instant;
 
-use futures::sync::mpsc::UnboundedSender;
-
 use event::{EventCounter, OwnedFloEvent};
 use protocol::{FloInstanceId, Term};
 use engine::event_stream::partition::{self, Operation};
-use engine::connection_handler::{ConnectionControl, ConnectionControlSender};
+use engine::connection_handler::ConnectionControlSender;
 use engine::ConnectionId;
 
 #[derive(Debug, Clone, PartialEq)]

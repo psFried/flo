@@ -1,9 +1,8 @@
-use std::fmt::Debug;
-use futures::{Future, Async, Poll};
-
-use protocol::{self, ProtocolMessage};
-use async::{AsyncConnection, ErrorType, ClientProtocolMessage};
+use async::{AsyncConnection, ErrorType};
 use async::ops::{RequestResponse, RequestResponseError};
+use futures::{Async, Future, Poll};
+use protocol::{self, ProtocolMessage};
+use std::fmt::Debug;
 
 pub struct SetEventStream<D: Debug> {
     inner: RequestResponse<D>,

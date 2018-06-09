@@ -104,13 +104,4 @@ impl PrimaryState {
 
         }
     }
-
-    fn get_peer_position(&self, peer: &FloInstanceId) -> EventCounter {
-        self.peer_positions.get(peer).map(|position| {
-            match *position {
-                Position::SetStart(start) => start,
-                Position::TrackingFrom(last) => last
-            }
-        }).unwrap_or(0)
-    }
 }

@@ -211,7 +211,7 @@ pub mod mock {
             })
         }
 
-        fn add_system_replication_node(&mut self, peer: FloInstanceId) {
+        fn add_system_replication_node(&mut self, _peer: FloInstanceId) {
             unimplemented!()
         }
     }

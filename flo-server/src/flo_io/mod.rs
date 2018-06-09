@@ -1,22 +1,18 @@
-mod client_message_stream;
-mod server_message_stream;
-
-
-use std::net::SocketAddr;
-use std::io;
-#[allow(deprecated)]
-use tokio_core::io::Io;
-use tokio_core::reactor::Handle;
-use tokio_core::net::TcpStream;
-use futures::{Stream, Sink, Future};
-
-use engine::{create_client_channels, ConnectionHandler};
-use engine::connection_handler::{ConnectionHandlerInput, ConnectionControlReceiver};
-use engine::{EngineRef, ConnectionId};
-
+use engine::{ConnectionHandler, create_client_channels};
+use engine::{ConnectionId, EngineRef};
+use engine::connection_handler::ConnectionControlReceiver;
+use futures::{Future, Sink, Stream};
 pub use self::client_message_stream::ProtocolMessageStream;
 pub use self::server_message_stream::ServerMessageStream;
+use std::io;
+use std::net::SocketAddr;
+#[allow(deprecated)]
+use tokio_core::io::Io;
+use tokio_core::net::TcpStream;
+use tokio_core::reactor::Handle;
 
+mod client_message_stream;
+mod server_message_stream;
 
 
 pub fn create_connection_handler(client_handle: Handle,

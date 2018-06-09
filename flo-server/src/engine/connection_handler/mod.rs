@@ -4,7 +4,6 @@ mod producer;
 mod peer;
 mod input;
 
-use std::fmt::{self, Debug};
 use std::io;
 
 #[allow(unused_imports)]
@@ -512,7 +511,7 @@ mod test {
 
     #[test]
     fn error_is_returned_when_vote_response_is_unexpected() {
-        let (mut subject, fixture) = Fixture::create_outgoing_peer_connection();
+        let (mut subject, _fixture) = Fixture::create_outgoing_peer_connection();
 
         let error = subject.handle_incoming_message(ProtocolMessage::VoteResponse(RequestVoteResponse {
             op_id: 7,

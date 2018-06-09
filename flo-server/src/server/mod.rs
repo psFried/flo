@@ -1,17 +1,15 @@
 mod server_options;
 
-
 use std::net::{SocketAddr, Ipv4Addr, SocketAddrV4};
 use std::io;
 use tokio_core::reactor::Remote;
 use tokio_core::net::{TcpStream, TcpListener};
-use futures::{Stream, Future};
+use futures::Stream;
 
 use engine::{ControllerOptions,
              EngineRef,
              ClusterOptions,
-             start_controller,
-             system_stream_name};
+             start_controller};
 use engine::connection_handler::create_connection_control_channels;
 use engine::controller::ConnectionRef;
 use engine::event_stream::EventStreamOptions;

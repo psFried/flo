@@ -8,11 +8,10 @@ use std::net::SocketAddr;
 use tokio_core::reactor::Remote;
 
 use engine::{EngineRef, system_stream_name, SYSTEM_STREAM_NAME};
-use engine::controller::{SystemPartitionSender, SystemPartitionReceiver, SystemOperation};
+use engine::controller::{SystemPartitionSender, SystemPartitionReceiver};
 use engine::controller::cluster_state::{init_cluster_consensus_processor,
                                         ConsensusProcessor,
                                         NoOpConsensusProcessor,
-                                        ClusterManager,
                                         ClusterStateReader,
                                         SystemPrimaryAddressRef,
                                         FilePersistedState};
@@ -22,11 +21,7 @@ use engine::event_stream::{EventStreamRefMut,
                            init_existing_event_stream,
                            init_new_event_stream};
 
-use engine::event_stream::partition::{PartitionSender,
-                                      PartitionReceiver,
-                                      PartitionRef,
-                                      SharedReaderRefs,
-                                      create_partition_channels};
+use engine::event_stream::partition::{PartitionRef, SharedReaderRefs};
 use engine::event_stream::partition::controller::PartitionImpl;
 use atomics::{AtomicBoolReader, AtomicBoolWriter, AtomicCounterReader};
 use event_loops::LoopHandles;

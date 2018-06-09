@@ -1,26 +1,23 @@
-pub mod persistent;
-mod peer_connections;
-mod primary_state;
-
-use std::io;
-use std::sync::{Arc, RwLock};
-use std::net::SocketAddr;
-use std::time::{Instant, Duration};
-use std::path::Path;
-use std::collections::{HashMap, HashSet};
-
-use event::{EventCounter, ActorId, OwnedFloEvent};
+use atomics::AtomicBoolWriter;
 use engine::{ConnectionId, EngineRef};
 use engine::connection_handler::ConnectionControl;
 use engine::controller::{CallRequestVote, VoteResponse};
-use protocol::{FloInstanceId, flo_instance_id, Term};
-use atomics::{AtomicBoolWriter, AtomicBoolReader};
-use super::{ClusterOptions, ConnectionRef, Peer, PeerUpgrade, AppendEntriesResponse, ReceiveAppendEntries, ControllerState};
-use super::peer_connection::{PeerSystemConnection, OutgoingConnectionCreator, OutgoingConnectionCreatorImpl};
+use event::{ActorId, EventCounter, OwnedFloEvent};
+use protocol::{flo_instance_id, FloInstanceId, Term};
 use self::peer_connections::{PeerConnectionManager, PeerConnections};
-use self::primary_state::PrimaryState;
-
 pub use self::persistent::{FilePersistedState, PersistentClusterState};
+use self::primary_state::PrimaryState;
+use std::collections::HashSet;
+use std::io;
+use std::net::SocketAddr;
+use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant};
+use super::{AppendEntriesResponse, ClusterOptions, ControllerState, Peer, PeerUpgrade, ReceiveAppendEntries};
+use super::peer_connection::OutgoingConnectionCreatorImpl;
+
+pub mod persistent;
+mod peer_connections;
+mod primary_state;
 
 /// This is a placeholder for a somewhat better error handling when updating the persistent cluster state fails.
 /// This situation is extremely problematic, since it may be possible to cast two different votes in the same term, if for
@@ -155,7 +152,7 @@ impl ClusterManager {
     fn start_new_election(&mut self) {
         info!("Starting new election with term: {}", self.persistent.current_term + 1);
         self.votes_received.clear();
-        let result = self.persistent.modify(|state| {
+        self.persistent.modify(|state| {
             state.current_term += 1;
             let my_id = state.this_instance_id;
             state.voted_for = Some(my_id);
@@ -254,10 +251,6 @@ impl ClusterManager {
             None
         })
     }
-
-    fn apply_committed(&mut self, commit_index: EventCounter, controller_state: &mut ControllerState) -> io::Result<()> {
-        unimplemented!()
-    }
 }
 
 impl ConsensusProcessor for ClusterManager {
@@ -298,7 +291,7 @@ impl ConsensusProcessor for ClusterManager {
         self.connection_manager.send_to_peer(candidate_id, ConnectionControl::SendVoteResponse(response));
     }
 
-    fn vote_response_received(&mut self, now: Instant, from: ConnectionId, response: VoteResponse, controller: &mut ControllerState) {
+    fn vote_response_received(&mut self, _now: Instant, from: ConnectionId, response: VoteResponse, controller: &mut ControllerState) {
         let peer_id = self.connection_manager.get_peer_id(from);
         if peer_id.is_none() {
             error!("Ignoring Vote Response from connection_id: {}: {:?}", from, response);
@@ -367,7 +360,7 @@ impl ConsensusProcessor for ClusterManager {
                 trace!("This instance is primary");
                 self.send_append_entries(controller_state);
             }
-            other @ _ => {
+            _ => {
                 if self.election_timed_out(now) {
                     self.start_new_election();
                 }
@@ -432,7 +425,7 @@ impl ConsensusProcessor for ClusterManager {
         }));
     }
 
-    fn append_entries_response_received(&mut self, connection_id: ConnectionId, response: AppendEntriesResponse, controller_state: &mut ControllerState) {
+    fn append_entries_response_received(&mut self, connection_id: ConnectionId, response: AppendEntriesResponse, _controller_state: &mut ControllerState) {
         let from = self.connection_manager.get_peer_id(connection_id);
         if from.is_none() {
             error!("Received AppendEntriesResponse from connection_id: {}, which is not a peer connection. Received: {:?}", connection_id, response);
@@ -454,7 +447,7 @@ impl ConsensusProcessor for ClusterManager {
         }
 
         if response.success.is_some() && self.is_primary() {
-            let peer_counter = response.success.unwrap();
+            let _peer_counter = response.success.unwrap();
             // TODO: confirm entries with partition impl
         }
     }
@@ -519,17 +512,17 @@ pub fn init_cluster_consensus_processor(persistent_state: FilePersistedState,
 
 #[cfg(test)]
 mod test {
-    use super::*;
-    use std::path::{Path, PathBuf};
-    use std::collections::HashSet;
-    use tempdir::TempDir;
-    use engine::connection_handler::{ConnectionControlSender, ConnectionControlReceiver, ConnectionControl, CallAppendEntries, AppendEntriesStart};
-    use test_utils::{addr, expect_future_resolved};
-    use engine::event_stream::partition::SegmentNum;
-    use engine::controller::peer_connection::{OutgoingConnectionCreator, MockOutgoingConnectionCreator};
-    use engine::controller::cluster_state::peer_connections::mock::{MockPeerConnectionManager, Invocation};
+    use engine::connection_handler::{AppendEntriesStart, CallAppendEntries, ConnectionControl};
+    use engine::controller::cluster_state::peer_connections::mock::{Invocation, MockPeerConnectionManager};
     use engine::controller::controller_messages::mock::mock_connection_ref;
+    use engine::controller::ConnectionRef;
     use engine::controller::mock::{MockControllerState, MockSystemEvent};
+    use engine::event_stream::partition::SegmentNum;
+    use std::collections::HashSet;
+    use std::path::Path;
+    use super::*;
+    use tempdir::TempDir;
+    use test_utils::addr;
 
     #[test]
     fn reverts_to_follower_when_append_entries_response_indicates_term_greater_than_current_term() {
@@ -627,7 +620,7 @@ mod test {
             },
         ];
 
-        let (peer_1_tx, peer_1_rx) = ::engine::connection_handler::create_connection_control_channels();
+        let (peer_1_tx, _peer_1_rx) = ::engine::connection_handler::create_connection_control_channels();
         let mut controller_state = MockControllerState::new()
                 .with_commit_index(2)
                 .with_mocked_events(mock_system_events.as_slice())
@@ -853,7 +846,6 @@ mod test {
         let mut subject = create_cluster_manager(vec![peer_1.address, peer_2.address], temp_dir.path(), connection_manager.boxed_ref());
 
         subject.persistent.modify(|state| {
-            let this_id = state.this_instance_id;
             state.cluster_members.insert(peer_1.clone());
             state.cluster_members.insert(peer_2.clone());
             state.cluster_members.insert(peer_3.clone());
@@ -945,7 +937,6 @@ mod test {
         let mut subject = create_cluster_manager(vec![peer_1.address, peer_2.address], temp_dir.path(), connection_manager.boxed_ref());
 
         subject.persistent.modify(|state| {
-            let this_id = state.this_instance_id;
             state.cluster_members.insert(peer_1.clone());
             state.cluster_members.insert(peer_2.clone());
             state.cluster_members.insert(peer_3.clone());
@@ -1045,7 +1036,7 @@ mod test {
 
     #[test]
     fn vote_is_denied_when_candidate_is_not_a_known_peer() {
-        vote_test(|subject, request, candidate, peer_2| {
+        vote_test(|subject, request, _candidate, peer_2| {
             subject.last_applied_term = request.last_log_term;
             subject.last_applied = request.last_log_index;
             subject.persistent.modify(|state| {
@@ -1326,7 +1317,6 @@ mod test {
     }
 
     fn vote_test<F>(setup_fun: F) where F: Fn(&mut ClusterManager, &CallRequestVote, Peer, Peer) -> VoteExpectation {
-        let start = Instant::now();
         let temp_dir = TempDir::new("cluster_state_test").unwrap();
         let connection_manager = MockPeerConnectionManager::new();
         let peer_1 = Peer {
@@ -1369,36 +1359,36 @@ pub struct NoOpConsensusProcessor;
 
 // TODO: reasonable and consistent behavior for calls into NoOpConsensusProcessor that should never actually happen
 impl ConsensusProcessor for NoOpConsensusProcessor {
-    fn peer_connection_established(&mut self, upgrade: PeerUpgrade, connection_id: ConnectionId, controller_state: &ControllerState) {
-    }
-    fn outgoing_connection_failed(&mut self, connection_id: ConnectionId, address: SocketAddr) {
-        panic!("invalid operation for a NoOpConsensusProcessor. This should not happen");
-    }
-    fn request_vote_received(&mut self, from: ConnectionId, request: CallRequestVote) {
-        panic!("invalid operation for a NoOpConsensusProcessor. This should not happen");
-    }
-    fn tick(&mut self, now: Instant, controller_state: &mut ControllerState) {
+    fn tick(&mut self, _now: Instant, _controller_state: &mut ControllerState) {
     }
     fn is_primary(&self) -> bool {
         true
     }
-    fn vote_response_received(&mut self, now: Instant, from: ConnectionId, response: VoteResponse, controller: &mut ControllerState) {
+    fn get_current_term(&self) -> Term {
+        0
+    }
+    fn peer_connection_established(&mut self, _upgrade: PeerUpgrade, _connection_id: ConnectionId, _controller_state: &ControllerState) {
+    }
+    fn outgoing_connection_failed(&mut self, _connection_id: ConnectionId, _address: SocketAddr) {
         panic!("invalid operation for a NoOpConsensusProcessor. This should not happen");
     }
-    fn append_entries_received(&mut self, connection_id: ConnectionId, append: ReceiveAppendEntries, controller_state: &mut ControllerState) {
+    fn connection_closed(&mut self, _connection_id: ConnectionId) {
+
+    }
+    fn request_vote_received(&mut self, _from: ConnectionId, _request: CallRequestVote) {
         panic!("invalid operation for a NoOpConsensusProcessor. This should not happen");
     }
 
-    fn append_entries_response_received(&mut self, connection_id: ConnectionId, response: AppendEntriesResponse, controller_state: &mut ControllerState) {
+    fn vote_response_received(&mut self, _now: Instant, _from: ConnectionId, _response: VoteResponse, _controller: &mut ControllerState) {
         panic!("invalid operation for a NoOpConsensusProcessor. This should not happen");
     }
-    fn connection_closed(&mut self, connection_id: ConnectionId) {
-
+    fn append_entries_received(&mut self, _connection_id: ConnectionId, _append: ReceiveAppendEntries, _controller_state: &mut ControllerState) {
+        panic!("invalid operation for a NoOpConsensusProcessor. This should not happen");
+    }
+    fn append_entries_response_received(&mut self, _connection_id: ConnectionId, _response: AppendEntriesResponse, _controller_state: &mut ControllerState) {
+        panic!("invalid operation for a NoOpConsensusProcessor. This should not happen");
     }
     fn send_append_entries(&mut self, _controller_state: &mut ControllerState) {
         // do nothing
-    }
-    fn get_current_term(&self) -> Term {
-        0
     }
 }

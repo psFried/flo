@@ -42,7 +42,7 @@ impl PendingProduceOperations {
         for _ in 0..count {
             let op = self.pending.pop_front().unwrap();
             debug!("Notifying producer of committed op_id: {}, event: {}", op.op_id, op.event);
-            let _ = op.sender.complete(Ok(FloEventId::new(partition, op.event)));
+            let _ = op.sender.send(Ok(FloEventId::new(partition, op.event)));
         }
     }
 

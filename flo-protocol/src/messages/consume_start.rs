@@ -12,7 +12,7 @@ pub const CONSUME_UNLIMITED: u64 = 0;
 
 bitflags! {
     pub struct ConsumerFlags: u32 {
-        const ConsumeUncommitted = 1;
+        const CONSUME_UNCOMMITTED = 1;
     }
 }
 

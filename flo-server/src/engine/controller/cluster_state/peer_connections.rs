@@ -1,15 +1,12 @@
-use std::collections::{HashMap, HashSet};
-use std::net::SocketAddr;
-use std::time::{Instant, Duration};
-use std::fmt::Debug;
-use std::io;
-
-use event::EventCounter;
-use protocol::{FloInstanceId, Term};
+use engine::connection_handler::ConnectionControl;
 use engine::ConnectionId;
-use engine::controller::{ConnectionRef, Peer, CallRequestVote, ControllerState};
-use engine::controller::peer_connection::{PeerSystemConnection, OutgoingConnectionCreator};
-use engine::connection_handler::{ConnectionControl, CallAppendEntries, AppendEntriesStart};
+use engine::controller::{ConnectionRef, ControllerState, Peer};
+use engine::controller::peer_connection::OutgoingConnectionCreator;
+use protocol::FloInstanceId;
+use std::collections::{HashMap, HashSet};
+use std::fmt::Debug;
+use std::net::SocketAddr;
+use std::time::{Duration, Instant};
 
 pub trait PeerConnectionManager: Send + Debug + 'static {
     fn establish_connections(&mut self, now: Instant, controller_state: &mut ControllerState);
@@ -104,8 +101,7 @@ impl PeerConnectionManager for PeerConnections {
     }
 
     fn outgoing_connection_failed(&mut self, connection_id: ConnectionId, address: SocketAddr) {
-        let PeerConnections {ref mut disconnected_peers, ref mut known_peers, ref mut outgoing_connection_creator, ..} = *self;
-        if let Some(attempt) = disconnected_peers.get_mut(&address) {
+        if let Some(attempt) = self.disconnected_peers.get_mut(&address) {
             // remove the connection
             if attempt.connection.take().is_some() {
                 // set the attempt time to the time of the failure, since it could take quite some time to get a connection error
@@ -125,7 +121,7 @@ impl PeerConnectionManager for PeerConnections {
         info!("Successfully established connection_id: {} to peer: {:?} at address: {}",
               success_connection.connection_id, peer, success_connection.remote_address);
 
-        if let Some(ConnectionAttempt {connection, attempt_count, ..}) = disconnected {
+        if let Some(ConnectionAttempt {connection, ..}) = disconnected {
             if let Some(outgoing_connection_ref) = connection {
                 // if there's an existing attempt to create a connection to this peer, verify that this is indeed
                 // the same connection. if this success is from a different connection than the one we were trying to establish,
@@ -183,7 +179,7 @@ impl PeerConnectionManager for PeerConnections {
         let disconnect = if let Some(connection) = self.known_peers.get_mut(&peer_id) {
             match &mut connection.state {
                 &mut PeerState::Connected(ref mut connection_ref) => {
-                    let result = connection_ref.control_sender.send(control);
+                    let result = connection_ref.control_sender.unbounded_send(control);
                     if result.is_err() {
                         info!("Failed to send ConnectionControl to peer connection handler for {:?}, connection_id: {}, closing connection", peer_id, connection_ref.connection_id);
                         Some(connection_ref.connection_id)
@@ -242,11 +238,6 @@ impl ConnectionAttempt {
         now >= self.attempt_time && (now - self.attempt_time) >= time_to_wait
     }
 
-    fn failed(&mut self, time: Instant) {
-        self.attempt_time = time;
-        self.attempt_count += 1;
-        self.connection = None;
-    }
 }
 
 #[derive(Debug)]
@@ -263,29 +254,10 @@ impl Connection {
         }
     }
 
-    fn send_if_connected(&mut self, control: ConnectionControl) -> Result<(), ()> {
-        match self.state {
-            PeerState::Connected(ref mut connection_ref) => {
-                send(connection_ref, control)
-            }
-            _ => {
-                debug!("Not sending control to peer: {:?} because it is not connected, dropping message: {:?}", self, control);
-                Ok(())
-            }
-        }
-    }
-
     fn get_connection_id(&self) -> Option<ConnectionId> {
         match self.state {
             PeerState::Connected(ref conn) => Some(conn.connection_id),
             _ => None
-        }
-    }
-
-    fn is_connected(&self) -> bool {
-        match self.state {
-            PeerState::Connected(_) => true,
-            _ => false
         }
     }
 
@@ -303,21 +275,20 @@ impl Connection {
 enum PeerState {
     Init,
     ConnectionFailed,
-    OutgoingConnectAttempt,
     Connected(ConnectionRef),
 }
 
 
 #[cfg(test)]
 mod test {
-    use super::*;
-    use std::time::Duration;
-    use engine::controller::peer_connection::MockOutgoingConnectionCreator;
+    use engine::connection_handler::{CallAppendEntries, ConnectionControlReceiver};
+    use engine::controller::CallRequestVote;
     use engine::controller::mock::MockControllerState;
-    use engine::controller::ControllerState;
-    use engine::connection_handler::ConnectionControlReceiver;
-    use test_utils::{addr, expect_future_resolved};
+    use engine::controller::peer_connection::MockOutgoingConnectionCreator;
     use protocol::flo_instance_id;
+    use std::time::Duration;
+    use super::*;
+    use test_utils::{addr, expect_future_resolved};
 
     fn assert_control_sent(rx: ConnectionControlReceiver, expected: &ConnectionControl) -> ConnectionControlReceiver {
         use futures::Stream;
@@ -348,9 +319,9 @@ mod test {
             address: addr("123.4.5.6:3000")
         };
         let mut creator = MockOutgoingConnectionCreator::new();
-        let (peer_conn, rx) = creator.stub(peer.address);
+        let (_peer_conn, rx) = creator.stub(peer.address);
 
-        let (mut subject, connections) = subject_with_connected_peers(&[peer], creator);
+        let (mut subject, _connections) = subject_with_connected_peers(&[peer], creator);
         let rx = assert_control_sent(rx, &ConnectionControl::InitiateOutgoingSystemConnection);
 
         let expected = ConnectionControl::SendAppendEntries(CallAppendEntries {
@@ -373,9 +344,9 @@ mod test {
             address: addr("123.4.5.6:4000")
         };
         let mut creator = MockOutgoingConnectionCreator::new();
-        let (peer_1_conn, rx_1) = creator.stub(peer_1.address);
-        let (peer_2_conn, rx_2) = creator.stub(peer_2.address);
-        let (mut subject, connections) = subject_with_connected_peers(&[peer_1, peer_2], creator);
+        let (_peer_1_conn, rx_1) = creator.stub(peer_1.address);
+        let (_peer_2_conn, rx_2) = creator.stub(peer_2.address);
+        let (mut subject, _connections) = subject_with_connected_peers(&[peer_1, peer_2], creator);
         let rx_1 = assert_control_sent(rx_1, &ConnectionControl::InitiateOutgoingSystemConnection);
         let rx_2 = assert_control_sent(rx_2, &ConnectionControl::InitiateOutgoingSystemConnection);
 
@@ -398,7 +369,7 @@ mod test {
         let peer_id = flo_instance_id::generate_new();
 
         let mut creator = MockOutgoingConnectionCreator::new();
-        let (peer_connection, rx) = creator.stub(peer_address);
+        let (peer_connection, _rx) = creator.stub(peer_address);
 
         let mut subject = PeerConnections::new(vec![peer_address], creator.boxed(), &HashSet::new());
 

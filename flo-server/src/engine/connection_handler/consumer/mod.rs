@@ -83,7 +83,7 @@ impl ConsumerConnectionState {
         } else {
             Some(max_events)
         };
-        let consume_uncommitted = options.contains(ConsumerFlags::ConsumeUncommitted);
+        let consume_uncommitted = options.contains(ConsumerFlags::CONSUME_UNCOMMITTED);
 
         match EventFilter::parse(&namespace) {
             Ok(filter) => {

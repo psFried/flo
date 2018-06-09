@@ -229,7 +229,8 @@ impl PartitionImpl {
     }
 
     // returns unit, since we have to send a result back to the connection handler, regardless of outcome
-    fn handle_replicate(&mut self, ReplicateOperation{op_id, client_sender, events, prev_event_counter, prev_event_term}: ReplicateOperation) {
+    fn handle_replicate(&mut self, ReplicateOperation{op_id, client_sender, events, ..}: ReplicateOperation) {
+        // TODO: ensure that prev_event_counter and prev_event_term are checked for system event replication
         // TODO: think about handling empty `events` vec. maybe best to handle that in the connection handler?
         // TODO: ensure that we are in Follower status and that the events came from the leader
         let result = self.replicate_events(op_id, events);
@@ -242,13 +243,12 @@ impl PartitionImpl {
                 highest_event_counter: head,
             }
         });
-        client_sender.complete(response);
+        let _ = client_sender.send(response);
     }
 
     /// persists events in this partition. Panics if `events` is empty
     pub fn replicate_events<F: FloEvent>(&mut self, op_id: u32, events: Vec<F>) -> io::Result<ReplicationResult> {
         let commit_index = self.commit_manager.get_commit_index();
-        let current_head = self.index.greatest_event_counter();
 
         // ignore any events with id.event_counter < commit_index
         // We don't bother checking CRCs for these, since they are already committed
@@ -303,7 +303,6 @@ impl PartitionImpl {
             }
 
             let persisted_event = persisted_event_result?; // return the io error if we failed to read the event we already have
-            let existing_event_id = persisted_event.id();
 
             let new_event = &to_replicate[index_of_first_to_replicate]; // safe since we check the index bounds above
 
@@ -370,14 +369,14 @@ impl PartitionImpl {
             Ok(id) => {
                 if self.commit_manager.is_standalone() {
                     // No biggie if the receiving end has hung up already. The operation will still be considered complete and successful
-                    let _ = client.complete(Ok(id));
+                    let _ = client.send(Ok(id));
                 } else {
                     self.pending_produce_operations.add(op_id, id.event_counter, client);
                 }
             }
             Err(io_err) => {
                 error!("Failed to handle produce operation for op_id: {}, err: {:?}", op_id, io_err);
-                let _ = client.complete(Err(io_err));
+                let _ = client.send(Err(io_err));
             }
         }
         // TODO: separate out error that gets returned to connection handler so that we can also return an io::Error from this function if one occurs

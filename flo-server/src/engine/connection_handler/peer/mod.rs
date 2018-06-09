@@ -1,16 +1,13 @@
-mod peer_follower;
-mod system_read_wrapper;
-
-use std::collections::VecDeque;
-
-use event::{EventCounter, OwnedFloEvent, FloEvent};
-use protocol::{self, ProtocolMessage, PeerAnnounce, EventStreamStatus, ClusterMember, ErrorMessage, ErrorKind, FloInstanceId, Term};
-use engine::{ReceivedProtocolMessage, ConnectionId};
-use engine::controller::{self, SystemStreamRef, Peer, SystemEvent, SystemStreamReader, SYSTEM_READER_BATCH_SIZE};
-use engine::event_stream::partition::PersistentEvent;
-use super::connection_state::ConnectionState;
-use super::{ConnectionHandlerResult, CallAppendEntries, AppendEntriesStart};
+use engine::ConnectionId;
+use engine::controller::{self, Peer, SystemStreamRef};
+use event::OwnedFloEvent;
+use protocol::{self, ClusterMember, ErrorKind, ErrorMessage, PeerAnnounce, ProtocolMessage};
 use self::system_read_wrapper::SystemReaderWrapper;
+use std::collections::VecDeque;
+use super::{CallAppendEntries, ConnectionHandlerResult};
+use super::connection_state::ConnectionState;
+
+mod system_read_wrapper;
 
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -174,7 +171,7 @@ impl PeerConnectionState {
         let expected_op_id = self.peer_operation_queue.pop_back();
 
         if Some(response.op_id) == expected_op_id {
-            let protocol::RequestVoteResponse { op_id, term, vote_granted } = response;
+            let protocol::RequestVoteResponse {term, vote_granted, ..} = response;
             let controller_message = controller::VoteResponse {
                 term,
                 granted: vote_granted

@@ -37,10 +37,6 @@ mod offsets {
     }
     pub const DATA_LEN_LEN: usize = 4;
 
-    pub fn data_bytes_start(namespace_len: usize) -> usize {
-        data_len_start(namespace_len) + 4
-    }
-
     pub const MIN_EVENT_LEN: usize = NS_BYTES_START + DATA_LEN_LEN;
 }
 
@@ -157,11 +153,6 @@ impl PersistentEvent {
         }
 
         Ok((FloEventId::new(partition_num, counter), total_len))
-    }
-
-    fn read_value_unchecked<V, F>(&self, start: usize, len: usize, fun: F) -> V where F: Fn(&[u8]) -> V {
-        let buffer_slice = self.as_buf(start, len);
-        fun(buffer_slice)
     }
 
     fn as_buf(&self, start: usize, len: usize) -> &[u8] {
