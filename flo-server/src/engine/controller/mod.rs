@@ -13,6 +13,7 @@ use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 use std::io;
 use std::time::Instant;
+use tokio_core::reactor::Remote;
 
 use protocol::{ProduceEvent, Term};
 use engine::ConnectionId;
@@ -58,10 +59,11 @@ impl FloController {
                shared_stream_refs: Arc<Mutex<HashMap<String, EventStreamRef>>>,
                storage_dir: PathBuf,
                cluster_state: Box<ConsensusProcessor>,
-               default_stream_options: EventStreamOptions) -> FloController {
+               default_stream_options: EventStreamOptions,
+               remote: Remote) -> FloController {
 
         let controller_state = ControllerStateImpl::new(system_partition, event_streams, shared_stream_refs,
-                                                        storage_dir, default_stream_options);
+                                                        storage_dir, default_stream_options, remote);
 
         FloController {
             cluster_state,

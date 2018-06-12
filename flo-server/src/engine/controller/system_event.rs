@@ -1,13 +1,13 @@
 use rmp_serde::decode::Error;
 
 use protocol::{Term, FloInstanceId};
-use event::{FloEvent, EventData, FloEventId, OwnedFloEvent, ActorId, Timestamp};
+use event::{FloEvent, EventData, FloEventId, EventCounter, OwnedFloEvent, ActorId, Timestamp};
 use engine::event_stream::partition::PersistentEvent;
 
 #[derive(Debug, PartialEq)]
 pub struct SystemEvent<E: FloEvent> {
-    wrapped: E,
-    deserialized_data: SystemEventData
+    pub wrapped: E,
+    pub deserialized_data: SystemEventData
 }
 
 impl <E: FloEvent> SystemEvent<E> {
@@ -20,6 +20,9 @@ impl <E: FloEvent> SystemEvent<E> {
         })
     }
 
+    pub fn counter(&self) -> EventCounter {
+        self.wrapped.id().event_counter
+    }
 
     pub fn term(&self) -> Term {
         self.system_data().term
@@ -106,20 +109,26 @@ impl <E: FloEvent> FloEvent for SystemEvent<E> {
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct ClusterMemberJoining {
-    new_member: FloInstanceId,
+    pub new_member: FloInstanceId,
 }
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct ClusterMemberJoined {
-    new_member: FloInstanceId,
-    new_member_partition_num: ActorId,
+    pub new_member: FloInstanceId,
+    pub new_member_partition_num: ActorId,
 }
 
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+pub struct ClusterMemberOnline {
+    pub member: FloInstanceId,
+    pub member_partition_num: ActorId,
+}
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub enum SystemEventKind {
     NewClusterMemberJoining(ClusterMemberJoining),
     NewClusterMemberJoined(ClusterMemberJoined),
+    ExistingMemberOnline(ClusterMemberOnline),
 }
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]

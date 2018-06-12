@@ -81,7 +81,7 @@ impl PrimaryState {
                 reader_start_segment: current_segment,
             })
         } else {
-            match controller.get_next_event(start_after_index.saturating_sub(1)) {
+            match controller.get_next_counter_and_term(start_after_index.saturating_sub(1)) {
                 Some(result) => {
                     let (prev_index, prev_term) = result?; // return error if there is one
                     let (start_segment, start_offset) = controller.get_next_entry(start_after_index).map(|entry| {

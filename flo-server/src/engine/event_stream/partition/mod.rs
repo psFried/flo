@@ -190,6 +190,14 @@ pub struct PartitionRefMut {
 }
 
 impl PartitionRefMut {
+    pub fn set_writable(&mut self) {
+        self.status_writer.set(true);
+    }
+
+    pub fn set_read_only(&mut self) {
+        self.status_writer.set(false);
+    }
+
     pub fn partition_num(&self) -> ActorId {
         self.partition_ref.partition_num()
     }
@@ -304,10 +312,14 @@ impl PartitionRef {
 pub fn initialize_existing_partition(partition_num: ActorId,
                                      event_stream_data_dir: &Path,
                                      event_stream_options: &EventStreamOptions,
-                                     highest_counter: HighestCounter) -> io::Result<PartitionRefMut> {
+                                     highest_counter: HighestCounter,
+                                     start_writable: bool) -> io::Result<PartitionRefMut> {
 
-    // TODO: for now we are starting every partition as primary. This will need to change once we have a raft implementation
-    let status_writer = AtomicBoolWriter::with_value(true);
+    // This will be the starting value, which will be used, even prior to determining
+    // the system primary. So, we only set this to true when running in standalone mode
+    // (no cluster). Otherwise, we'll start it off as `false` and flip it later,
+    // once we are in touch with the system primary
+    let status_writer = AtomicBoolWriter::with_value(start_writable);
     let primary_addr = Arc::new(RwLock::new(None));
 
     let partition_data_dir = get_partition_data_dir(event_stream_data_dir, partition_num);
@@ -324,10 +336,10 @@ pub fn initialize_existing_partition(partition_num: ActorId,
 pub fn initialize_new_partition(partition_num: ActorId,
                                 event_stream_data_dir: &Path,
                                 event_stream_options: &EventStreamOptions,
-                                highest_counter: HighestCounter) -> io::Result<PartitionRefMut> {
+                                highest_counter: HighestCounter,
+                                start_writable: bool) -> io::Result<PartitionRefMut> {
 
-    // TODO: for now we are starting every partition as primary. This will need to change once we have a raft implementation
-    let status_writer = AtomicBoolWriter::with_value(true);
+    let status_writer = AtomicBoolWriter::with_value(start_writable);
     let primary_addr = Arc::new(RwLock::new(None));
 
     let partition_data_dir = get_partition_data_dir(event_stream_data_dir, partition_num);

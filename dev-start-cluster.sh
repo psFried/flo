@@ -158,7 +158,12 @@ function do_build() {
     local start_dir="$(pwd)"
     cd "${SCRIPT_DIR}"
     cargo build --all
+    local build_success="$?"
     cd "${start_dir}"
+
+    if [[ "${build_success}" != "0" ]]; then
+        exit 1
+    fi
 }
 
 if [[ "${BUILD}" == "yes" ]]; then

@@ -270,6 +270,7 @@ mod test {
                 this_address: Some(instance_addr),
                 system_primary: None,
                 peers: HashSet::new(),
+                this_partition_num: Some(1),
             };
             let readers = ::engine::event_stream::partition::SharedReaderRefs::empty();
             let system_stream = SystemStreamRef::new(part_ref, tx, Arc::new(RwLock::new(cluster_state)), readers);

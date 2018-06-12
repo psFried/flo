@@ -177,31 +177,37 @@ impl <'a> EventData for BorrowedEventData<'a> {
 
 impl <T> FloEvent for T where T: AsRef<OwnedFloEvent> + Debug + EventData {
     fn id(&self) -> &FloEventId {
-        self.as_ref().id()
+        &self.as_ref().id
     }
 
     fn timestamp(&self) -> Timestamp {
-        self.as_ref().timestamp()
+        self.as_ref().timestamp
     }
 
     fn parent_id(&self) -> Option<FloEventId> {
-        self.as_ref().parent_id()
+        self.as_ref().parent_id
     }
 
     fn namespace(&self) -> &str {
-        self.as_ref().namespace()
+        self.as_ref().namespace.as_str()
     }
 
     fn data_len(&self) -> u32 {
-        self.as_ref().data_len()
+        self.as_ref().data.len() as u32
     }
 
     fn data(&self) -> &[u8] {
-        self.as_ref().data()
+        self.as_ref().data.as_slice()
     }
 
     fn to_owned_event(&self) -> OwnedFloEvent {
         self.as_ref().clone()
+    }
+}
+
+impl AsRef<OwnedFloEvent> for OwnedFloEvent {
+    fn as_ref(&self) -> &OwnedFloEvent {
+        self
     }
 }
 
@@ -246,48 +252,20 @@ impl OwnedFloEvent {
     }
 }
 
-impl EventData for OwnedFloEvent {
+impl <T> EventData for T where T: AsRef<OwnedFloEvent> {
     fn event_namespace(&self) -> &str {
-        self.namespace()
+        self.as_ref().namespace.as_str()
     }
 
     fn event_parent_id(&self) -> Option<FloEventId> {
-        self.parent_id()
+        self.as_ref().parent_id
     }
 
     fn event_data(&self) -> &[u8] {
-        self.data()
+        self.as_ref().data.as_slice()
     }
     fn get_precomputed_crc(&self) -> Option<u32> {
-        Some(self.crc)
+        Some(self.as_ref().crc)
     }
 }
 
-impl FloEvent for OwnedFloEvent {
-    fn id(&self) -> &FloEventId {
-        &self.id
-    }
-
-    fn namespace(&self) -> &str {
-        &self.namespace
-    }
-
-    fn data_len(&self) -> u32 {
-        self.data.len() as u32
-    }
-
-    fn data(&self) -> &[u8] {
-        &self.data
-    }
-
-    fn to_owned_event(&self) -> OwnedFloEvent {
-        self.clone()
-    }
-
-    fn parent_id(&self) -> Option<FloEventId> {
-        self.parent_id
-    }
-    fn timestamp(&self) -> Timestamp {
-        self.timestamp
-    }
-}

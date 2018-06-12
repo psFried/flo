@@ -51,6 +51,7 @@ pub fn start_controller(options: ControllerOptions, remote: Remote) -> io::Resul
     debug!("Starting Flo Controller with: {:?}", options);
     let ControllerOptions{storage_dir, default_stream_options, cluster_options} = options;
     let use_cluster_mode = cluster_options.is_some();
+    let start_partitions_as_writable = !use_cluster_mode;
 
     let system_primary_status_writer = AtomicBoolWriter::with_value(false);
     let system_primary_address: SystemPrimaryAddressRef = Arc::new(RwLock::new(None));
@@ -61,7 +62,7 @@ pub fn start_controller(options: ControllerOptions, remote: Remote) -> io::Resul
     debug!("Initialized system partition");
 
     // early return if this fails
-    let user_streams = init_user_streams(&storage_dir, &default_stream_options, &remote)?;
+    let user_streams = init_user_streams(&storage_dir, &default_stream_options, &remote, start_partitions_as_writable)?;
     debug!("Initialized all {} user event streams", user_streams.len());
     let shared_stream_refs = user_streams.iter().map(|(key, value)| {
         (key.to_owned(), value.clone_ref())
@@ -96,7 +97,7 @@ pub fn start_controller(options: ControllerOptions, remote: Remote) -> io::Resul
         let cluster_opts = cluster_options.unwrap();
 
         let system_stream_ref = engine_ref.get_system_stream();
-        ::engine::controller::tick_generator::spawn_tick_generator(cluster_opts.heartbeat_interval_millis, remote, system_stream_ref);
+        ::engine::controller::tick_generator::spawn_tick_generator(cluster_opts.heartbeat_interval_millis, remote.clone(), system_stream_ref);
 
         init_cluster_consensus_processor(persistent_state,
                                          cluster_opts,
@@ -113,7 +114,8 @@ pub fn start_controller(options: ControllerOptions, remote: Remote) -> io::Resul
                                             shared_stream_refs,
                                             storage_dir,
                                             consensus_processor,
-                                            default_stream_options);
+                                            default_stream_options,
+                                            remote);
 
     run_controller_impl(flo_controller, system_partition_rx);
     Ok(engine_ref)
@@ -161,7 +163,7 @@ fn create_engine_ref(shared_stream_refs: Arc<Mutex<HashMap<String, EventStreamRe
 }
 
 
-fn init_user_streams(storage_dir: &Path, options: &EventStreamOptions, remote: &Remote) -> io::Result<HashMap<String, EventStreamRefMut>> {
+fn init_user_streams(storage_dir: &Path, options: &EventStreamOptions, remote: &Remote, start_writable: bool) -> io::Result<HashMap<String, EventStreamRefMut>> {
     let mut user_streams = HashMap::new();
 
     // all sorts of early returns if there's filesystem failures
@@ -173,7 +175,8 @@ fn init_user_streams(storage_dir: &Path, options: &EventStreamOptions, remote: &
             let stream = init_existing_event_stream(
                 stream_storage,
                 options.clone(),
-                remote.clone())?;
+                remote.clone(),
+                start_writable)?;
             user_streams.insert(stream.get_name().to_owned(), stream);
         }
     }
@@ -184,7 +187,8 @@ fn init_user_streams(storage_dir: &Path, options: &EventStreamOptions, remote: &
         let new_stream = init_new_event_stream(
             new_stream_dir,
             options.clone(),
-            remote.clone())?;
+            remote.clone(),
+            start_writable)?;
 
         user_streams.insert(options.name.clone(), new_stream);
     }

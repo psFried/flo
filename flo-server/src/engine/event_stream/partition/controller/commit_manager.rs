@@ -60,7 +60,7 @@ impl CommitManager {
         }
     }
 
-    fn update_commit_index(&mut self, new_index: EventCounter) {
+    pub fn update_commit_index(&mut self, new_index: EventCounter) {
         self.commit_index.set_if_greater(new_index as usize);
     }
 

@@ -4,6 +4,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{self, Seek, SeekFrom};
 use std::collections::HashSet;
 
+use event::ActorId;
 use protocol::Term;
 use protocol::flo_instance_id::{self, FloInstanceId};
 use engine::controller::controller_messages::Peer;
@@ -17,6 +18,7 @@ pub struct PersistentClusterState {
     pub current_term: Term,
     pub voted_for: Option<FloInstanceId>,
     pub this_instance_id: FloInstanceId,
+    pub this_partition_num: Option<ActorId>,
     pub cluster_members: HashSet<Peer>,
 }
 
@@ -25,6 +27,7 @@ impl PersistentClusterState {
     pub fn initialize_shared_state(&self, this_address: Option<SocketAddr>) -> SharedClusterState {
 
         SharedClusterState {
+            this_partition_num: self.this_partition_num,
             this_instance_id: self.this_instance_id,
             this_address,
             system_primary: None, // we are still starting up, so we have no idea who's primary
@@ -43,6 +46,7 @@ impl PersistentClusterState {
             current_term: 0,
             voted_for: None,
             this_instance_id: flo_instance_id::generate_new(),
+            this_partition_num: None,
             cluster_members: HashSet::new(),
         }
     }

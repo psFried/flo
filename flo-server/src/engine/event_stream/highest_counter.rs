@@ -3,6 +3,8 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
+use event::EventCounter;
+
 
 #[derive(Clone, Debug)]
 pub struct HighestCounter(Arc<AtomicUsize>);
@@ -12,15 +14,15 @@ impl HighestCounter {
         HighestCounter::starting_at(0)
     }
 
-    pub fn starting_at(count: u64) -> HighestCounter {
+    pub fn starting_at(count: EventCounter) -> HighestCounter {
         HighestCounter(Arc::new(AtomicUsize::new(count as usize)))
     }
 
-    pub fn set_if_greater(&self, value: u64) {
+    pub fn set_if_greater(&self, value: EventCounter) {
         let mut current = self.0.load(Ordering::SeqCst);
         let mut attempts = 1;
         loop {
-            if value > current as u64 {
+            if value > current as EventCounter {
                 let prev = self.0.compare_and_swap(current, value as usize, Ordering::SeqCst);
                 if prev == current {
                     break;
@@ -40,7 +42,7 @@ impl HighestCounter {
         }
     }
 
-    pub fn increment_and_get(&self, inc_amount: u64) -> u64 {
+    pub fn increment_and_get(&self, inc_amount: EventCounter) -> EventCounter {
         let mut current = self.0.load(Ordering::SeqCst);
         let mut attempts = 1;
         loop {
@@ -58,7 +60,7 @@ impl HighestCounter {
         if attempts > 1 {
             debug!("set_if_greater took: {} attempts", attempts);
         }
-        current as u64 + inc_amount
+        current as EventCounter + inc_amount
     }
 
     pub fn get(&self) -> u64 {

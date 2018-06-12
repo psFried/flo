@@ -1,3 +1,7 @@
+pub mod persistent;
+mod peer_connections;
+mod primary_state;
+
 use atomics::AtomicBoolWriter;
 use engine::{ConnectionId, EngineRef};
 use engine::connection_handler::ConnectionControl;
@@ -15,9 +19,6 @@ use std::time::{Duration, Instant};
 use super::{AppendEntriesResponse, ClusterOptions, ControllerState, Peer, PeerUpgrade, ReceiveAppendEntries};
 use super::peer_connection::OutgoingConnectionCreatorImpl;
 
-pub mod persistent;
-mod peer_connections;
-mod primary_state;
 
 /// This is a placeholder for a somewhat better error handling when updating the persistent cluster state fails.
 /// This situation is extremely problematic, since it may be possible to cast two different votes in the same term, if for
@@ -106,6 +107,20 @@ impl ClusterManager {
         }
     }
 
+    fn update_commit_index(&mut self, new_commit_index: EventCounter, term: Term, controller_state: &mut ControllerState) {
+        if new_commit_index <= self.last_applied {
+            return;
+        }
+        let last_commit_index = controller_state.get_commit_index();
+        info!("Applying committed system events new_commit_index: {}, term: {}, last_applied: {}, last_committed: {}", 
+            new_commit_index, term, self.last_applied, last_commit_index);
+        controller_state.set_commit_index(new_commit_index);
+
+        // while self.last_applied < new_commit_index {
+        //     let event = controller_state.get_next_event(self.last_applied)
+        // }
+    }
+
     fn transition_state(&mut self, new_state: State) {
         debug!("Transitioning from state: {:?} to {:?}", self.state, new_state);
         self.state = new_state;
@@ -119,14 +134,9 @@ impl ClusterManager {
         let PeerUpgrade { peer, system_primary, .. } = upgrade;
         if let Some(primary) = system_primary {
             info!("Determined primary of {:?} at {}, as told by instance: {:?}", primary.id, primary.address, peer);
-            self.transition_state(State::Follower);
-            {
-                let mut lock = self.system_partition_primary_address.write().unwrap();
-                *lock = Some(primary.address);
-            }
-            {
-                let mut shared = self.shared.write().unwrap();
-                shared.system_primary = Some(primary);
+
+            if primary.id != self.persistent.this_instance_id {
+                self.set_follower_status(Some(primary))
             }
         } else {
             debug!("peer announce from {:?} has unknown primary", peer);
@@ -223,10 +233,17 @@ impl ClusterManager {
         let primary_id = primary.as_ref().map(|p| p.id);
         self.current_primary = primary_id;
         let mut lock = self.shared.write().unwrap();
-        lock.system_primary = primary;
+        lock.system_primary = primary.clone();
+
+        let mut lock = self.system_partition_primary_address.write().unwrap();
+        *lock = primary.map(|p| p.address)
     }
 
     fn set_follower_status(&mut self, primary: Option<Peer>) {
+        if primary.as_ref().map(|new_primary| new_primary.id) == self.current_primary {
+            // if nothing has changed, then we won't bother doing anything
+            return;
+        }
         info!("Transitioning to follower state with new primary: {:?}", primary);
         self.primary_status_writer.set(false);
         self.primary_state = None;
@@ -234,17 +251,15 @@ impl ClusterManager {
         self.transition_state(State::Follower);
     }
 
-    fn append_system_events(&mut self, events: &[OwnedFloEvent]) -> io::Result<EventCounter> {
-        // TODO: actually persist the system events from ApendEntries
-        if !events.is_empty() {
-            error!("Appending of system events was never implemented!!!, ignoring: {:?}", events);
-        }
-        Ok(0)
+    fn append_system_events(&mut self, events: &[OwnedFloEvent], controller_state: &mut ControllerState) -> io::Result<EventCounter> {
+        controller_state.replicate_system_events(events).map(|repl_result| {
+            repl_result.highest_event_counter
+        })
     }
 
-    fn create_append_result(&mut self, events: &[OwnedFloEvent]) -> Option<EventCounter> {
+    fn create_append_result(&mut self, events: &[OwnedFloEvent], controller_state: &mut ControllerState) -> Option<EventCounter> {
         trace!("AppendEntries looks successful, will append: {} entries", events.len());
-        self.append_system_events(events).map(|last_counter| {
+        self.append_system_events(events, controller_state).map(|last_counter| {
             Some(last_counter)
         }).unwrap_or_else(|io_err| {
             error!("Error appending system events: {:?}, returning false", io_err);
@@ -254,14 +269,62 @@ impl ClusterManager {
 }
 
 impl ConsensusProcessor for ClusterManager {
+    fn tick(&mut self, now: Instant, controller_state: &mut ControllerState) {
+        self.connection_manager.establish_connections(now, controller_state);
 
-    fn send_append_entries(&mut self, controller_state: &mut ControllerState) {
-        let ClusterManager { ref mut primary_state, ref mut connection_manager, ref persistent, ..} = *self;
+        match self.state {
+            State::EstablishConnections => {
+                // we'll only be in this initial status once, on startup
+                self.transition_state(State::DeterminePrimary);
+            }
+            State::DeterminePrimary => {
+                trace!("Waiting to DeterminePrimary");
+            }
+            State::Primary => {
+                trace!("This instance is primary");
+                self.send_append_entries(controller_state);
+            }
+            _ => {
+                if self.election_timed_out(now) {
+                    self.start_new_election();
+                }
+            }
+        }
+    }
 
-        primary_state.as_mut().map(|state| {
-            let all_peers = persistent.cluster_members.iter().map(|peer| peer.id);
-            state.send_append_entries(controller_state, connection_manager.as_mut(), all_peers);
-        });
+    fn is_primary(&self) -> bool {
+        self.state == State::Primary
+    }
+
+    fn get_current_term(&self) -> Term {
+        self.persistent.current_term
+    }
+
+    fn peer_connection_established(&mut self, upgrade: PeerUpgrade, connection_id: ConnectionId, controller_state: &ControllerState) {
+        debug!("peer_connection_established: connection_id: {},  {:?}", connection_id, upgrade);
+        let connection = controller_state.get_connection(connection_id);
+        if connection.is_none() {
+            debug!("Ignoring peer_connection_established: {:?} for connection_id: {}, because that connection has already been closed",
+                   upgrade, connection_id);
+            return;
+        }
+        let connection = connection.unwrap();
+
+        if !self.persistent.cluster_members.contains(&upgrade.peer) {
+            self.persistent.modify(|state| {
+                state.cluster_members.insert(upgrade.peer.clone());
+            }).expect(STATE_UPDATE_FAILED);
+
+            let mut lock = self.shared.write().unwrap();
+            lock.peers.insert(upgrade.peer.clone());
+        }
+
+        self.connection_manager.peer_connection_established(upgrade.peer.clone(), connection);
+
+        if State::DeterminePrimary == self.state {
+            self.determine_primary_from_peer_upgrade(upgrade);
+        }
+        self.connection_resolved(connection.remote_address);
     }
 
     fn outgoing_connection_failed(&mut self, connection_id: ConnectionId, address: SocketAddr) {
@@ -318,60 +381,6 @@ impl ConsensusProcessor for ClusterManager {
         }
     }
 
-    fn peer_connection_established(&mut self, upgrade: PeerUpgrade, connection_id: ConnectionId, controller_state: &ControllerState) {
-        debug!("peer_connection_established: connection_id: {},  {:?}", connection_id, upgrade);
-        let connection = controller_state.get_connection(connection_id);
-        if connection.is_none() {
-            debug!("Ignoring peer_connection_established: {:?} for connection_id: {}, because that connection has already been closed",
-                   upgrade, connection_id);
-            return;
-        }
-        let connection = connection.unwrap();
-
-        if !self.persistent.cluster_members.contains(&upgrade.peer) {
-            self.persistent.modify(|state| {
-                state.cluster_members.insert(upgrade.peer.clone());
-            }).expect(STATE_UPDATE_FAILED);
-
-            let mut lock = self.shared.write().unwrap();
-            lock.peers.insert(upgrade.peer.clone());
-        }
-
-        self.connection_manager.peer_connection_established(upgrade.peer.clone(), connection);
-
-        if State::DeterminePrimary == self.state {
-            self.determine_primary_from_peer_upgrade(upgrade);
-        }
-        self.connection_resolved(connection.remote_address);
-    }
-
-    fn tick(&mut self, now: Instant, controller_state: &mut ControllerState) {
-        self.connection_manager.establish_connections(now, controller_state);
-
-        match self.state {
-            State::EstablishConnections => {
-                // we'll only be in this initial status once, on startup
-                self.transition_state(State::DeterminePrimary);
-            }
-            State::DeterminePrimary => {
-                trace!("Waiting to DeterminePrimary");
-            }
-            State::Primary => {
-                trace!("This instance is primary");
-                self.send_append_entries(controller_state);
-            }
-            _ => {
-                if self.election_timed_out(now) {
-                    self.start_new_election();
-                }
-            }
-        }
-    }
-
-    fn is_primary(&self) -> bool {
-        self.state == State::Primary
-    }
-
     fn append_entries_received(&mut self, connection_id: ConnectionId, append: ReceiveAppendEntries, controller_state: &mut ControllerState) {
         let from = self.connection_manager.get_peer_id(connection_id);
         if from.is_none() {
@@ -394,10 +403,10 @@ impl ConsensusProcessor for ClusterManager {
 
         self.update_last_heartbeat_to_now();
 
-        let response = match controller_state.get_next_event(append.prev_entry_index.saturating_sub(1)) {
+        let response = match controller_state.get_next_counter_and_term(append.prev_entry_index.saturating_sub(1)) {
             Some(Ok((actual_prev_index, actual_prev_term))) => {
                 if actual_prev_index == append.prev_entry_index && actual_prev_term == append.prev_entry_term {
-                    self.create_append_result(append.events.as_slice())
+                    self.create_append_result(append.events.as_slice(), controller_state)
                 } else {
                     info!("AppendEntries: {:?} does not match the prev index/term stored for this instance: index: {}, term: {}", append, actual_prev_index, actual_prev_term);
                     None
@@ -406,7 +415,7 @@ impl ConsensusProcessor for ClusterManager {
             None => {
                 if append.prev_entry_index == 0 && append.prev_entry_term == 0 {
                     // special case for when we're at the very beginning and have literally no events in the log
-                    self.create_append_result(append.events.as_slice())
+                    self.create_append_result(append.events.as_slice(), controller_state)
                 } else {
                     debug!("System partition with head at: {} is behind AppendEntries with index: {}, term: {}, returning negative result",
                             self.last_applied, append.prev_entry_index, append.prev_entry_term);
@@ -418,6 +427,8 @@ impl ConsensusProcessor for ClusterManager {
                 None
             }
         };
+
+        self.update_commit_index(append.commit_index, append.term, controller_state);
 
         self.connection_manager.send_to_peer(peer_id, ConnectionControl::SendAppendEntriesResponse(AppendEntriesResponse {
             term: my_current_term,
@@ -452,14 +463,20 @@ impl ConsensusProcessor for ClusterManager {
         }
     }
 
-    fn get_current_term(&self) -> Term {
-        self.persistent.current_term
+    fn send_append_entries(&mut self, controller_state: &mut ControllerState) {
+        let ClusterManager { ref mut primary_state, ref mut connection_manager, ref persistent, ..} = *self;
+
+        primary_state.as_mut().map(|state| {
+            let all_peers = persistent.cluster_members.iter().map(|peer| peer.id);
+            state.send_append_entries(controller_state, connection_manager.as_mut(), all_peers);
+        });
     }
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct SharedClusterState {
     pub this_instance_id: FloInstanceId,
+    pub this_partition_num: Option<ActorId>,
     pub this_address: Option<SocketAddr>,
     pub system_primary: Option<Peer>,
     pub peers: HashSet<Peer>,
@@ -469,6 +486,7 @@ impl SharedClusterState {
     pub fn non_cluster() -> SharedClusterState {
         SharedClusterState {
             this_instance_id: flo_instance_id::generate_new(),
+            this_partition_num: Some(0),
             this_address: None,
             system_primary: None,
             peers: HashSet::new(),
@@ -543,12 +561,14 @@ mod test {
         connection_manager.stub_peer_connection(peer_2_connection, peer_2.id);
 
         let mut subject = create_cluster_manager(vec![peer_1.address, peer_2.address], temp_dir.path(), connection_manager.boxed_ref());
+        let subject_id = subject.persistent.this_instance_id;
 
         subject.persistent.modify(|state| {
             state.cluster_members.insert(peer_1.clone());
             state.cluster_members.insert(peer_2.clone());
             state.current_term = 5;
         }).unwrap();
+        subject.current_primary = Some(subject_id);
         subject.last_applied = 99;
         subject.last_applied_term = 4;
         subject.state = State::Primary;
@@ -600,24 +620,9 @@ mod test {
         subject.last_heartbeat = start;
 
         let mock_system_events = vec![
-            MockSystemEvent {
-                id: 1,
-                term: 1,
-                segment: SegmentNum::new(1),
-                file_offset: 0,
-            },
-            MockSystemEvent {
-                id: 2,
-                term: 3,
-                segment: SegmentNum::new(1),
-                file_offset: 55,
-            },
-            MockSystemEvent {
-                id: 3,
-                term: 4,
-                segment: SegmentNum::new(2),
-                file_offset: 77,
-            },
+            MockSystemEvent::with_any_data(1, 1, SegmentNum::new(1), 0),
+            MockSystemEvent::with_any_data(2, 3, SegmentNum::new(1), 55),
+            MockSystemEvent::with_any_data(3, 4, SegmentNum::new(2), 77),
         ];
 
         let (peer_1_tx, _peer_1_rx) = ::engine::connection_handler::create_connection_control_channels();
@@ -679,24 +684,9 @@ mod test {
         subject.last_heartbeat = start;
 
         let mock_system_events = vec![
-            MockSystemEvent {
-                id: 1,
-                term: 1,
-                segment: SegmentNum::new(1),
-                file_offset: 0,
-            },
-            MockSystemEvent {
-                id: 2,
-                term: 3,
-                segment: SegmentNum::new(1),
-                file_offset: 55,
-            },
-            MockSystemEvent {
-                id: 3,
-                term: 4,
-                segment: SegmentNum::new(2),
-                file_offset: 77,
-            },
+            MockSystemEvent::with_any_data(1, 1, SegmentNum::new(1), 0),
+            MockSystemEvent::with_any_data(2, 3, SegmentNum::new(1), 55),
+            MockSystemEvent::with_any_data(3, 4, SegmentNum::new(2), 77),
         ];
 
         let mut controller_state = MockControllerState::new().with_commit_index(2).with_mocked_events(mock_system_events.as_slice());
@@ -1252,6 +1242,7 @@ mod test {
             this_address: Some(this_addr),
             system_primary: Some(Peer {id: flo_instance_id::generate_new(), address: this_addr}),
             peers: HashSet::new(),
+            this_partition_num: None,
         };
         assert!(!subject.this_instance_is_primary());
     }
@@ -1265,6 +1256,7 @@ mod test {
             this_address: Some(this_addr),
             system_primary: None,
             peers: HashSet::new(),
+            this_partition_num: None,
         };
         assert!(!subject.this_instance_is_primary());
     }
@@ -1278,6 +1270,7 @@ mod test {
             this_address: Some(this_addr),
             system_primary: Some(Peer {id: this_id, address: this_addr}),
             peers: HashSet::new(),
+            this_partition_num: None,
         };
         assert!(subject.this_instance_is_primary());
     }

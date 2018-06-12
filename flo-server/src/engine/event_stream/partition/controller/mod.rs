@@ -233,7 +233,7 @@ impl PartitionImpl {
         // TODO: ensure that prev_event_counter and prev_event_term are checked for system event replication
         // TODO: think about handling empty `events` vec. maybe best to handle that in the connection handler?
         // TODO: ensure that we are in Follower status and that the events came from the leader
-        let result = self.replicate_events(op_id, events);
+        let result = self.replicate_events(op_id, events.as_slice());
         let response = result.unwrap_or_else(|io_err| {
             let head = self.index.greatest_event_counter();
             error!("Error handling replicate operation with op_id: {}, io error: '{}', sending fail response with head: {}", op_id, io_err, head);
@@ -246,8 +246,12 @@ impl PartitionImpl {
         let _ = client_sender.send(response);
     }
 
+    pub fn update_commit_index(&mut self, new_commit_index: EventCounter) {
+        self.commit_manager.update_commit_index(new_commit_index);
+    }
+
     /// persists events in this partition. Panics if `events` is empty
-    pub fn replicate_events<F: FloEvent>(&mut self, op_id: u32, events: Vec<F>) -> io::Result<ReplicationResult> {
+    pub fn replicate_events<F: FloEvent>(&mut self, op_id: u32, events: &[F]) -> io::Result<ReplicationResult> {
         let commit_index = self.commit_manager.get_commit_index();
 
         // ignore any events with id.event_counter < commit_index
@@ -363,7 +367,9 @@ impl PartitionImpl {
 
     pub fn handle_produce(&mut self, produce: ProduceOperation) -> io::Result<()> {
         let ProduceOperation {client, op_id, events} = produce;
-        let result = self.append_all(events);
+        let result = self.verify_partition_is_primary().and_then(|()| {
+            self.append_all(events)
+        });
 
         match result {
             Ok(id) => {
@@ -381,6 +387,14 @@ impl PartitionImpl {
         }
         // TODO: separate out error that gets returned to connection handler so that we can also return an io::Error from this function if one occurs
         Ok(())
+    }
+
+    fn verify_partition_is_primary(&self) -> io::Result<()> {
+        if self.is_current_primary() {
+            Ok(())
+        } else {
+            Err(io::Error::new(io::ErrorKind::Other, "Not primary"))
+        }
     }
 
     fn append_all(&mut self, events: Vec<ProduceEvent>) -> io::Result<FloEventId> {
@@ -690,7 +704,7 @@ mod test {
         ];
 
         let op_id = 567;
-        let result = partition.replicate_events(op_id, events.clone()).expect("Failed to replicate events");
+        let result = partition.replicate_events(op_id, events.as_slice()).expect("Failed to replicate events");
         assert!(result.success);
         assert_eq!(op_id, result.op_id);
         assert_eq!(4, result.highest_event_counter);
