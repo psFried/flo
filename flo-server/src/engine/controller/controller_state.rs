@@ -223,6 +223,7 @@ pub mod mock {
     use super::*;
     use std::collections::BTreeMap;
     use engine::controller::SystemEventKind;
+    use engine::controller::system_event::ClusterMember;
 
     #[derive(Debug)]
     pub struct MockControllerState {
@@ -367,9 +368,12 @@ pub mod mock {
 
     impl MockSystemEvent {
         pub fn with_any_data(counter: EventCounter, term: Term, segment: SegmentNum, file_offset: usize) -> MockSystemEvent {
-            use engine::controller::system_event::ClusterMemberJoining;
+            use test_utils::addr;
 
-            let data = SystemEventKind::NewClusterMemberJoining(ClusterMemberJoining { new_member: 45678 });
+            let data = SystemEventKind::NewClusterMemberJoining(ClusterMember {
+                id: 45678,
+                address: addr("127.0.0.1:3000")
+            });
             MockSystemEvent::with_data(counter, term, segment, file_offset, data)
         }
 

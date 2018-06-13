@@ -3,6 +3,7 @@ use rmp_serde::decode::Error;
 use protocol::{Term, FloInstanceId};
 use event::{FloEvent, EventData, FloEventId, EventCounter, OwnedFloEvent, ActorId, Timestamp};
 use engine::event_stream::partition::PersistentEvent;
+use std::net::SocketAddr;
 
 #[derive(Debug, PartialEq)]
 pub struct SystemEvent<E: FloEvent> {
@@ -106,29 +107,29 @@ impl <E: FloEvent> FloEvent for SystemEvent<E> {
     }
 }
 
-
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-pub struct ClusterMemberJoining {
-    pub new_member: FloInstanceId,
+pub struct ClusterMember {
+    pub id: FloInstanceId,
+    pub address: SocketAddr,
 }
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-pub struct ClusterMemberJoined {
+pub struct InitialClusterMembership {
+    peers: Vec<ClusterMember>,
+}
+
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+pub struct PartitionAssigned {
     pub new_member: FloInstanceId,
     pub new_member_partition_num: ActorId,
 }
 
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-pub struct ClusterMemberOnline {
-    pub member: FloInstanceId,
-    pub member_partition_num: ActorId,
-}
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub enum SystemEventKind {
-    NewClusterMemberJoining(ClusterMemberJoining),
-    NewClusterMemberJoined(ClusterMemberJoined),
-    ExistingMemberOnline(ClusterMemberOnline),
+    ClusterInitialized(InitialClusterMembership),
+    NewClusterMemberJoining(ClusterMember),
+    NewClusterMemberJoined(PartitionAssigned),
 }
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
@@ -159,10 +160,13 @@ mod test {
 
     #[test]
     fn system_event_data_is_serialized_and_deserialized_inside_system_event() {
+        use ::test_utils::addr;
+
         let data = SystemEventData {
             term: 33,
-            kind: SystemEventKind::NewClusterMemberJoining(ClusterMemberJoining {
-                new_member: 555,
+            kind: SystemEventKind::NewClusterMemberJoining(ClusterMember {
+                id: 555,
+                address: addr("127.0.0.1:3000"),
             })
         };
         let id = FloEventId::new(3, 4);
