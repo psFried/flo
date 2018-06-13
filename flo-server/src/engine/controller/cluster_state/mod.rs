@@ -84,8 +84,8 @@ impl ClusterManager {
            peer_connection_manager: Box<PeerConnectionManager>) -> ClusterManager {
 
         let mut initialization_peers = starting_peer_addresses.iter().cloned().collect::<HashSet<_>>();
-        for peer in persistent.cluster_members.iter() {
-            initialization_peers.insert(peer.address);
+        for peer_address in persistent.get_all_peer_addresses() {
+            initialization_peers.insert(*peer_address);
         }
 
         ClusterManager {
@@ -197,7 +197,7 @@ impl ClusterManager {
         self.persistent.current_term <= request_term &&
                 self.last_applied <= request.last_log_index &&
                 self.last_applied_term <= request.last_log_term &&
-                self.persistent.cluster_members.iter().any(|peer| peer.id == request.candidate_id)
+                self.persistent.contains_peer(request.candidate_id)
     }
 
     fn count_vote_response(&mut self, peer_id: FloInstanceId) -> bool {
@@ -206,7 +206,7 @@ impl ClusterManager {
         } else {
             trace!("Not counting duplicate vote from peer_id: {:?}", peer_id);
         }
-        let peer_count = self.persistent.cluster_members.len() as ActorId;
+        let peer_count = self.persistent.get_voting_peer_count();
         let vote_count = self.votes_received.len() as ActorId;
         let required_count = ::engine::minimum_required_votes_for_majority(peer_count);
         let election_won = vote_count >= required_count;
@@ -310,9 +310,9 @@ impl ConsensusProcessor for ClusterManager {
         }
         let connection = connection.unwrap();
 
-        if !self.persistent.cluster_members.contains(&upgrade.peer) {
+        if !self.persistent.contains_peer(upgrade.peer.id) {
             self.persistent.modify(|state| {
-                state.cluster_members.insert(upgrade.peer.clone());
+                state.add_peer(&upgrade.peer);
             }).expect(STATE_UPDATE_FAILED);
 
             let mut lock = self.shared.write().unwrap();
@@ -467,7 +467,7 @@ impl ConsensusProcessor for ClusterManager {
         let ClusterManager { ref mut primary_state, ref mut connection_manager, ref persistent, ..} = *self;
 
         primary_state.as_mut().map(|state| {
-            let all_peers = persistent.cluster_members.iter().map(|peer| peer.id);
+            let all_peers = persistent.get_all_peer_ids().cloned();
             state.send_append_entries(controller_state, connection_manager.as_mut(), all_peers);
         });
     }
@@ -515,7 +515,7 @@ pub fn init_cluster_consensus_processor(persistent_state: FilePersistedState,
     let ClusterOptions{ peer_addresses, event_loop_handles, election_timeout_millis, this_instance_address, .. } = options;
 
     let outgoing_connection_creator = OutgoingConnectionCreatorImpl::new(event_loop_handles, engine_ref);
-    let peer_connection_manager = PeerConnections::new(peer_addresses.clone(), Box::new(outgoing_connection_creator), &persistent_state.cluster_members);
+    let peer_connection_manager = PeerConnections::new(peer_addresses.clone(), Box::new(outgoing_connection_creator), persistent_state.get_all_peers());
 
     let state = ClusterManager::new(election_timeout_millis,
                                     peer_addresses,
@@ -564,8 +564,8 @@ mod test {
         let subject_id = subject.persistent.this_instance_id;
 
         subject.persistent.modify(|state| {
-            state.cluster_members.insert(peer_1.clone());
-            state.cluster_members.insert(peer_2.clone());
+            state.add_peer(&peer_1);
+            state.add_peer(&peer_2);
             state.current_term = 5;
         }).unwrap();
         subject.current_primary = Some(subject_id);
@@ -609,8 +609,8 @@ mod test {
         let mut subject = create_cluster_manager(vec![peer_1.address, peer_2.address], temp_dir.path(), connection_manager.boxed_ref());
 
         subject.persistent.modify(|state| {
-            state.cluster_members.insert(peer_1.clone());
-            state.cluster_members.insert(peer_2.clone());
+            state.add_peer(&peer_1);
+            state.add_peer(&peer_2);
             state.current_term = 5;
         }).unwrap();
         subject.last_applied = 99;
@@ -673,8 +673,8 @@ mod test {
         let mut subject = create_cluster_manager(vec![peer_1.address, peer_2.address], temp_dir.path(), connection_manager.boxed_ref());
 
         subject.persistent.modify(|state| {
-            state.cluster_members.insert(peer_1.clone());
-            state.cluster_members.insert(peer_2.clone());
+            state.add_peer(&peer_1);
+            state.add_peer(&peer_2);
             state.current_term = 5;
         }).unwrap();
         subject.last_applied = 99;
@@ -736,8 +736,8 @@ mod test {
         subject.persistent.modify(|state| {
             let this_id = state.this_instance_id;
             state.voted_for = Some(this_id);
-            state.cluster_members.insert(peer_1.clone());
-            state.cluster_members.insert(peer_2.clone());
+            state.add_peer(&peer_1);
+            state.add_peer(&peer_2);
             state.current_term = 5;
         }).unwrap();
         subject.last_applied = 99;
@@ -787,8 +787,8 @@ mod test {
         subject.persistent.modify(|state| {
             let this_id = state.this_instance_id;
             state.voted_for = Some(this_id);
-            state.cluster_members.insert(peer_1.clone());
-            state.cluster_members.insert(peer_2.clone());
+            state.add_peer(&peer_1);
+            state.add_peer(&peer_2);
             state.current_term = 5;
         }).unwrap();
         subject.state = State::Voted;
@@ -836,10 +836,10 @@ mod test {
         let mut subject = create_cluster_manager(vec![peer_1.address, peer_2.address], temp_dir.path(), connection_manager.boxed_ref());
 
         subject.persistent.modify(|state| {
-            state.cluster_members.insert(peer_1.clone());
-            state.cluster_members.insert(peer_2.clone());
-            state.cluster_members.insert(peer_3.clone());
-            state.cluster_members.insert(peer_4.clone());
+            state.add_peer(&peer_1);
+            state.add_peer(&peer_2);
+            state.add_peer(&peer_3);
+            state.add_peer(&peer_4);
             state.current_term = 5;
         }).unwrap();
         subject.state = State::Voted;
@@ -878,8 +878,8 @@ mod test {
         subject.persistent.modify(|state| {
             let this_id = state.this_instance_id;
             state.voted_for = Some(this_id);
-            state.cluster_members.insert(peer_1.clone());
-            state.cluster_members.insert(peer_2.clone());
+            state.add_peer(&peer_1);
+            state.add_peer(&peer_2);
             state.current_term = 5;
         }).unwrap();
         subject.state = State::Voted;
@@ -927,10 +927,10 @@ mod test {
         let mut subject = create_cluster_manager(vec![peer_1.address, peer_2.address], temp_dir.path(), connection_manager.boxed_ref());
 
         subject.persistent.modify(|state| {
-            state.cluster_members.insert(peer_1.clone());
-            state.cluster_members.insert(peer_2.clone());
-            state.cluster_members.insert(peer_3.clone());
-            state.cluster_members.insert(peer_4.clone());
+            state.add_peer(&peer_1);
+            state.add_peer(&peer_2);
+            state.add_peer(&peer_3);
+            state.add_peer(&peer_4);
             state.current_term = 5;
         }).unwrap();
         subject.state = State::Follower;
@@ -972,8 +972,8 @@ mod test {
             subject.last_applied = request.last_log_index - 2;
             subject.persistent.modify(|state| {
                 state.current_term = request.term - 1;
-                state.cluster_members.insert(candidate.clone());
-                state.cluster_members.insert(peer_2.clone());
+                state.add_peer(&candidate);
+                state.add_peer(&peer_2);
             }).unwrap();
 
             VoteExpectation {
@@ -991,8 +991,8 @@ mod test {
             subject.last_applied = request.last_log_index;
             subject.persistent.modify(|state| {
                 state.current_term = request.term + 1; // my current term is greater
-                state.cluster_members.insert(candidate.clone());
-                state.cluster_members.insert(peer_2.clone());
+                state.add_peer(&candidate);
+                state.add_peer(&peer_2);
             }).unwrap();
 
             VoteExpectation {
@@ -1012,8 +1012,8 @@ mod test {
             subject.last_applied = request.last_log_index;
             subject.persistent.modify(|state| {
                 state.current_term = request.term;
-                state.cluster_members.insert(candidate.clone());
-                state.cluster_members.insert(peer_2.clone());
+                state.add_peer(&candidate);
+                state.add_peer(&peer_2);
             }).unwrap();
 
             VoteExpectation {
@@ -1032,7 +1032,7 @@ mod test {
             subject.persistent.modify(|state| {
                 state.current_term = request.term - 1;
                 // peer_1 is not a known member
-                state.cluster_members.insert(peer_2.clone());
+                state.add_peer(&peer_2);
             }).unwrap();
 
             VoteExpectation {
@@ -1051,8 +1051,8 @@ mod test {
             subject.persistent.modify(|state| {
                 state.voted_for = None;
                 state.current_term = request.term;
-                state.cluster_members.insert(candidate.clone());
-                state.cluster_members.insert(peer_2.clone());
+                state.add_peer(&candidate);
+                state.add_peer(&peer_2);
             }).unwrap();
 
             VoteExpectation {
@@ -1071,8 +1071,8 @@ mod test {
             subject.persistent.modify(|state| {
                 state.voted_for = Some(peer_2.id); // already voted for peer 2
                 state.current_term = request.term;
-                state.cluster_members.insert(candidate.clone());
-                state.cluster_members.insert(peer_2.clone());
+                state.add_peer(&candidate);
+                state.add_peer(&peer_2);
             }).unwrap();
 
             VoteExpectation {
@@ -1090,8 +1090,8 @@ mod test {
             subject.last_applied = request.last_log_index;
             subject.persistent.modify(|state| {
                 state.current_term = request.term - 1;
-                state.cluster_members.insert(candidate.clone());
-                state.cluster_members.insert(peer_2.clone());
+                state.add_peer(&candidate);
+                state.add_peer(&peer_2);
             }).unwrap();
 
             VoteExpectation {
@@ -1110,8 +1110,8 @@ mod test {
             subject.persistent.modify(|state| {
                 state.current_term = request.term - 1;
                 state.voted_for = Some(state.this_instance_id);
-                state.cluster_members.insert(candidate.clone());
-                state.cluster_members.insert(peer_2.clone());
+                state.add_peer(&candidate);
+                state.add_peer(&peer_2);
             }).unwrap();
 
             VoteExpectation {

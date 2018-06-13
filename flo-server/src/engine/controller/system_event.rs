@@ -3,7 +3,7 @@ use rmp_serde::decode::Error;
 use protocol::{Term, FloInstanceId};
 use event::{FloEvent, EventData, FloEventId, EventCounter, OwnedFloEvent, ActorId, Timestamp};
 use engine::event_stream::partition::PersistentEvent;
-use std::net::SocketAddr;
+use engine::controller::controller_messages::Peer;
 
 #[derive(Debug, PartialEq)]
 pub struct SystemEvent<E: FloEvent> {
@@ -107,18 +107,13 @@ impl <E: FloEvent> FloEvent for SystemEvent<E> {
     }
 }
 
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-pub struct ClusterMember {
-    pub id: FloInstanceId,
-    pub address: SocketAddr,
-}
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct InitialClusterMembership {
-    peers: Vec<ClusterMember>,
+    pub peers: Vec<Peer>,
 }
 
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize)]
 pub struct PartitionAssigned {
     pub new_member: FloInstanceId,
     pub new_member_partition_num: ActorId,
@@ -128,7 +123,7 @@ pub struct PartitionAssigned {
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub enum SystemEventKind {
     ClusterInitialized(InitialClusterMembership),
-    NewClusterMemberJoining(ClusterMember),
+    NewClusterMemberJoining(Peer),
     NewClusterMemberJoined(PartitionAssigned),
 }
 
@@ -164,7 +159,7 @@ mod test {
 
         let data = SystemEventData {
             term: 33,
-            kind: SystemEventKind::NewClusterMemberJoining(ClusterMember {
+            kind: SystemEventKind::NewClusterMemberJoining(Peer {
                 id: 555,
                 address: addr("127.0.0.1:3000"),
             })

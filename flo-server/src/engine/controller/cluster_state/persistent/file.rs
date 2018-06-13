@@ -1,56 +1,9 @@
-use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Seek, SeekFrom};
-use std::collections::HashSet;
 
-use event::ActorId;
-use protocol::Term;
-use protocol::flo_instance_id::{self, FloInstanceId};
-use engine::controller::controller_messages::Peer;
-use super::SharedClusterState;
+use super::PersistentClusterState;
 
-/// Holds all the cluster state that we want to survive a reboot.
-/// We always persist the `FloInstanceId` because we prefer that to be stable across reboots. We do _not_ want to persist
-/// the `SocketAddr` for the server, though, since that may well change after a restart, depending on environment.
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-pub struct PersistentClusterState {
-    pub current_term: Term,
-    pub voted_for: Option<FloInstanceId>,
-    pub this_instance_id: FloInstanceId,
-    pub this_partition_num: Option<ActorId>,
-    pub cluster_members: HashSet<Peer>,
-}
-
-impl PersistentClusterState {
-    /// called during system startup to initialize the shared cluster state that will be available to all the connection handlers
-    pub fn initialize_shared_state(&self, this_address: Option<SocketAddr>) -> SharedClusterState {
-
-        SharedClusterState {
-            this_partition_num: self.this_partition_num,
-            this_instance_id: self.this_instance_id,
-            this_address,
-            system_primary: None, // we are still starting up, so we have no idea who's primary
-            peers: self.cluster_members.clone(),
-        }
-    }
-
-    pub fn generate_new() -> PersistentClusterState {
-        /*
-         TODO: generate new clusterState with a null FloInstanceId and have the primary assign the real one
-         Technically, there's a _very_ small chance that two separate instances could generate the same instance id.
-         The way around this is to have the system primary node just generate and assign all instance ids. This would
-         change the startup procedure significantly to account for that new step before the node enters a normal state
-        */
-        PersistentClusterState {
-            current_term: 0,
-            voted_for: None,
-            this_instance_id: flo_instance_id::generate_new(),
-            this_partition_num: None,
-            cluster_members: HashSet::new(),
-        }
-    }
-}
 
 /// Placeholder for a wrapper struct that will take care of persisting the state as it changes
 #[derive(Debug)]
@@ -124,8 +77,10 @@ impl ::std::ops::Deref for FilePersistedState {
 #[cfg(test)]
 mod test {
     use super::*;
+    use engine::controller::Peer;
     use tempdir::TempDir;
     use test_utils::addr;
+    use protocol::flo_instance_id;
 
     #[test]
     fn modifying_state_persists_changes() {
@@ -137,20 +92,9 @@ mod test {
         let mut subject = FilePersistedState::initialize(path.clone()).unwrap();
         subject.modify(|state| {
             state.current_term = 9;
-            state.cluster_members = [
-                Peer {
-                    id: flo_instance_id::generate_new(),
-                    address: addr("127.0.0.1:3456")
-                },
-                Peer {
-                    id: flo_instance_id::generate_new(),
-                    address: addr("[2001:873::1]:3000")
-                },
-                Peer {
-                    id: flo_instance_id::generate_new(),
-                    address: addr("127.0.0.1:456")
-                }
-            ].iter().cloned().collect();
+            state.add_peer(&Peer { id: flo_instance_id::generate_new(), address: addr("127.0.0.1:3456") });
+            state.add_peer(&Peer { id: flo_instance_id::generate_new(), address: addr("[2001:873::1]:3000") });
+            state.add_peer(&Peer { id: flo_instance_id::generate_new(), address: addr("127.0.0.1:456") });
         }).unwrap();
 
         let subject2 = FilePersistedState::initialize(path.clone()).unwrap();

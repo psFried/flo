@@ -3,7 +3,7 @@ use engine::ConnectionId;
 use engine::controller::{ConnectionRef, ControllerState, Peer};
 use engine::controller::peer_connection::OutgoingConnectionCreator;
 use protocol::FloInstanceId;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fmt::Debug;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
@@ -28,7 +28,7 @@ pub struct PeerConnections {
 }
 
 impl PeerConnections {
-    pub fn new(starting_peer_addresses: Vec<SocketAddr>, outgoing_connection_creator: Box<OutgoingConnectionCreator>, peers: &HashSet<Peer>) -> PeerConnections {
+    pub fn new(starting_peer_addresses: Vec<SocketAddr>, outgoing_connection_creator: Box<OutgoingConnectionCreator>, peers: Vec<Peer>) -> PeerConnections {
         let known_peers = peers.iter().map(|peer| {
             let connection = Connection::new(peer.address);
             (peer.id, connection)
@@ -299,7 +299,7 @@ mod test {
     }
 
     fn subject_with_connected_peers(peers: &[Peer], creator: MockOutgoingConnectionCreator) -> (PeerConnections, MockControllerState) {
-        let mut subject = PeerConnections::new(Vec::new(), creator.boxed(), &peers.iter().cloned().collect());
+        let mut subject = PeerConnections::new(Vec::new(), creator.boxed(), peers.to_owned());
         let mut controller_state = MockControllerState::new();
         subject.establish_connections(Instant::now(), &mut controller_state);
         for peer in peers {
@@ -371,7 +371,7 @@ mod test {
         let mut creator = MockOutgoingConnectionCreator::new();
         let (peer_connection, _rx) = creator.stub(peer_address);
 
-        let mut subject = PeerConnections::new(vec![peer_address], creator.boxed(), &HashSet::new());
+        let mut subject = PeerConnections::new(vec![peer_address], creator.boxed(), Vec::new());
 
         let mut controller_state = MockControllerState::new();
         let time = Instant::now();
@@ -400,9 +400,8 @@ mod test {
         };
         let mut creator = MockOutgoingConnectionCreator::new();
         creator.stub(peer_address);
-        let mut all_peers = HashSet::new();
-        all_peers.insert(peer.clone());
-        let subject = PeerConnections::new(Vec::new(), creator.boxed(), &all_peers);
+        let all_peers = vec![peer.clone()];
+        let subject = PeerConnections::new(Vec::new(), creator.boxed(), all_peers);
 
         assert!(subject.disconnected_peers.contains_key(&peer_address));
     }
@@ -413,7 +412,7 @@ mod test {
         let new_peers = vec![peer_address];
         let mut creator = MockOutgoingConnectionCreator::new();
         creator.stub(peer_address);
-        let mut subject = PeerConnections::new(new_peers, creator.boxed(), &HashSet::new());
+        let mut subject = PeerConnections::new(new_peers, creator.boxed(), Vec::new());
 
         let mut controller_state = MockControllerState::new();
         let time = Instant::now();
