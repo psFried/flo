@@ -64,7 +64,16 @@ impl PersistentClusterState {
             SystemEventKind::NewClusterMemberJoining(ref new_peer) => {
                 self.add_peer(new_peer);
             }
-            _ => {}
+            SystemEventKind::AssignPartition(ref assigned) => {
+                let peer_id = assigned.peer_id;
+                if !self.cluster_members.contains_key(&peer_id) {
+                    error!("Fatal error: AssignPartition event refers to an unknown peer_id, which indicates \
+                            that the system log is inconsistent! Offending event counter: {} term: {}, kind: \
+                            AssignPartition({:?}), current state: {:?}", counter, term, assigned, self);
+                    panic!("System controller encountered a fatal error");
+                }
+                self.assigned_partitions.insert(assigned.partition_num, peer_id);
+            }
         }
         self.last_applied = self.last_applied.max(counter);
         self.current_term = self.current_term.max(term);
@@ -103,6 +112,36 @@ mod test {
     use super::*;
     use event::{OwnedFloEvent, FloEventId, time};
     use test_utils::addr;
+    use std::collections::HashSet;
+
+    #[test]
+    #[should_panic]
+    fn applying_partition_assigned_panics_when_peer_is_not_a_cluster_member() {
+        let mut subject = subject_with_initial_peers(initial_peers());
+        let event = sys_event(2, 7, SystemEventKind::AssignPartition(PartitionAssigned {
+            peer_id: flo_instance_id::generate_new(),
+            partition_num: 1,
+        }));
+        subject.apply_system_event(&event);
+    }
+
+    #[test]
+    fn applying_partition_assigned_adds_member_to_the_assigned_members_map() {
+        let initial_peers = initial_peers();
+        let mut subject = subject_with_initial_peers(initial_peers.clone());
+        assert!(subject.assigned_partitions.is_empty());
+
+        let event = sys_event(2, 7, SystemEventKind::AssignPartition(PartitionAssigned {
+            peer_id: initial_peers[0].id,
+            partition_num: 3,
+        }));
+        subject.apply_system_event(&event);
+
+        assert_eq!(1, subject.assigned_partitions.len());
+        assert_eq!(Some(initial_peers[0].id), subject.assigned_partitions.get(&3).cloned());
+        assert_eq!(2, subject.last_applied);
+        assert_eq!(7, subject.current_term);
+    }
 
     #[test]
     fn applying_new_member_joining_adds_a_cluster_member() {

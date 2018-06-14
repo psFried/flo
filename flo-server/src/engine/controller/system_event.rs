@@ -115,8 +115,8 @@ pub struct InitialClusterMembership {
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize)]
 pub struct PartitionAssigned {
-    pub new_member: FloInstanceId,
-    pub new_member_partition_num: ActorId,
+    pub peer_id: FloInstanceId,
+    pub partition_num: ActorId,
 }
 
 
@@ -124,7 +124,7 @@ pub struct PartitionAssigned {
 pub enum SystemEventKind {
     ClusterInitialized(InitialClusterMembership),
     NewClusterMemberJoining(Peer),
-    NewClusterMemberJoined(PartitionAssigned),
+    AssignPartition(PartitionAssigned),
 }
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
