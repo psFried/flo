@@ -116,9 +116,7 @@ impl ClusterManager {
             new_commit_index, term, self.last_applied, last_commit_index);
         controller_state.set_commit_index(new_commit_index);
 
-        // while self.last_applied < new_commit_index {
-        //     let event = controller_state.get_next_event(self.last_applied)
-        // }
+        // TODO: apply system events
     }
 
     fn transition_state(&mut self, new_state: State) {
@@ -310,7 +308,7 @@ impl ConsensusProcessor for ClusterManager {
         }
         let connection = connection.unwrap();
 
-        if !self.persistent.contains_peer(upgrade.peer.id) {
+        if controller_state.get_commit_index() == 0 && !self.persistent.contains_peer(upgrade.peer.id) {
             self.persistent.modify(|state| {
                 state.add_peer(&upgrade.peer);
             }).expect(STATE_UPDATE_FAILED);
@@ -436,7 +434,7 @@ impl ConsensusProcessor for ClusterManager {
         }));
     }
 
-    fn append_entries_response_received(&mut self, connection_id: ConnectionId, response: AppendEntriesResponse, _controller_state: &mut ControllerState) {
+    fn append_entries_response_received(&mut self, connection_id: ConnectionId, response: AppendEntriesResponse, controller_state: &mut ControllerState) {
         let from = self.connection_manager.get_peer_id(connection_id);
         if from.is_none() {
             error!("Received AppendEntriesResponse from connection_id: {}, which is not a peer connection. Received: {:?}", connection_id, response);
@@ -444,8 +442,9 @@ impl ConsensusProcessor for ClusterManager {
         }
         let peer_id = from.unwrap();
         let response_term = response.term;
+        let current_term = self.persistent.current_term;
 
-        if response_term > self.persistent.current_term {
+        if response_term > current_term {
             // Apparently, we've fallen behind! This instance is no longer primary, so we need to step down if we haven't already
             warn!("Peer: {:?} responded with term: {}, which is higher than the current term: {}. Stepping down as primary",
                   peer_id, response_term, self.persistent.current_term);
@@ -455,11 +454,16 @@ impl ConsensusProcessor for ClusterManager {
             self.persistent.modify(|state| {
                 state.current_term = response_term;
             }).expect(STATE_UPDATE_FAILED)
-        }
 
-        if response.success.is_some() && self.is_primary() {
-            let _peer_counter = response.success.unwrap();
-            // TODO: confirm entries with partition impl
+        } else if response.success.is_some() && self.is_primary() {
+            // cannot be a success if response_term > current_term
+            let peer_counter = response.success.unwrap();
+            let new_commit_index = controller_state.system_event_ack(peer_id, peer_counter);
+            if let Some(index) = new_commit_index {
+                self.update_commit_index(index, current_term, controller_state);
+            }
+        } else {
+            error!("Received invalid response from peer_id: {}, on connection_id: {} - {:?}", peer_id, connection_id, response);
         }
     }
 

@@ -45,6 +45,7 @@ pub trait ControllerState {
     fn get_current_file_offset(&self) -> (SegmentNum, usize);
 
     fn add_system_replication_node(&mut self, peer: FloInstanceId);
+    fn system_event_ack(&mut self, peer: FloInstanceId, event: EventCounter) -> Option<EventCounter>;
 
     /// Called only by the clusterState and only when this instance is a follower
     fn replicate_system_events(&mut self, events: &[OwnedFloEvent]) -> io::Result<ReplicationResult>;
@@ -183,6 +184,7 @@ impl ControllerState for ControllerStateImpl {
             }
         }
     }
+
     fn get_next_event<'a>(&'a mut self, start_after: EventCounter) -> Option<io::Result<SystemEventRef<'a>>> {
         self.get_next_entry(start_after.saturating_sub(1)).map(|index_entry| {
             self.read_event(index_entry).map(|system_event| {
@@ -205,6 +207,10 @@ impl ControllerState for ControllerStateImpl {
 
     fn add_system_replication_node(&mut self, peer: FloInstanceId) {
         self.system_partition.add_replication_node(peer);
+    }
+
+    fn system_event_ack(&mut self, peer: FloInstanceId, event: EventCounter) -> Option<EventCounter> {
+        self.system_partition.events_acknowledged(peer, event)
     }
 
     fn replicate_system_events(&mut self, events: &[OwnedFloEvent]) -> io::Result<ReplicationResult> {
@@ -321,6 +327,10 @@ pub mod mock {
         }
 
         fn add_system_replication_node(&mut self, _peer: FloInstanceId) {
+            unimplemented!()
+        }
+
+        fn system_event_ack(&mut self, _peer: u64, _event: u64) -> Option<u64> {
             unimplemented!()
         }
 

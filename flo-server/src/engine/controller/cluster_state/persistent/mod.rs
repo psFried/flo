@@ -54,29 +54,32 @@ impl PersistentClusterState {
     pub fn apply_system_event<F: FloEvent>(&mut self, event: &SystemEvent<F>) {
         let counter = event.counter();
         let term = event.term();
+        self.current_term = self.current_term.max(term);
 
-        match event.deserialized_data.kind {
-            SystemEventKind::ClusterInitialized(ref initial_membership) => {
-                for peer in initial_membership.peers.iter() {
-                    self.add_peer(peer);
+        if counter > self.last_applied {
+            match event.deserialized_data.kind {
+                SystemEventKind::ClusterInitialized(ref initial_membership) => {
+                    for peer in initial_membership.peers.iter() {
+                        self.add_peer(peer);
+                    }
                 }
-            }
-            SystemEventKind::NewClusterMemberJoining(ref new_peer) => {
-                self.add_peer(new_peer);
-            }
-            SystemEventKind::AssignPartition(ref assigned) => {
-                let peer_id = assigned.peer_id;
-                if !self.cluster_members.contains_key(&peer_id) {
-                    error!("Fatal error: AssignPartition event refers to an unknown peer_id, which indicates \
+                SystemEventKind::NewClusterMemberJoining(ref new_peer) => {
+                    self.add_peer(new_peer);
+                }
+                SystemEventKind::AssignPartition(ref assigned) => {
+                    let peer_id = assigned.peer_id;
+                    if !self.cluster_members.contains_key(&peer_id) {
+                        error!("Fatal error: AssignPartition event refers to an unknown peer_id, which indicates \
                             that the system log is inconsistent! Offending event counter: {} term: {}, kind: \
                             AssignPartition({:?}), current state: {:?}", counter, term, assigned, self);
-                    panic!("System controller encountered a fatal error");
+                        panic!("System controller encountered a fatal error");
+                    }
+                    self.assigned_partitions.insert(assigned.partition_num, peer_id);
                 }
-                self.assigned_partitions.insert(assigned.partition_num, peer_id);
             }
+            self.last_applied = counter;
         }
-        self.last_applied = self.last_applied.max(counter);
-        self.current_term = self.current_term.max(term);
+
     }
 
     pub fn add_peer(&mut self, peer: &Peer) {

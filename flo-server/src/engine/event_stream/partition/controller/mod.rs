@@ -146,11 +146,11 @@ impl PartitionImpl {
         self.commit_manager.add_member(peer);
     }
 
-    pub fn events_acknowledged(&mut self, peer_id: FloInstanceId, counter: EventCounter) {
+    pub fn events_acknowledged(&mut self, peer_id: FloInstanceId, counter: EventCounter) -> Option<EventCounter> {
         if !self.is_current_primary() {
             debug!("partition: {} ignoring events_acknowledged from peer: {} with counter: {} because this instance is no longer primary",
                     self.partition_num, peer_id, counter);
-            return;
+            return None;
         }
 
         let new_index = self.commit_manager.acknowledgement_received(peer_id, counter);
@@ -160,6 +160,7 @@ impl PartitionImpl {
             self.pending_produce_operations.commit_success(committed_event);
             self.consumer_manager.notify_committed();
         }
+        new_index
     }
 
     pub fn event_stream_name(&self) -> &str {
