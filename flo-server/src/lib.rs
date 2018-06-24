@@ -16,7 +16,14 @@ extern crate clap;
 extern crate log4rs;
 extern crate num_cpus;
 extern crate byteorder;
+extern crate rand;
+extern crate rmp;
+extern crate rmp_serde;
 
+#[macro_use]
+extern crate serde_derive;
+extern crate serde;
+extern crate serde_json;
 
 #[cfg(test)]
 extern crate env_logger;
@@ -24,6 +31,7 @@ extern crate env_logger;
 extern crate tempdir;
 
 
+pub mod flo_io;
 pub mod logging;
 pub mod server;
 pub mod embedded;
@@ -31,3 +39,6 @@ pub mod engine;
 pub mod event_loops;
 pub mod channels;
 pub mod atomics;
+
+#[cfg(test)]
+pub mod test_utils;

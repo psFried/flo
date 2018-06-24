@@ -1,9 +1,10 @@
+pub mod controller;
 mod segment;
 mod index;
 mod event_reader;
 mod ops;
-pub mod controller;
 
+use std::net::SocketAddr;
 use std::fmt::{self, Debug, Display};
 use std::path::{Path, PathBuf};
 use std::collections::VecDeque;
@@ -11,9 +12,10 @@ use std::sync::{Arc, RwLock};
 use std::thread;
 use std::io;
 
-use atomics::{AtomicCounterReader, AtomicBoolReader};
+use atomics::{AtomicCounterReader, AtomicBoolReader, AtomicBoolWriter};
 use engine::ConnectionId;
 use engine::event_stream::{EventStreamOptions, HighestCounter};
+use engine::controller::SystemPartitionSender;
 use protocol::{ProduceEvent};
 use event::{EventCounter, ActorId};
 use self::segment::SegmentReader;
@@ -29,9 +31,13 @@ pub use self::ops::{OpType,
                     ConsumeResponseReceiver,
                     ConsumeResponder,
                     ConsumerNotifier,
-};
+                    ReplicateOperation,
+                    ReplicateResultReceiver,
+                    ReplicateResultSender,
+                    ReplicationResult};
 pub use self::event_reader::{PartitionReader, EventFilter};
 pub use self::segment::PersistentEvent;
+pub use self::index::IndexEntry;
 
 pub type PartitionSender = ::std::sync::mpsc::Sender<Operation>;
 pub type PartitionReceiver = ::std::sync::mpsc::Receiver<Operation>;
@@ -41,7 +47,7 @@ pub fn create_partition_channels() -> (PartitionSender, PartitionReceiver) {
 }
 
 #[derive(Debug)]
-pub struct PartitionSendError(pub Operation);
+pub struct PartitionSendError;
 
 pub type PartitionSendResult = Result<(), PartitionSendError>;
 
@@ -60,6 +66,18 @@ fn get_events_file(partition_dir: &Path, segment_num: SegmentNum) -> PathBuf {
 pub struct SegmentNum(u64);
 
 impl SegmentNum {
+
+    /// Used to create SegmentNum(0) for testing purposes. Normally, creating such instances would only be possible from within the partition module
+    #[cfg(test)]
+    pub fn new_unset() -> SegmentNum {
+        SegmentNum(0)
+    }
+
+    #[cfg(test)]
+    pub fn new(num: u64) -> SegmentNum {
+        SegmentNum(num)
+    }
+
     /// returns true if this segment is non-zero
     pub fn is_set(&self) -> bool {
         self.0 > 0
@@ -117,6 +135,7 @@ impl SharedReaderRefsMut {
     }
 }
 
+#[derive(Clone)]
 pub struct SharedReaderRefs {
     inner: Arc<RwLock<VecDeque<SegmentReader>>>
 }
@@ -132,6 +151,13 @@ impl Debug for SharedReaderRefs {
 }
 
 impl SharedReaderRefs {
+    #[cfg(test)]
+    pub fn empty() -> SharedReaderRefs {
+        SharedReaderRefs {
+            inner: Arc::new(RwLock::new(VecDeque::new()))
+        }
+    }
+
     pub fn get_next_segment(&self, previous: SegmentNum) -> Option<SegmentReader> {
         let locked = self.inner.read().unwrap();
         locked.front().map(|r| r.segment_id).and_then(|front_segment| {
@@ -157,25 +183,69 @@ impl SharedReaderRefs {
 pub type AsyncProduceResult = Result<ProduceResponseReceiver, PartitionSendError>;
 pub type AsyncConsumeResult = Result<ConsumeResponseReceiver, PartitionSendError>;
 
+#[derive(Debug)]
+pub struct PartitionRefMut {
+    status_writer: AtomicBoolWriter,
+    partition_ref: PartitionRef,
+}
+
+impl PartitionRefMut {
+    pub fn set_writable(&mut self) {
+        self.status_writer.set(true);
+    }
+
+    pub fn set_read_only(&mut self) {
+        self.status_writer.set(false);
+    }
+
+    pub fn partition_num(&self) -> ActorId {
+        self.partition_ref.partition_num()
+    }
+
+    pub fn clone_ref(&self) -> PartitionRef {
+        self.partition_ref.clone()
+    }
+}
+
+#[derive(Debug, Clone)]
+enum SenderType {
+    Normal(PartitionSender),
+    System(SystemPartitionSender)
+}
+
 #[derive(Clone, Debug)]
 pub struct PartitionRef {
     event_stream_name: String,
     partition_num: ActorId,
     highest_event_counter: AtomicCounterReader,
     primary: AtomicBoolReader,
-    sender: PartitionSender,
+    primary_server_address: Arc<RwLock<Option<SocketAddr>>>,
+    sender: SenderType,
 }
 
 impl PartitionRef {
-    pub fn new(event_stream_name: String, partition_num: ActorId, highest_event_counter: AtomicCounterReader, primary: AtomicBoolReader, sender: PartitionSender) -> PartitionRef {
+    pub fn new(event_stream_name: String, partition_num: ActorId, highest_event_counter: AtomicCounterReader, primary: AtomicBoolReader, sender: PartitionSender, primary_server_address: Arc<RwLock<Option<SocketAddr>>>) -> PartitionRef {
         PartitionRef {
-            event_stream_name: event_stream_name,
-            partition_num: partition_num,
-            highest_event_counter: highest_event_counter,
-            primary: primary,
-            sender: sender,
+            event_stream_name,
+            partition_num,
+            highest_event_counter,
+            primary,
+            sender: SenderType::Normal(sender),
+            primary_server_address,
         }
     }
+
+    pub fn system(event_stream_name: String, partition_num: ActorId, highest_event_counter: AtomicCounterReader, primary: AtomicBoolReader, sender: SystemPartitionSender, primary_server_address: Arc<RwLock<Option<SocketAddr>>>) -> PartitionRef {
+        PartitionRef {
+            event_stream_name,
+            partition_num,
+            highest_event_counter,
+            primary,
+            sender: SenderType::System(sender),
+            primary_server_address,
+        }
+    }
+
     pub fn partition_num(&self) -> ActorId {
         self.partition_num
     }
@@ -184,16 +254,25 @@ impl PartitionRef {
         self.highest_event_counter.load_relaxed() as EventCounter
     }
 
+    pub fn get_highest_counter_reader(&self) -> AtomicCounterReader {
+        self.highest_event_counter.clone()
+    }
+
     pub fn is_primary(&self) -> bool {
         self.primary.get_relaxed()
     }
 
-    pub fn event_stream_name(&self) -> &str {
-        &self.event_stream_name
+    pub fn get_primary_server_addr(&self) -> Option<SocketAddr> {
+        let value_ref = self.primary_server_address.read().unwrap();
+        value_ref.clone()
     }
 
-    pub fn consume(&mut self, connection_id: ConnectionId, _op_id: u32, notifier: Box<ConsumerNotifier>, filter: EventFilter, start: EventCounter) -> AsyncConsumeResult {
-        let (op, rx) = Operation::consume(connection_id, notifier, filter, start);
+    pub fn event_stream_name(&self) -> &str {
+        self.event_stream_name.as_str()
+    }
+
+    pub fn consume(&mut self, connection_id: ConnectionId, _op_id: u32, notifier: Box<ConsumerNotifier>, filter: EventFilter, start: EventCounter, consume_uncommmitted: bool) -> AsyncConsumeResult {
+        let (op, rx) = Operation::consume(connection_id, notifier, filter, start, consume_uncommmitted);
         self.send(op).map(|()| rx)
     }
 
@@ -211,10 +290,20 @@ impl PartitionRef {
         self.send(Operation::tick())
     }
 
-    fn send(&mut self, op: Operation) -> PartitionSendResult {
-        self.sender.send(op).map_err(|err| {
-            PartitionSendError(err.0)
-        })
+    pub fn send(&mut self, op: Operation) -> PartitionSendResult {
+        match self.sender {
+            SenderType::Normal(ref mut sender) => {
+                sender.send(op).map_err(|_| {
+                    PartitionSendError
+                })
+            }
+            SenderType::System(ref mut sender) => {
+                sender.send(op.into()).map_err(|_| {
+                    PartitionSendError
+                })
+            }
+        }
+
     }
 }
 
@@ -223,28 +312,50 @@ impl PartitionRef {
 pub fn initialize_existing_partition(partition_num: ActorId,
                                      event_stream_data_dir: &Path,
                                      event_stream_options: &EventStreamOptions,
-                                     status_reader: AtomicBoolReader,
-                                     highest_counter: HighestCounter) -> io::Result<PartitionRef> {
+                                     highest_counter: HighestCounter,
+                                     start_writable: bool) -> io::Result<PartitionRefMut> {
+
+    // This will be the starting value, which will be used, even prior to determining
+    // the system primary. So, we only set this to true when running in standalone mode
+    // (no cluster). Otherwise, we'll start it off as `false` and flip it later,
+    // once we are in touch with the system primary
+    let status_writer = AtomicBoolWriter::with_value(start_writable);
+    let primary_addr = Arc::new(RwLock::new(None));
 
     let partition_data_dir = get_partition_data_dir(event_stream_data_dir, partition_num);
-    let partition_impl = PartitionImpl::init_existing(partition_num, partition_data_dir, event_stream_options, status_reader, highest_counter)?;
-    run_partition(partition_impl)
+    let partition_impl = PartitionImpl::init_existing(partition_num, partition_data_dir, event_stream_options, status_writer.reader(), highest_counter)?;
+
+    run_partition(partition_impl, primary_addr).map(|partition_ref| {
+        PartitionRefMut {
+            status_writer,
+            partition_ref,
+        }
+    })
 }
 
 pub fn initialize_new_partition(partition_num: ActorId,
                                 event_stream_data_dir: &Path,
                                 event_stream_options: &EventStreamOptions,
-                                status_reader: AtomicBoolReader,
-                                highest_counter: HighestCounter) -> io::Result<PartitionRef> {
+                                highest_counter: HighestCounter,
+                                start_writable: bool) -> io::Result<PartitionRefMut> {
+
+    let status_writer = AtomicBoolWriter::with_value(start_writable);
+    let primary_addr = Arc::new(RwLock::new(None));
 
     let partition_data_dir = get_partition_data_dir(event_stream_data_dir, partition_num);
-    let partition_impl = PartitionImpl::init_new(partition_num, partition_data_dir, &event_stream_options, status_reader, highest_counter)?;
-    run_partition(partition_impl)
+    let partition_impl = PartitionImpl::init_new(partition_num, partition_data_dir, &event_stream_options, status_writer.reader(), highest_counter)?;
+    run_partition(partition_impl, primary_addr).map(|partition_ref| {
+        PartitionRefMut {
+            status_writer,
+            partition_ref,
+        }
+    })
+
 }
 
-pub fn run_partition(partition_impl: PartitionImpl) -> io::Result<PartitionRef> {
+pub fn run_partition(partition_impl: PartitionImpl, primary_server_addr: Arc<RwLock<Option<SocketAddr>>>) -> io::Result<PartitionRef> {
     let partition_num = partition_impl.partition_num();
-    let event_counter_reader = partition_impl.event_counter_reader();
+    let commit_index_reader = partition_impl.commit_index_reader();
     let primary_status_reader = partition_impl.primary_status_reader();
     let event_stream_name = partition_impl.event_stream_name().to_owned();
     let (tx, rx) = create_partition_channels();
@@ -253,7 +364,7 @@ pub fn run_partition(partition_impl: PartitionImpl) -> io::Result<PartitionRef> 
     // drop the join handle and just let the thread go on its own
     // Failures will be detected by the channels used to communicate with the partition
     thread::Builder::new().name(thread_name).spawn(move || {
-        info!("Starting partition: {} of event stream: '{}'", &partition_impl.event_stream_name(), partition_num);
+        info!("Starting partition: {} of event stream: '{}'", partition_num, &partition_impl.event_stream_name());
 
         let mut partition_controller = partition_impl;
 
@@ -274,7 +385,13 @@ pub fn run_partition(partition_impl: PartitionImpl) -> io::Result<PartitionRef> 
               fsync_result);
     })?;
 
-    Ok(PartitionRef::new(event_stream_name, partition_num, event_counter_reader, primary_status_reader,tx))
+    let partition = PartitionRef::new(event_stream_name,
+                                      partition_num,
+                                      commit_index_reader,
+                                      primary_status_reader,
+                                      tx,
+                                      primary_server_addr);
+    Ok(partition)
 }
 
 fn get_partition_thread_name(event_stream_name: &str, partition_num: ActorId) -> String {

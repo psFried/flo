@@ -5,7 +5,10 @@ authors = ["pfried <philipsfried@gmail.com>"]
 
 [dependencies]
 flo-event = { path = "../flo-event" }
+bitflags = "1.0"
 log = "0.3"
-nom = "2.0"
+nom = "2.2.1"
 byteorder = "1"
+chrono = "^0.4.0"
+rand = "0.3"
 

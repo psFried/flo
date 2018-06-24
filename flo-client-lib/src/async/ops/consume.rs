@@ -5,7 +5,7 @@ use std::io;
 use futures::{Future, Async, Poll, Stream};
 
 use event::{VersionVector, OwnedFloEvent};
-use protocol::{ProtocolMessage, NewConsumerStart, CONSUME_UNLIMITED};
+use protocol::{ProtocolMessage, NewConsumerStart, ConsumerFlags, CONSUME_UNLIMITED};
 use async::{AsyncConnection, ErrorType, ClientProtocolMessage};
 use async::ops::{SendMessage, SendError, AwaitResponse, AwaitResponseError, RequestResponse};
 use ::Event;
@@ -28,6 +28,7 @@ impl <D: Debug> Consume<D> {
         let op_id = connection.next_op_id();
         let consumer_start = NewConsumerStart {
             op_id: op_id,
+            options: ConsumerFlags::default(),
             version_vector: version_vec.snapshot(),
             max_events: event_limit.unwrap_or(CONSUME_UNLIMITED),
             namespace: namespace.clone(),

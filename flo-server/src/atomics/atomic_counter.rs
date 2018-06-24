@@ -28,16 +28,26 @@ impl AtomicCounterWriter {
         old + amount
     }
 
-    /// sets the new value, only if it is greater than the current value
-    pub fn set_if_greater(&mut self, new_value: usize) {
+    /// sets the new value, only if it is greater than the current value. Returns true if the value was updated, and
+    /// otherwise false
+    pub fn set_if_greater(&mut self, new_value: usize) -> bool {
         let current = self.inner.load(Ordering::SeqCst);
         if new_value > current {
             self.inner.store(new_value, Ordering::SeqCst);
+            true
+        } else {
+            false
         }
     }
 
     pub fn fetch_add(&mut self, amount: usize, ordering: Ordering) -> usize {
         self.inner.fetch_add(amount, ordering)
+    }
+
+    /// returns the current value of the counter using relaxed ordering since it's guaranteed that there is only one Writer
+    #[allow(unused_mut)]
+    pub fn get(&self) -> usize {
+        self.inner.load(Ordering::Relaxed)
     }
 
     /// creates a reader for the value. The reader is only able to read the value, and can never mutate it

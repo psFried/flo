@@ -20,7 +20,7 @@ use event::{FloEventId, ActorId, VersionVector, OwnedFloEvent};
 use codec::EventCodec;
 use self::recv::MessageRecvStream;
 use self::send::MessageSendSink;
-use self::ops::{ProduceOne, ProduceAll, EventToProduce, Consume, Handshake};
+use self::ops::{ProduceOne, ProduceAll, EventToProduce, Consume, Handshake, SetEventStream};
 
 
 pub use self::tcp_connect::{tcp_connect, tcp_connect_with, AsyncTcpClientConnect};
@@ -89,6 +89,14 @@ impl <D: Debug> AsyncConnection<D> {
     /// this function does not actually query the state, but just returns the result from the last query or handshake.
     pub fn current_stream(&self) -> Option<&CurrentStreamState> {
         self.inner.current_stream.as_ref()
+    }
+
+    /// Sets the event stream to use with this connection. If unset, then the default stream configured in the server will
+    /// be used. If the returned future completed successfully, then the connection will use the given event stream for all
+    /// operations from this point forward, and `current_steam` will return a `CurrentStreamState` corresponding to the given
+    /// stream.
+    pub fn set_event_stream<S: Into<String>>(self, new_stream: S) -> SetEventStream<D> {
+        SetEventStream::new(self, new_stream.into())
     }
 
     /// Produce a single event on the stream and await acknowledgement that it was persisted. Returns a future that resolves
@@ -379,27 +387,27 @@ mod test {
     #[test]
     fn produce_all_produces_multiple_events_in_sequence() {
         let expected_sent = vec![
-            ProtocolMessage::ProduceEvent(ProduceEvent {
-                op_id: 1,
-                partition: 1,
-                namespace: "/foo".to_owned(),
-                parent_id: None,
-                data: Vec::new(),
-            }),
-            ProtocolMessage::ProduceEvent(ProduceEvent {
-                op_id: 2,
-                partition: 2,
-                namespace: "/bar".to_owned(),
-                parent_id: None,
-                data: Vec::new(),
-            }),
-            ProtocolMessage::ProduceEvent(ProduceEvent {
-                op_id: 3,
-                partition: 3,
-                namespace: "/baz".to_owned(),
-                parent_id: None,
-                data: Vec::new(),
-            })
+            ProtocolMessage::ProduceEvent(ProduceEvent::with_crc(
+                1,
+                1,
+                "/foo".to_owned(),
+                None,
+                Vec::new(),
+            )),
+            ProtocolMessage::ProduceEvent(ProduceEvent::with_crc(
+                2,
+                2,
+                "/bar".to_owned(),
+                None,
+                Vec::new(),
+            )),
+            ProtocolMessage::ProduceEvent(ProduceEvent::with_crc(
+                3,
+                3,
+                "/baz".to_owned(),
+                None,
+                Vec::new(),
+            ))
         ];
         let to_recv = vec![
             ProtocolMessage::AckEvent(EventAck{
@@ -485,12 +493,14 @@ mod test {
                 PartitionStatus {
                     partition_num: 1,
                     head: 7,
-                    primary: true
+                    primary: true,
+                    primary_server_address: None,
                 },
                 PartitionStatus {
                     partition_num: 2,
                     head: 5,
                     primary: false,
+                    primary_server_address: None,
                 }
             ],
         })];
@@ -508,11 +518,13 @@ mod test {
                     partition_num: 1,
                     head: 7,
                     writable: true,
+                    primary_server_addr: None,
                 },
                 PartitionState {
                     partition_num: 2,
                     head: 5,
-                    writable: false
+                    writable: false,
+                    primary_server_addr: None,
                 }
             ]
         };
@@ -565,22 +577,22 @@ mod test {
 
         let to_receive = vec![
             ProtocolMessage::CursorCreated(CursorInfo{ op_id: consume_op_id, batch_size: 1 }),
-            ProtocolMessage::ReceiveEvent(OwnedFloEvent {
-                id: FloEventId::new(3, 4),
-                timestamp: time::from_millis_since_epoch(8),
-                parent_id: None,
-                namespace: "/foo/bar".to_owned(),
-                data: "first event data".as_bytes().to_owned(),
-            }),
+            ProtocolMessage::ReceiveEvent(OwnedFloEvent::new(
+                FloEventId::new(3, 4),
+                None,
+                time::from_millis_since_epoch(8),
+                "/foo/bar".to_owned(),
+                "first event data".as_bytes().to_owned(),
+            )),
             ProtocolMessage::EndOfBatch,
             ProtocolMessage::AwaitingEvents,
-            ProtocolMessage::ReceiveEvent(OwnedFloEvent {
-                id: FloEventId::new(3, 5),
-                timestamp: time::from_millis_since_epoch(9),
-                parent_id: Some(FloEventId::new(3, 4)),
-                namespace: "/foo/bar".to_owned(),
-                data: "second event data".as_bytes().to_owned(),
-            }),
+            ProtocolMessage::ReceiveEvent(OwnedFloEvent::new(
+                FloEventId::new(3, 5),
+                Some(FloEventId::new(3, 4)),
+                time::from_millis_since_epoch(9),
+                "/foo/bar".to_owned(),
+                "second event data".as_bytes().to_owned(),
+            )),
         ];
         let receiver = MockReceiveStream::will_produce(to_receive);
         let (sender, mut send_verify) = MockSendStream::new();
@@ -601,6 +613,7 @@ mod test {
         let expected_sent = vec![
             ProtocolMessage::NewStartConsuming(NewConsumerStart {
                 op_id: consume_op_id,
+                options: Default::default(),
                 version_vector: vec![FloEventId::new(1, 2), FloEventId::new(2, 8), FloEventId::new(3, 4)],
                 max_events: 2,
                 namespace: "/foo/*".to_owned(),

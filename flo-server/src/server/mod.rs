@@ -1,42 +1,54 @@
-mod flo_io;
 mod server_options;
-
-use futures::{Stream, Sink, Future};
-use tokio_core::net::{TcpStream, TcpListener};
-
-use event_loops;
 
 use std::net::{SocketAddr, Ipv4Addr, SocketAddrV4};
 use std::io;
+use tokio_core::reactor::Remote;
+use tokio_core::net::{TcpStream, TcpListener};
+use futures::Stream;
+
+use engine::{ControllerOptions,
+             EngineRef,
+             ClusterOptions,
+             start_controller};
+use engine::connection_handler::create_connection_control_channels;
+use engine::controller::ConnectionRef;
+use engine::event_stream::EventStreamOptions;
+use flo_io::create_connection_handler;
+use event_loops;
 
 pub use self::server_options::{ServerOptions, MemoryLimit, MemoryUnit};
 
+const ONE_GB: usize = 1024 * 1024 * 1024;
 
-
-pub fn run(options: ServerOptions) -> io::Result<()> {
-    #[allow(deprecated)]
-    use tokio_core::io::Io;
-    use engine::{ControllerOptions,
-                     start_controller,
-                     system_stream_name,
-                     create_client_channels,
-                     ConnectionHandler};
-    use engine::event_stream::EventStreamOptions;
-    use self::flo_io::{ProtocolMessageStream, ServerMessageStream};
-
-    const ONE_GB: usize = 1024 * 1024 * 1024;
+pub fn run(mut options: ServerOptions) -> io::Result<()> {
 
     let (join_handle, mut event_loop_handles) = event_loops::spawn_event_loop_threads(options.max_io_threads).unwrap();
+
+    let this_address = options.this_instance_address.take();
+    let peer_addresses = options.cluster_addresses.take();
+
+    let cluster_options = this_address.map(|server_addr| {
+        let peers = peer_addresses.unwrap();
+        ClusterOptions {
+            election_timeout_millis: options.election_timeout_millis,
+            heartbeat_interval_millis: options.heartbeat_interval_millis,
+            this_instance_address: server_addr,
+            peer_addresses: peers,
+            event_loop_handles: event_loop_handles.clone(),
+        }
+    });
+    info!("Using {:?}", cluster_options);
 
     let controller_options = ControllerOptions {
         storage_dir: options.data_dir.clone(),
         default_stream_options: EventStreamOptions{
-            name: system_stream_name(),
+            name: "user".to_owned(),
             num_partitions: 1,
             event_retention: options.event_retention_duration,
             max_segment_duration: options.event_eviction_period,
             segment_max_size_bytes: ONE_GB,
         },
+        cluster_options,
     };
 
     let engine_ref = start_controller(controller_options, event_loop_handles.next_handle())?;
@@ -57,51 +69,35 @@ pub fn run(options: ServerOptions) -> io::Result<()> {
         incoming.map_err(|io_err| {
             error!("Error creating new connection: {:?}", io_err);
         }).for_each(move |(tcp_stream, client_addr): (TcpStream, SocketAddr)| {
-            tcp_stream.set_nodelay(true).map_err(|io_err| {
-                error!("Error setting NODELAY. Nagle yet lives!: {:?}", io_err);
-                ()
-            })?;
-            let client_engine_ref = engine_ref.clone();
-            let connection_id = client_engine_ref.next_connection_id();
-            let remote_handle = event_loop_handles.next_handle();
 
-            let (client_tx, client_rx) = create_client_channels();
-
-            info!("Opened connection_id: {} to address: {}", connection_id, client_addr);
-
-            remote_handle.spawn(move |client_handle| {
-
-                #[allow(deprecated)]
-                let (tcp_reader, tcp_writer) = tcp_stream.split();
-
-                let server_to_client = ServerMessageStream::new(connection_id, client_rx, tcp_writer);
-
-                let client_message_stream = ProtocolMessageStream::new(connection_id, tcp_reader);
-                let connection_handler = ConnectionHandler::new(
-                    connection_id,
-                    client_tx.clone(),
-                    client_engine_ref,
-                     client_handle.clone());
-
-                let client_to_server = connection_handler
-                        .send_all(client_message_stream)
-                        .map(|_| ());
-
-                client_to_server.select(server_to_client).then(move |res| {
-                    if let Err((err, _)) = res {
-                        warn!("Closing connection: {} due to err: {:?}", connection_id, err);
-                    }
-                    info!("Closed connection_id: {} to address: {}", connection_id, client_addr);
-                    Ok(())
-                })
-
-            });
-
-            Ok(())
+            handle_incoming_connection(&engine_ref, event_loop_handles.next_handle(), tcp_stream, client_addr)
         })
     });
 
     join_handle.join();
+    Ok(())
+}
+
+fn handle_incoming_connection(engine_ref: &EngineRef, remote_handle: Remote, tcp_stream: TcpStream, client_addr: SocketAddr) -> Result<(), ()> {
+    tcp_stream.set_nodelay(true).map_err(|io_err| {
+        error!("Error setting NODELAY. Nagle yet lives!: {:?}", io_err);
+        ()
+    })?;
+
+    let mut client_engine_ref = engine_ref.clone();
+    let connection_id = client_engine_ref.next_connection_id();
+    let (control_tx, control_rx) = create_connection_control_channels();
+    let connection_ref = ConnectionRef {
+        connection_id,
+        remote_address: client_addr,
+        control_sender: control_tx,
+    };
+    client_engine_ref.system_stream().incoming_connection_accepted(connection_ref);
+
+    remote_handle.spawn(move |client_handle| {
+        create_connection_handler(client_handle.clone(), client_engine_ref, connection_id, client_addr, tcp_stream, control_rx)
+    });
+
     Ok(())
 }
 

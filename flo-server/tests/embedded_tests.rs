@@ -9,6 +9,8 @@ extern crate chrono;
 
 extern crate log;
 
+mod test_utils;
+
 use std::fmt::Debug;
 use std::thread;
 use std::time::Duration;
@@ -16,6 +18,7 @@ use std::time::Duration;
 use tokio_core::reactor::Core;
 use futures::{Stream, Future};
 
+use test_utils::init_logger;
 use flo_server::embedded::{EmbeddedFloServer, ControllerOptions, EventStreamOptions, run_embedded_server};
 
 use flo_client_lib::{VersionVector, FloEventId, Event, EventCounter, ActorId};
@@ -30,8 +33,9 @@ fn codec() -> Box<EventCodec<EventData=String>> {
 }
 
 
+
 fn integration_test<F>(test_name: &'static str, stream_opts: EventStreamOptions, fun: F) where F: Fn(EmbeddedFloServer, Core) {
-    let _ = env_logger::init();
+    init_logger();
     println!("starting test: {}", test_name);
 
     let dir_name = test_name.replace("\\w", "-");
@@ -40,6 +44,7 @@ fn integration_test<F>(test_name: &'static str, stream_opts: EventStreamOptions,
     let controller_options = ControllerOptions {
         storage_dir: tmp_dir.path().to_owned(),
         default_stream_options: stream_opts,
+        cluster_options: None,
     };
     let reactor = Core::new().expect("failed to create reactor");
     let embedded_server = run_embedded_server(controller_options, reactor.remote()).expect("failed to run embedded server");
@@ -123,7 +128,7 @@ fn oldest_events_are_dropped_from_beginning_of_stream_after_time_based_expiratio
         }
 
         let start_time = ::std::time::Instant::now();
-        let until_all_expired = (retention_duration + segment_duration + chrono::Duration::milliseconds(250)).to_std().unwrap();
+        let until_all_expired = (retention_duration + segment_duration + chrono::Duration::milliseconds(3000)).to_std().unwrap();
         let mut first_event_id = FloEventId::new(1, 0);
         let mut vv = VersionVector::new();
         vv.set(first_event_id);

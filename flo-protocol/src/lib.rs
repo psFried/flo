@@ -4,17 +4,22 @@ extern crate nom;
 #[macro_use]
 extern crate log;
 
+#[macro_use]
+extern crate bitflags;
+
 extern crate flo_event as event;
 extern crate byteorder;
+extern crate chrono;
+extern crate rand;
 
 pub mod serializer;
-mod client;
+mod messages;
 
 use std::io::{self, Read, Write};
 use std::cmp;
 use std::fmt::{self, Debug};
 
-pub use self::client::*;
+pub use self::messages::*;
 use event::{FloEvent, OwnedFloEvent};
 
 pub const BUFFER_LENGTH: usize = 8 * 1024;
@@ -180,7 +185,7 @@ impl <T> MessageStream<T, OwnedFloEvent> where T: Read {
                     read_buffer.fill(io)?
                 };
                 let buffer_start_length = bytes.len();
-                match self::client::parse_any(bytes) {
+                match self::messages::parse_any(bytes) {
                     IResult::Done(remaining, message) => {
                         bytes_consumed += buffer_start_length - remaining.len();
                         trace!("Successful parse used {} bytes; got message: {:?}", bytes_consumed, message);

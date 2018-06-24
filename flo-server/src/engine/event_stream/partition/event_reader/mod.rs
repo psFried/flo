@@ -2,11 +2,12 @@ mod namespace;
 
 use std::io;
 
-use event::{FloEvent, ActorId};
+use event::{FloEvent, ActorId, EventCounter};
 
 use engine::ConnectionId;
 use engine::event_stream::partition::{SharedReaderRefs, SegmentNum};
 use engine::event_stream::partition::segment::{SegmentReader, PersistentEvent};
+use atomics::AtomicCounterReader;
 
 pub use self::namespace::NamespaceGlob;
 
@@ -38,26 +39,36 @@ pub struct PartitionReader {
     connection_id: ConnectionId,
     partition_num: ActorId,
     filter: EventFilter,
+    commit_index_reader: AtomicCounterReader,
     current_segment_reader: Option<SegmentReader>,
     segment_readers_ref: SharedReaderRefs,
     returned_error: bool,
+    next_buffer: Option<PersistentEvent>,
 }
 
 
 impl PartitionReader {
 
-    pub fn new(connection_id: ConnectionId, partition_num: ActorId, filter: EventFilter, current_reader: Option<SegmentReader>, segment_refs: SharedReaderRefs) -> PartitionReader {
+    pub fn new(connection_id: ConnectionId,
+               partition_num: ActorId,
+               filter: EventFilter,
+               current_reader: Option<SegmentReader>,
+               segment_refs: SharedReaderRefs,
+               commit_index_reader: AtomicCounterReader) -> PartitionReader {
+
         PartitionReader {
-            connection_id: connection_id,
-            partition_num: partition_num,
-            filter: filter,
+            connection_id,
+            partition_num,
+            filter,
+            commit_index_reader,
             current_segment_reader: current_reader,
             segment_readers_ref: segment_refs,
             returned_error: false,
+            next_buffer: None,
         }
     }
 
-    pub fn next_matching(&mut self) -> Option<io::Result<PersistentEvent>> {
+    pub fn read_next_uncommitted(&mut self) -> Option<io::Result<PersistentEvent>> {
         let mut next = self.read_next();
         while self.should_skip(&next) {
             next = self.read_next();
@@ -65,9 +76,67 @@ impl PartitionReader {
         next
     }
 
+    pub fn read_next_committed(&mut self) -> Option<io::Result<PersistentEvent>> {
+        let result = self.read_next_uncommitted();
+        let commit_index = self.commit_index_reader.load_relaxed() as EventCounter;
+        let buffer = match &result {
+            &Some(Ok(ref event)) if event.id().event_counter > commit_index => true,
+            _ => false,
+        };
+
+        if buffer {
+            // hold onto this event until later
+            let event = result.unwrap().unwrap();
+            self.next_buffer = Some(event);
+            None
+        } else {
+            result
+        }
+    }
+
+    pub fn set_to_beginning(&mut self) {
+        self.current_segment_reader = None;
+        self.reset();
+    }
+
+    pub fn set_to(&mut self, segment_num: SegmentNum, offset: usize) -> io::Result<()> {
+        if !segment_num.is_set() {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "Cannot set PartitionReader segment to 0"));
+        }
+        if self.current_reader_segment_id() != segment_num.0 {
+            let segment = self.segment_readers_ref.get_segment(segment_num)
+                    .ok_or_else(|| {
+                        io::Error::new(io::ErrorKind::InvalidInput, format!("No segment exists for {:?}", segment_num))
+                    })?; // return early if segment does not exist
+            self.current_segment_reader = Some(segment);
+        }
+        self.current_segment_reader.as_mut().unwrap().set_offset(offset);
+        self.reset();
+        Ok(())
+    }
+
+    pub fn get_current_file_offset(&self) -> (SegmentNum, usize) {
+        self.current_segment_reader.as_ref().map(|segment| {
+            (segment.segment_id, segment.current_offset())
+        }).unwrap_or((SegmentNum(0), 0))
+    }
+
+    pub fn into_iter_uncommitted(self) -> PartitionIterUncommitted {
+        PartitionIterUncommitted(self)
+    }
+
+    pub fn into_iter_committed(self) -> PartitionIterCommitted {
+        PartitionIterCommitted(self)
+    }
+
+    fn reset(&mut self) {
+        self.returned_error = false;
+        self.next_buffer = None;
+    }
+
     fn should_skip(&self, result: &Option<Result<PersistentEvent, io::Error>>) -> bool {
         if let Some(Ok(ref event)) = *result {
-            !self.filter.matches(event)
+            !event.is_deleted() && !self.filter.matches(event)
         } else {
             false
         }
@@ -86,6 +155,9 @@ impl PartitionReader {
     fn read_next(&mut self) -> Option<io::Result<PersistentEvent>> {
         if self.returned_error {
             return None;
+        } else if self.next_buffer.is_some() {
+            let next = self.next_buffer.take().unwrap();
+            return Some(Ok(next));
         }
 
         if self.current_reader_is_exhausted() {
@@ -112,11 +184,36 @@ impl PartitionReader {
     }
 }
 
-impl Iterator for PartitionReader {
+pub struct PartitionIterUncommitted(PartitionReader);
+
+impl Iterator for PartitionIterUncommitted {
     type Item = io::Result<PersistentEvent>;
 
-    fn next(&mut self) -> Option<Self::Item> {
-        self.next_matching()
+    fn next(&mut self) -> Option<<Self as Iterator>::Item> {
+        self.0.read_next_uncommitted()
+    }
+}
+
+impl Into<PartitionReader> for PartitionIterUncommitted {
+    fn into(self) -> PartitionReader {
+        self.0
+    }
+}
+
+
+pub struct PartitionIterCommitted(PartitionReader);
+
+impl Iterator for PartitionIterCommitted {
+    type Item = io::Result<PersistentEvent>;
+
+    fn next(&mut self) -> Option<<Self as Iterator>::Item> {
+        self.0.read_next_committed()
+    }
+}
+
+impl Into<PartitionReader> for PartitionIterCommitted {
+    fn into(self) -> PartitionReader {
+        self.0
     }
 }
 

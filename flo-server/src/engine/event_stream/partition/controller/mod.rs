@@ -1,5 +1,7 @@
 mod util;
 mod consumer_manager;
+mod commit_manager;
+mod pending_produce;
 
 use std::io;
 use std::collections::VecDeque;
@@ -8,28 +10,43 @@ use std::path::PathBuf;
 use chrono::{Duration};
 
 use atomics::{AtomicCounterWriter, AtomicCounterReader, AtomicBoolReader};
-use protocol::ProduceEvent;
-use event::{ActorId, FloEventId, EventCounter, FloEvent, Timestamp, time};
-use super::{SharedReaderRefsMut, Operation, OpType, ProduceOperation, ConsumeOperation, PartitionReader, EventFilter, SegmentNum};
+use protocol::{ProduceEvent, FloInstanceId};
+use event::{ActorId, FloEventId, EventCounter, FloEvent, EventData, Timestamp, time};
+use super::{SharedReaderRefs, SharedReaderRefsMut, Operation, OpType, ProduceOperation, ConsumeOperation, PartitionReader,
+            EventFilter, SegmentNum, ReplicateOperation, ReplicationResult};
 use super::segment::Segment;
 use super::index::{PartitionIndex, IndexEntry};
 use engine::event_stream::{EventStreamOptions, HighestCounter};
 use engine::ConnectionId;
 use self::util::get_segment_files;
 use self::consumer_manager::ConsumerManager;
+use self::commit_manager::CommitManager;
+use self::pending_produce::PendingProduceOperations;
 
 const FIRST_SEGMENT_NUM: SegmentNum = SegmentNum(1);
 
 pub struct PartitionImpl {
+    /// The name of the event stream that this partition is a member of. This is just here to make debugging _way_ easier.
     event_stream_name: String,
+    /// The partition number within this event stream
     partition_num: ActorId,
+    /// The directory used to store everything for this partition
     partition_dir: PathBuf,
+    /// The maximum size in bytes for any segment. This value may be exceeded when the size of a single event is larger than
+    /// the `max_segment_size`. In this case, you'll end up with a segment that includes just that one event
     max_segment_size: usize,
+    /// the maximum duration of any segment. Helps control the size of segments when there's relatively low frequency of events
+    /// added and a short TTL for events
     max_segment_duration: Duration,
+    /// The segments that make up this partition
     segments: VecDeque<Segment>,
+    /// A simple index that maps `EventCounter`s to a tuple of segment number and file offset
     index: PartitionIndex,
+    /// Shared EventCounter for all partitions in the event stream. Serves as a Lamport clock to help reason about relative
+    /// order of events across multiple partitions. Used to generate new `EventCounter`s when events are appended
     event_stream_highest_counter: HighestCounter,
-    partition_highest_counter: AtomicCounterWriter,
+    /// Whether this instance is the primary for this partition. This value is set by `FloController`, since it requires
+    /// consensus to modify which instance is primary for a partition.
     primary: AtomicBoolReader,
 
     /// new segments each have a reader added here. The readers are then accessed as needed by the EventReader
@@ -37,6 +54,12 @@ pub struct PartitionImpl {
 
     /// consumers each have a notifier added here
     consumer_manager: ConsumerManager,
+
+    /// determines when events are committed
+    commit_manager: CommitManager,
+
+    /// handles notifying producers when their events have been committed
+    pending_produce_operations: PendingProduceOperations,
 }
 
 impl PartitionImpl {
@@ -61,9 +84,11 @@ impl PartitionImpl {
             initialized_segments.push_front(segment);
             reader_refs.add(reader);
         }
+
+        //TODO: differentiate between highest committed and highest uncommitted when initializing existing partition
         let current_greatest_id = index.greatest_event_counter();
         highest_counter.set_if_greater(current_greatest_id);
-        let partition_id_counter = AtomicCounterWriter::with_value(current_greatest_id as usize);
+        let partition_commit_counter = AtomicCounterWriter::with_value(current_greatest_id as usize);
 
         // TODO: factor out a more legit method of timing and logging perf stats
         let init_time = start_time.elapsed();
@@ -84,10 +109,11 @@ impl PartitionImpl {
             segments: initialized_segments,
             index: index,
             event_stream_highest_counter: highest_counter,
-            partition_highest_counter: partition_id_counter,
+            commit_manager: CommitManager::new(partition_commit_counter),
             primary: status_reader,
             reader_refs: reader_refs,
             consumer_manager: ConsumerManager::new(),
+            pending_produce_operations: PendingProduceOperations::new(partition_num),
         })
     }
 
@@ -108,19 +134,49 @@ impl PartitionImpl {
             segments: VecDeque::with_capacity(4),
             index: PartitionIndex::new(partition_num),
             event_stream_highest_counter: highest_counter,
-            partition_highest_counter: AtomicCounterWriter::zero(),
+            commit_manager: CommitManager::new(AtomicCounterWriter::with_value(0)),
             primary: status_reader,
             reader_refs: SharedReaderRefsMut::new(),
             consumer_manager: ConsumerManager::new(),
+            pending_produce_operations: PendingProduceOperations::new(partition_num),
         })
     }
 
-    pub fn event_stream_name(&self) -> &str {
-        &self.event_stream_name
+    pub fn add_replication_node(&mut self, peer: FloInstanceId) {
+        self.commit_manager.add_member(peer);
     }
 
-    pub fn event_counter_reader(&self) -> AtomicCounterReader {
-        self.partition_highest_counter.reader()
+    pub fn events_acknowledged(&mut self, peer_id: FloInstanceId, counter: EventCounter) -> Option<EventCounter> {
+        if !self.is_current_primary() {
+            debug!("partition: {} ignoring events_acknowledged from peer: {} with counter: {} because this instance is no longer primary",
+                    self.partition_num, peer_id, counter);
+            return None;
+        }
+
+        let new_index = self.commit_manager.acknowledgement_received(peer_id, counter);
+        if let Some(committed_event) = new_index {
+            // This acknowledgement has caused a new event to be commmitted. Notify the producers of the successful operations
+            // and also notify any consumers of committed events
+            self.pending_produce_operations.commit_success(committed_event);
+            self.consumer_manager.notify_committed();
+        }
+        new_index
+    }
+
+    pub fn event_stream_name(&self) -> &str {
+        self.event_stream_name.as_str()
+    }
+
+    pub fn get_highest_uncommitted_event(&self) -> EventCounter {
+        self.index.greatest_event_counter()
+    }
+
+    pub fn commit_index_reader(&self) -> AtomicCounterReader {
+        self.commit_manager.get_commit_index_reader()
+    }
+
+    pub fn get_commit_index(&self) -> EventCounter {
+        self.commit_manager.get_commit_index()
     }
 
     pub fn primary_status_reader(&self) -> AtomicBoolReader {
@@ -129,6 +185,14 @@ impl PartitionImpl {
 
     pub fn partition_num(&self) -> ActorId {
         self.partition_num
+    }
+
+    pub fn stop_consumer(&mut self, connection_id: ConnectionId) {
+        self.consumer_manager.remove(connection_id);
+    }
+
+    pub fn is_current_primary(&self) -> bool {
+        self.primary.get_relaxed()
     }
 
     pub fn process(&mut self, operation: Operation) -> io::Result<()> {
@@ -145,7 +209,11 @@ impl PartitionImpl {
                 self.handle_consume(connection_id, consume_op)
             }
             OpType::StopConsumer => {
-                self.consumer_manager.remove(connection_id);
+                self.stop_consumer(connection_id);
+                Ok(())
+            }
+            OpType::Replicate(rep) => {
+                self.handle_replicate(rep);
                 Ok(())
             }
             OpType::Tick => {
@@ -165,6 +233,131 @@ impl PartitionImpl {
         }
     }
 
+    // returns unit, since we have to send a result back to the connection handler, regardless of outcome
+    fn handle_replicate(&mut self, ReplicateOperation{op_id, client_sender, events, ..}: ReplicateOperation) {
+        // TODO: ensure that prev_event_counter and prev_event_term are checked for system event replication
+        // TODO: think about handling empty `events` vec. maybe best to handle that in the connection handler?
+        // TODO: ensure that we are in Follower status and that the events came from the leader
+        let result = self.replicate_events(op_id, events.as_slice());
+        let response = result.unwrap_or_else(|io_err| {
+            let head = self.index.greatest_event_counter();
+            error!("Error handling replicate operation with op_id: {}, io error: '{}', sending fail response with head: {}", op_id, io_err, head);
+            ReplicationResult {
+                op_id,
+                success: false,
+                highest_event_counter: head,
+            }
+        });
+        let _ = client_sender.send(response);
+    }
+
+    pub fn update_commit_index(&mut self, new_commit_index: EventCounter) {
+        self.commit_manager.update_commit_index(new_commit_index);
+    }
+
+    /// persists events in this partition. Panics if `events` is empty
+    pub fn replicate_events<F: FloEvent>(&mut self, op_id: u32, events: &[F]) -> io::Result<ReplicationResult> {
+        let commit_index = self.commit_manager.get_commit_index();
+
+        // ignore any events with id.event_counter < commit_index
+        // We don't bother checking CRCs for these, since they are already committed
+        let first_repl_event_index = events.iter().position(|e| e.id().event_counter > commit_index);
+        if first_repl_event_index.is_none() {
+            // All the events in this message have already been committed, so just return our current commit index
+            return Ok(ReplicationResult {
+                op_id,
+                success: true, // success = true because the log is consistent. We just happen to have all these entries already
+                highest_event_counter: self.index.greatest_event_counter(),
+            });
+        }
+
+        let index_of_first_uncommitted = first_repl_event_index.unwrap();
+        // now we may still skip events that are uncommitted if the event id and crc matches what we already have in the log
+        // so we'll check these new events against what we already have to see if they match. This will return a slice of events to append
+        // checking the events against the ones we already have could result in an error, so we may return early here
+        let (invalidate_start_counter, events_to_replicate) = self.check_events_to_replicate_against_existing(&events[index_of_first_uncommitted..])?;
+
+        // if any uncommitted events had a different crc, then mark that event and all the events that come after it as deleted
+        for start_of_invalid_events in invalidate_start_counter {
+            self.invalidate_uncommitted_events(start_of_invalid_events)?;
+        }
+
+        // at this point, we should be in a state where the last non-deleted event in the log is the same as the previous event info in the message
+        // append entries starting at `index_of_first_to_replicate`
+        if !events_to_replicate.is_empty() {
+            let id_of_first_replicated = events_to_replicate[0].id().event_counter;
+            self.append_replicated_events(events_to_replicate)?; // return early if the actual write fails
+
+            self.notify_consumers_events_appended(id_of_first_replicated);
+        }
+        Ok(ReplicationResult{
+            op_id,
+            success: true,
+            highest_event_counter: self.index.greatest_event_counter(),
+        })
+    }
+
+    /// Checks a new sequence of events to replicate against the events that may already be persisted to see if we need to
+    /// either A, delete any existing uncommitted events because the new ones are different, or B, skip writing any of the
+    /// new events if we already have them persisted
+    fn check_events_to_replicate_against_existing<'a>(&mut self, to_replicate: &'a [impl FloEvent]) -> io::Result<(Option<EventCounter>, &'a [impl FloEvent])> {
+        let my_start_id = to_replicate[0].id().event_counter;
+        let my_reader = self.create_reader(0, EventFilter::All, my_start_id);
+        let mut index_of_first_to_replicate = 0;
+        let mut invalidate_start_counter: Option<EventCounter> = None;
+
+        for persisted_event_result in my_reader.into_iter_uncommitted() {
+            if index_of_first_to_replicate >= to_replicate.len() {
+                break; // There will be no work to do here
+            }
+
+            let persisted_event = persisted_event_result?; // return the io error if we failed to read the event we already have
+
+            let new_event = &to_replicate[index_of_first_to_replicate]; // safe since we check the index bounds above
+
+            if PartitionImpl::are_same_event(&persisted_event, new_event) {
+                // If the two events are the same, then we can skip persisting the new one
+                index_of_first_to_replicate += 1;
+            } else {
+                // if the two events are different, then it's because the uncommitted events that we have need to be deleted
+                // We'll start at this event and invalidate (mark deleted) it and every event that follows it
+                invalidate_start_counter = Some(persisted_event.id().event_counter);
+                break;
+            }
+        }
+
+        let events_to_replicate = &to_replicate[index_of_first_to_replicate..];
+        Ok((invalidate_start_counter, events_to_replicate))
+    }
+
+    fn append_replicated_events<E: FloEvent>(&mut self, events: &[E]) -> io::Result<()> {
+        if !events.is_empty() {
+            debug!("partition: {} replicating {} new events starting with event_counter: {}", self.partition_num, events.len(), events[0].id().event_counter)
+        }
+        for event in events {
+            self.append(event)?;
+        }
+        Ok(())
+    }
+
+    fn invalidate_uncommitted_events(&mut self, start_inclusive: EventCounter) -> io::Result<()> {
+        info!("Invalidating existing uncommitted events for partition: {}, starting with event_counter: {}",
+              self.partition_num, start_inclusive);
+        let reader = self.create_reader(0, EventFilter::All, start_inclusive - 1);
+
+        for event_result in reader.into_iter_uncommitted() {
+            let mut event = event_result?;
+            unsafe {
+                event.set_deleted();
+            }
+        }
+        Ok(())
+    }
+
+    fn are_same_event<E: FloEvent, N: FloEvent>(existing: &E, new: &N) -> bool {
+        existing.id() == new.id() && existing.get_or_compute_crc() == new.get_or_compute_crc()
+    }
+
     fn drop_segments_through_index(&mut self, segment_index: usize) {
         info!("Dropping first {} segment(s)", segment_index + 1);
         let PartitionImpl { ref mut segments, ref mut index, ref mut reader_refs, .. } = *self;
@@ -177,16 +370,36 @@ impl PartitionImpl {
         });
     }
 
-    fn handle_produce(&mut self, produce: ProduceOperation) -> io::Result<()> {
+    pub fn handle_produce(&mut self, produce: ProduceOperation) -> io::Result<()> {
         let ProduceOperation {client, op_id, events} = produce;
-        let result = self.append_all(events);
-        if let Err(e) = result.as_ref() {
-            error!("Failed to handle produce operation for op_id: {}, err: {:?}", op_id, e);
+        let result = self.verify_partition_is_primary().and_then(|()| {
+            self.append_all(events)
+        });
+
+        match result {
+            Ok(id) => {
+                if self.commit_manager.is_standalone() {
+                    // No biggie if the receiving end has hung up already. The operation will still be considered complete and successful
+                    let _ = client.send(Ok(id));
+                } else {
+                    self.pending_produce_operations.add(op_id, id.event_counter, client);
+                }
+            }
+            Err(io_err) => {
+                error!("Failed to handle produce operation for op_id: {}, err: {:?}", op_id, io_err);
+                let _ = client.send(Err(io_err));
+            }
         }
-        // No biggie if the receiving end has hung up already. The operation will still be considered complete and successful
-        // TODO: Consider logging this if the receiving end has hung up already?
-        let _ = client.send(result);
+        // TODO: separate out error that gets returned to connection handler so that we can also return an io::Error from this function if one occurs
         Ok(())
+    }
+
+    fn verify_partition_is_primary(&self) -> io::Result<()> {
+        if self.is_current_primary() {
+            Ok(())
+        } else {
+            Err(io::Error::new(io::ErrorKind::Other, "Not primary"))
+        }
     }
 
     fn append_all(&mut self, events: Vec<ProduceEvent>) -> io::Result<FloEventId> {
@@ -196,6 +409,9 @@ impl PartitionImpl {
 
         let timestamp = time::now();
         let mut event_counter = new_highest - event_count as u64;
+
+        // keep track of the first event that gets added, since this is what we pass to `notify_consumers_events_appended`
+        let first_event_id = event_counter;
         for produce_event in events {
             event_counter += 1;
             let event = EventToProduce {
@@ -207,14 +423,28 @@ impl PartitionImpl {
             self.append(&event)?;
         }
         debug!("partition: {} finished appending {} events ending with counter: {}", self.partition_num, event_count, event_counter);
-        // now increment our counter and notify consumers
-        self.partition_highest_counter.increment_and_get_relaxed(event_count);
+
+        // may update the commit index if we're in standalone mode, we we want this to be before the fence
+        self.commit_manager.events_written(new_highest);
+
+        // fence to make sure that events are actually done being saved prior to the notify, since
+        // consumers may then immediately read that region of memory
         ::std::sync::atomic::fence(::std::sync::atomic::Ordering::SeqCst);
-        self.consumer_manager.notify_uncommitted();
+
+        self.notify_consumers_events_appended(first_event_id);
         Ok(FloEventId::new(self.partition_num, event_counter))
     }
 
-    fn append(&mut self, event: &EventToProduce) -> io::Result<()> {
+    fn notify_consumers_events_appended(&mut self, first_event_added: EventCounter) {
+        if self.get_commit_index() >= first_event_added {
+           self.consumer_manager.notify_committed()
+        } else {
+            self.consumer_manager.notify_uncommitted()
+        }
+    }
+
+    /// Writes the event to disk and updates the index so that we know where it is
+    fn append<E: FloEvent>(&mut self, event: &E) -> io::Result<()> {
         use super::SegmentNum;
         use super::segment::AppendResult;
 
@@ -280,27 +510,41 @@ impl PartitionImpl {
         Ok(())
     }
 
+    pub fn get_shared_reader_refs(&self) -> SharedReaderRefs {
+        self.reader_refs.get_reader_refs()
+    }
+
+    pub fn get_head_position(&self) -> (SegmentNum, usize) {
+        self.segments.front().map(|s| {
+            (s.segment_num, s.head_position())
+        }).unwrap_or((SegmentNum(0), 0))
+    }
+
     fn current_segment_num(&self) -> SegmentNum {
         self.segments.front().map(|s| s.segment_num).unwrap_or(SegmentNum(0))
     }
 
-    fn handle_consume(&mut self, connection_id: ConnectionId, consume: ConsumeOperation) -> io::Result<()> {
-        let ConsumeOperation {client_sender, filter, start_exclusive, notifier} = consume;
+    pub fn handle_consume(&mut self, connection_id: ConnectionId, consume: ConsumeOperation) -> io::Result<()> {
+        let ConsumeOperation {client_sender, filter, start_exclusive, notifier, consume_uncommitted} = consume;
         let reader = self.create_reader(connection_id, filter, start_exclusive);
 
         // We don't really care if the receiving end has hung up already
         // but we don't want to actually add the notifier to the consumer manager in that case
         let result = client_sender.send(reader);
         if let Ok(_) = result {
-            self.consumer_manager.add_uncommitted(notifier);
+            if consume_uncommitted {
+                self.consumer_manager.add_uncommitted(notifier);
+            } else {
+                self.consumer_manager.add_committed(notifier);
+            }
         }
         Ok(())
     }
 
-    fn create_reader(&mut self, connection_id: ConnectionId, filter: EventFilter, start_exclusive: EventCounter) -> PartitionReader {
+    pub fn create_reader(&mut self, connection_id: ConnectionId, filter: EventFilter, start_exclusive: EventCounter) -> PartitionReader {
         let current_segment_num = self.current_segment_num();
-        let index_entry: Option<IndexEntry> = self.index.get_next_entry(start_exclusive);
-        let readers = self.reader_refs.get_reader_refs();
+        let index_entry: Option<IndexEntry> = self.get_next_index_entry(start_exclusive);
+        let readers = self.get_shared_reader_refs();
 
         let current_segment = match index_entry {
             Some(entry) => {
@@ -317,9 +561,18 @@ impl PartitionImpl {
             }
         };
 
-        PartitionReader::new(connection_id, self.partition_num, filter, current_segment, self.reader_refs.get_reader_refs())
+        let commit_index_reader = self.commit_index_reader();
+        PartitionReader::new(connection_id,
+                             self.partition_num,
+                             filter,
+                             current_segment,
+                             self.reader_refs.get_reader_refs(),
+                             commit_index_reader)
     }
 
+    pub fn get_next_index_entry(&self, previous: EventCounter) -> Option<IndexEntry> {
+        self.index.get_next_entry(previous)
+    }
 
 }
 
@@ -328,6 +581,24 @@ struct EventToProduce {
     id: FloEventId,
     ts: Timestamp,
     produce: ProduceEvent,
+}
+
+impl EventData for EventToProduce {
+    fn event_namespace(&self) -> &str {
+        self.produce.event_namespace()
+    }
+
+    fn event_parent_id(&self) -> Option<FloEventId> {
+        self.produce.event_parent_id()
+    }
+
+    fn event_data(&self) -> &[u8] {
+        self.produce.event_data()
+    }
+
+    fn get_precomputed_crc(&self) -> Option<u32> {
+        self.produce.get_precomputed_crc()
+    }
 }
 
 impl FloEvent for EventToProduce {
@@ -364,7 +635,8 @@ mod test {
     use futures::sync::oneshot;
 
     use super::*;
-    use protocol::ProduceEvent;
+    use event::{OwnedFloEvent, FloEventId, time::from_millis_since_epoch};
+    use protocol::{ProduceEvent, flo_instance_id};
     use engine::event_stream::partition::{ProduceOperation, EventFilter, PartitionReader};
     use engine::event_stream::{EventStreamOptions, HighestCounter};
     use engine::ConnectionId;
@@ -373,8 +645,171 @@ mod test {
     const PARTITION_NUM: ActorId = 1;
     const CONNECTION: ConnectionId = 55;
 
+    fn event_id(counter: EventCounter) -> FloEventId {
+        FloEventId::new(PARTITION_NUM, counter)
+    }
+
     #[test]
-    fn partition_impl_integration_test() {
+    fn events_are_replicated_from_a_peer_when_none_of_them_already_exist() {
+        let status = AtomicBoolWriter::with_value(true);
+        let options = EventStreamOptions {
+            name: "superduper".to_owned(),
+            num_partitions: 1,
+            event_retention: Duration::seconds(20),
+            max_segment_duration: Duration::seconds(5),
+            segment_max_size_bytes: 256,
+        };
+        let tempdir = TempDir::new("partition_persist_events_and_read_them_back").unwrap();
+
+        // Init a new partition and append a bunch of events in two groups
+        let mut partition = PartitionImpl::init_new(PARTITION_NUM,
+                                                    tempdir.path().to_owned(),
+                                                    &options,
+                                                    status.reader(),
+                                                    HighestCounter::zero()).unwrap();
+
+        let peer_1 = flo_instance_id::generate_new();
+        let peer_2 = flo_instance_id::generate_new();
+        let peer_3 = flo_instance_id::generate_new();
+        let peer_4 = flo_instance_id::generate_new();
+        partition.add_replication_node(peer_1);
+        partition.add_replication_node(peer_2);
+        partition.add_replication_node(peer_3);
+        partition.add_replication_node(peer_4);
+
+        let events = vec![
+            OwnedFloEvent::new(
+                event_id(1),
+                None,
+                from_millis_since_epoch(1),
+                "/foo/bar".to_owned(),
+                "the quick".to_owned().into_bytes(),
+            ),
+            OwnedFloEvent::new(
+                event_id(2),
+                None,
+                from_millis_since_epoch(3),
+                "/foo/bar".to_owned(),
+                "brown fox".to_owned().into_bytes(),
+            ),
+            OwnedFloEvent::new(
+                event_id(3),
+                None,
+                from_millis_since_epoch(5),
+                "/foo/bar".to_owned(),
+                "jumped over".to_owned().into_bytes(),
+            ),
+            OwnedFloEvent::new(
+                event_id(4),
+                None,
+                from_millis_since_epoch(7),
+                "/foo/bar".to_owned(),
+                "the lazy dog".to_owned().into_bytes(),
+            ),
+        ];
+
+        let op_id = 567;
+        let result = partition.replicate_events(op_id, events.as_slice()).expect("Failed to replicate events");
+        assert!(result.success);
+        assert_eq!(op_id, result.op_id);
+        assert_eq!(4, result.highest_event_counter);
+
+        let reader = partition.create_reader(0, EventFilter::All, 0);
+        let persisted_events = reader.into_iter_uncommitted().map(|e| {
+            e.expect("Failed to read event").to_owned_event()
+        }).collect::<Vec<_>>();
+        assert_eq!(events, persisted_events);
+    }
+
+    #[test]
+    fn events_are_committed_when_acknowledged_by_a_majority() {
+        let status = AtomicBoolWriter::with_value(true);
+        let options = EventStreamOptions {
+            name: "superduper".to_owned(),
+            num_partitions: 1,
+            event_retention: Duration::seconds(20),
+            max_segment_duration: Duration::seconds(5),
+            segment_max_size_bytes: 256,
+        };
+        let tempdir = TempDir::new("partition_persist_events_and_read_them_back").unwrap();
+
+        // Init a new partition and append a bunch of events in two groups
+        let mut partition = PartitionImpl::init_new(PARTITION_NUM,
+                                                    tempdir.path().to_owned(),
+                                                    &options,
+                                                    status.reader(),
+                                                    HighestCounter::zero()).unwrap();
+
+        let peer_1 = flo_instance_id::generate_new();
+        let peer_2 = flo_instance_id::generate_new();
+        let peer_3 = flo_instance_id::generate_new();
+        let peer_4 = flo_instance_id::generate_new();
+        partition.add_replication_node(peer_1);
+        partition.add_replication_node(peer_2);
+        partition.add_replication_node(peer_3);
+        partition.add_replication_node(peer_4);
+
+        let events = vec![
+            ProduceEvent::with_crc(
+                3,
+                PARTITION_NUM,
+                "/foo/bar".to_owned(),
+                None,
+                "the quick".to_owned().into_bytes(),
+            ),
+            ProduceEvent::with_crc(
+                3,
+                PARTITION_NUM,
+                "/foo/bar".to_owned(),
+                None,
+                "brown fox".to_owned().into_bytes(),
+            ),
+            ProduceEvent::with_crc(
+                3,
+                PARTITION_NUM,
+                "/foo/bar".to_owned(),
+                None,
+                "jumped over".to_owned().into_bytes(),
+            ),
+            ProduceEvent::with_crc(
+                3,
+                PARTITION_NUM,
+                "/foo/bar".to_owned(),
+                None,
+                "the lazy dog".to_owned().into_bytes(),
+            ),
+        ];
+        partition.append_all(events).expect("failed to append events");
+        assert_eq!(0, partition.get_commit_index());
+
+        let mut reader = partition.create_reader(3, EventFilter::All, 0);
+        assert!(reader.read_next_committed().is_none());
+
+        for _ in 0..4 {
+            reader.read_next_uncommitted().expect("read uncommitted returned None").expect("failed to read uncommitted");
+        }
+
+        partition.events_acknowledged(peer_1, 2);
+        assert_eq!(0, partition.get_commit_index());
+
+        partition.events_acknowledged(peer_3, 3);
+        assert_eq!(2, partition.get_commit_index()); // 3 of 5 acknowledge at least event 2
+
+        partition.events_acknowledged(peer_2, 4);
+        assert_eq!(3, partition.get_commit_index());
+
+        reader.set_to_beginning();
+
+        for _ in 0..3 {
+            reader.read_next_committed().expect("read committed returned None").expect("failed to read committed");
+        }
+
+        let last_event = reader.read_next_committed();
+        assert!(last_event.is_none());
+    }
+
+    #[test]
+    fn events_are_persisted_and_can_be_read_after_reinitializing_in_the_same_directory() {
         let _ = ::env_logger::init();
 
         let status = AtomicBoolWriter::with_value(true);
@@ -401,40 +836,40 @@ mod test {
                 client: client_tx,
                 op_id: 3,
                 events: vec![
-                    ProduceEvent {
-                        op_id: 3,
-                        partition: PARTITION_NUM,
-                        namespace: "/foo/bar".to_owned(),
-                        parent_id: None,
-                        data: "the quick".to_owned().into_bytes(),
-                    },
-                    ProduceEvent {
-                        op_id: 3,
-                        partition: PARTITION_NUM,
-                        namespace: "/foo/bar".to_owned(),
-                        parent_id: None,
-                        data: "brown fox".to_owned().into_bytes(),
-                    }
+                    ProduceEvent::with_crc(
+                        3,
+                        PARTITION_NUM,
+                        "/foo/bar".to_owned(),
+                        None,
+                        "the quick".to_owned().into_bytes(),
+                    ),
+                    ProduceEvent::with_crc(
+                        3,
+                        PARTITION_NUM,
+                        "/foo/bar".to_owned(),
+                        None,
+                        "brown fox".to_owned().into_bytes(),
+                    )
                 ],
             };
 
             partition.handle_produce(produce).unwrap();
 
             let mut reader: PartitionReader = partition.create_reader(CONNECTION, EventFilter::All, 0);
-            let event = reader.next_matching().expect("read_next returned None").expect("read_next returned error");
+            let event = reader.read_next_uncommitted().expect("read_next returned None").expect("read_next returned error");
             assert_eq!(b"the quick", event.data());
-            let event2 = reader.next_matching().expect("read_next returned None").expect("read_next returned error");
+            let event2 = reader.read_next_uncommitted().expect("read_next returned None").expect("read_next returned error");
             assert_eq!(b"brown fox", event2.data());
-            assert!(reader.next().is_none());
+            assert!(reader.read_next_uncommitted().is_none());
 
             let moar_events = (0..100).map(|_| {
-                ProduceEvent {
-                    op_id: 4,
-                    partition: PARTITION_NUM,
-                    namespace: "/boo/hoo".to_owned(),
-                    parent_id: None,
-                    data: "stew".to_owned().into_bytes()
-                }
+                ProduceEvent::with_crc(
+                    4,
+                    PARTITION_NUM,
+                    "/boo/hoo".to_owned(),
+                    None,
+                    "stew".to_owned().into_bytes()
+                )
             }).collect::<Vec<_>>();
 
             let (client_tx, _client_rx) = oneshot::channel();
@@ -446,7 +881,7 @@ mod test {
             }).expect("failed to persist large batch");
 
             let mut total = 0;
-            for result in reader {
+            for result in reader.into_iter_uncommitted() {
                 result.expect("failed to read event");
                 total += 1;
             }
@@ -459,7 +894,7 @@ mod test {
         let mut partition = result.expect("Failed to init partitionImpl");
 
         let reader = partition.create_reader(77, EventFilter::All, 0);
-        let count = reader.map(|read_result| {
+        let count = reader.into_iter_uncommitted().map(|read_result| {
             read_result.expect("failed to read event after re-init");
         }).count();
         assert_eq!(102, count);

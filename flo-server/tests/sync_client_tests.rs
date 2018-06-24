@@ -1,6 +1,6 @@
 extern crate flo_client_lib;
 extern crate url;
-extern crate env_logger;
+extern crate flo_server;
 extern crate tempdir;
 
 use std::fmt::Debug;
@@ -31,7 +31,7 @@ fn simple_event<N: Into<String>, D: Debug, E: Into<D>>(namespace: N, data: E) ->
 fn test_with_server<F: FnOnce(u16)>(test_name: &'static str, flo_server_args: Vec<&str>, test_fun: F) {
     use tempdir::TempDir;
 
-    let _ = ::env_logger::init();
+    init_logger();
 
     let (proc_type, port) = get_server_port();
     let temp_dir = TempDir::new(test_name).unwrap();

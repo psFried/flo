@@ -18,6 +18,11 @@ impl AtomicBoolWriter {
         self.inner.swap(value, Ordering::Relaxed)
     }
 
+    #[allow(unused_mut)]
+    pub fn get(&mut self) -> bool {
+        self.inner.load(Ordering::Relaxed)
+    }
+
     pub fn reader(&self) -> AtomicBoolReader {
         AtomicBoolReader {
             inner: self.inner.clone()

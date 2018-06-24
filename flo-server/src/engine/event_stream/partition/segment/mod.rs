@@ -49,6 +49,10 @@ pub struct Segment {
 
 impl Segment {
 
+    pub fn head_position(&self) -> usize {
+        self.appender.get_file_position()
+    }
+
     pub fn is_expired(&self, now: Timestamp) -> bool {
         now < self.segment_end_time
     }
@@ -83,6 +87,7 @@ impl Segment {
         trace!("creating range iter starting at offset: {}", start);
         SegmentReader {
             segment_id: self.segment_num,
+            last_read_id: 0,
             reader: self.appender.reader(start)
         }
     }
@@ -153,12 +158,17 @@ impl Segment {
 #[derive(Clone, Debug)]
 pub struct SegmentReader {
     pub segment_id: SegmentNum,
+    last_read_id: EventCounter,
     reader: MmapReader,
 }
 
 impl SegmentReader {
     pub fn read_next(&mut self) -> Option<io::Result<PersistentEvent>> {
-        self.reader.read_next()
+        let result = self.reader.read_next();
+        if let Some(&Ok(ref event)) = result.as_ref() {
+            self.last_read_id = event.id().event_counter;
+        }
+        result
     }
 
     pub fn is_exhausted(&self) -> bool {
@@ -171,6 +181,10 @@ impl SegmentReader {
 
     pub fn set_offset(&mut self, new_offset: usize) {
         self.reader.set_offset(new_offset)
+    }
+
+    pub fn current_offset(&self) -> usize {
+        self.reader.get_current_offset()
     }
 }
 
@@ -198,8 +212,6 @@ mod test {
 
     #[test]
     fn write_one_event_to_segment_and_read_it_back() {
-        let _ = ::env_logger::init();
-
         let tmpdir = TempDir::new("write_events_to_segment").unwrap();
         let event = event(1);
         let segment_num = SegmentNum(1);

@@ -18,7 +18,7 @@ pub trait EventCodec {
     fn convert_produced(&self, namespace: &str, data: Self::EventData) -> Result<Vec<u8>, Box<Error>>;
 
     fn convert_from_message(&self, input: OwnedFloEvent) -> Result<Event<Self::EventData>, Box<Error>> {
-        let OwnedFloEvent{id, parent_id, namespace, timestamp, data} = input;
+        let OwnedFloEvent{id, parent_id, namespace, timestamp, data, ..} = input;
         let converted = {
             self.convert_received(&namespace, data)
         };

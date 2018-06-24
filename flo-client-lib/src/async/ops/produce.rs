@@ -32,13 +32,11 @@ impl <D: Debug> ProduceOne<D> {
         let op_id = connection.next_op_id();
         let inner: Inner<D> = match connection.inner.codec.convert_produced(&namespace, data) {
             Ok(converted) => {
-                let proto_msg = ProduceEvent{
-                    op_id,
-                    partition,
-                    namespace,
-                    parent_id,
-                    data: converted,
-                };
+                let proto_msg = ProduceEvent::with_crc(op_id,
+                                                  partition,
+                                                  namespace,
+                                                  parent_id,
+                                                  converted);
                 Inner::RequestResp(RequestResponse::new(connection, ProtocolMessage::ProduceEvent(proto_msg)))
             }
             Err(codec_err) => {

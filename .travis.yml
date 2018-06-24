@@ -1,8 +1,9 @@
+sudo: false
 language: rust
+cache: cargo
 env:
   global:
     - RUST_BACKTRACE=1
-    - RUST_LOG=flo=debug
 rust:
   - stable
   - beta
@@ -13,4 +14,9 @@ os:
 matrix:
   allow_failures:
     - rust: nightly
-script: cargo test --all --no-fail-fast
+  exclude:
+    - rust: beta
+      os: osx
+    - rust: nightly
+      os: osx
+script: cargo test --all

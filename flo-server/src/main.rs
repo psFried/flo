@@ -24,7 +24,6 @@ extern crate tempdir;
 pub use flo_server::*;
 
 use chrono::Duration;
-use event::ActorId;
 use logging::{init_logging, LogLevelOption, LogFileOption};
 use clap::{App, Arg, ArgMatches};
 use std::str::FromStr;
@@ -77,17 +76,26 @@ fn app_args() -> App<'static, 'static> {
                     .default_value("512")
                     .help("Maximum amount of memory in megabytes to use for the event cache"))
             .arg(Arg::with_name("join-cluster-address")
-                    .requires("actor-id")
+                    .requires("server-addr")
                     .long("peer-addr")
                     .short("P")
                     .multiple(true)
                     .value_name("HOST:PORT")
                     .help("address of another Flo instance to join a cluster; this argument may be supplied multiple times"))
-            .arg(Arg::with_name("actor-id")
-                    .long("actor-id")
+            .arg(Arg::with_name("server-addr")
+                    .requires("join-cluster-address")
+                    .long("server-addr")
                     .short("A")
                     .takes_value(true)
-                    .help("The id to assign to this node in the cluster. This MUST be unique within the cluster. Will be removed once cluster support doesn't suck so bad"))
+                    .help("The socket address that this server is reachable at. Will be removed once cluster support doesn't suck so bad"))
+            .arg(Arg::with_name("election-timeout")
+                    .long("election-timeout")
+                    .takes_value(true)
+                    .help("Trigger an election after this number of milliseconds. Defaults to a random number between 150-300"))
+            .arg(Arg::with_name("heartbeat-interval")
+                    .long("heartbeat-interval")
+                    .takes_value(true)
+                    .help("Number of milliseconds to go in between sending heartbeats. Defaults to 1/3 of the election timeout"))
             .arg(Arg::with_name("max-io-threads")
                     .long("max-io-threads")
                     .takes_value(true)
@@ -105,7 +113,11 @@ fn main() {
     let data_dir = PathBuf::from(args.value_of("data-dir").unwrap_or("."));
     let max_cache_memory = get_max_cache_mem_amount(&args);
     let cluster_addresses = get_cluster_addresses(&args);
-    let actor_id = args.value_of("actor-id").unwrap_or("1").parse::<ActorId>().expect("ActorId must be an unsigned 16 bit integer");
+    let this_address = args.value_of("server-addr").map(|addr_string| {
+        SocketAddr::from_str(addr_string).map_err(|err| {
+            format!("Cannot parse server-addr argument: {}", err)
+        }).or_bail()
+    });
     let max_io_threads = args.value_of("max-io-threads").map(|value| {
         value.parse::<usize>().map_err(|_| {
             format!("Invalid max-io-threads argument: '{}' value must be a positive integer", value)
@@ -128,14 +140,20 @@ fn main() {
     let default_eviction_period = ::std::cmp::min(retention_duration.num_hours() / 6, MAX_SEGMENT_PERIOD_HOURS);
     let eviction_period_hours = parse_arg_or_exit(&args, "eviction-period", default_eviction_period);
 
+    let default_election_timeout = ::engine::controller::tick_generator::get_election_timeout_millis();
+    let election_timeout = parse_arg_or_exit(&args, "election-timeout", default_election_timeout);
+    let heartbeat_interval = parse_arg_or_exit(&args, "heartbeat-interval", election_timeout / 3);
+
     let server_options = ServerOptions {
         event_retention_duration: retention_duration,
         event_eviction_period: Duration::hours(eviction_period_hours),
         port: port,
         data_dir: data_dir,
         max_cache_memory: max_cache_memory,
+        this_instance_address: this_address,
         cluster_addresses: cluster_addresses,
-        actor_id: actor_id,
+        election_timeout_millis: election_timeout,
+        heartbeat_interval_millis: heartbeat_interval,
         max_io_threads: max_io_threads,
     };
 
@@ -144,6 +162,7 @@ fn main() {
     let run_finished = server::run(server_options);
     if let Some(err) = run_finished.err() {
         error!("IO Error: {}", err);
+        ::std::process::exit(1);
     }
     info!("Shutdown server");
 }

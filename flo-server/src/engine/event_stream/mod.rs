@@ -9,12 +9,11 @@ use futures::{Sink, Async, AsyncSink, StartSend, Poll};
 use chrono::Duration;
 
 use event::ActorId;
-use self::partition::{PartitionRef, initialize_existing_partition, initialize_new_partition};
-use atomics::AtomicBoolReader;
+use self::partition::{PartitionRef, PartitionRefMut, initialize_existing_partition, initialize_new_partition};
 
 pub use self::highest_counter::HighestCounter;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct EventStreamOptions {
     pub name: String,
     pub num_partitions: u16,
@@ -42,9 +41,7 @@ impl EventStreamOptions {
     }
 }
 
-
-
-pub fn init_existing_event_stream(event_stream_storage_dir: PathBuf, options: EventStreamOptions, status_reader: AtomicBoolReader, remote: Remote) -> Result<EventStreamRef, io::Error> {
+pub fn init_existing_event_stream(event_stream_storage_dir: PathBuf, options: EventStreamOptions, remote: Remote, start_writable: bool) -> Result<EventStreamRefMut, io::Error> {
 
     debug!("Starting initialization of existing event stream with: {:?}", &options);
     let partition_numbers = determine_existing_partition_dirs(&event_stream_storage_dir)?;
@@ -54,50 +51,50 @@ pub fn init_existing_event_stream(event_stream_storage_dir: PathBuf, options: Ev
 
     let mut partition_refs = Vec::with_capacity(partition_numbers.len());
     for partition_num in partition_numbers {
-        let partition_ref = initialize_existing_partition(partition_num, &event_stream_storage_dir, &options, status_reader.clone(), highest_counter.clone())?;
+        let partition_ref = initialize_existing_partition(partition_num, &event_stream_storage_dir, &options, highest_counter.clone(), start_writable)?;
         partition_refs.push(partition_ref);
     }
 
     partition_refs.sort_by_key(|part| part.partition_num());
 
     let tick_interval = options.get_tick_interval();
-    let event_stream = EventStreamRef {
-        name: options.name,
+    let event_stream = EventStreamRefMut {
+        event_stream_options: options,
         partitions: partition_refs,
+        highest_counter,
     };
 
-    start_tick_timer(remote, event_stream.clone(), tick_interval);
+    start_tick_timer(remote, event_stream.clone_ref(), tick_interval);
 
     Ok(event_stream)
 }
 
-pub fn init_new_event_stream(event_stream_storage_dir: PathBuf, options: EventStreamOptions, status_reader: AtomicBoolReader, remote: Remote) -> Result<EventStreamRef, io::Error> {
+pub fn init_new_event_stream(event_stream_storage_dir: PathBuf, options: EventStreamOptions, remote: Remote, start_writable: bool) -> Result<EventStreamRefMut, io::Error> {
 
     debug!("Starting initialization of new event stream with: {:?}", &options);
     let partition_count = options.num_partitions;
     ::std::fs::create_dir_all(&event_stream_storage_dir)?;
 
-    let mut partition_refs: Vec<PartitionRef> = Vec::with_capacity(partition_count as usize);
+    let mut partition_refs: Vec<PartitionRefMut> = Vec::with_capacity(partition_count as usize);
     let highest_counter = HighestCounter::zero();
     for i in 0..partition_count {
         let partition_num: ActorId = i + 1;
-        let partition_ref = initialize_new_partition(partition_num, &event_stream_storage_dir, &options, status_reader.clone(), highest_counter.clone())?;
+        let partition_ref = initialize_new_partition(partition_num, &event_stream_storage_dir, &options, highest_counter.clone(), start_writable)?;
 
         // We're appending these in order so that they can be indexed up by partition number later
         partition_refs.push(partition_ref);
     }
 
     let tick_interval = options.get_tick_interval();
-    let EventStreamOptions{name, ..} = options;
-    debug!("Finished initializing {} partitions for event stream: '{}'", partition_count, &name);
-    let event_stream = EventStreamRef {
-        name: name,
+    debug!("Finished initializing {} partitions for event stream: '{}'", partition_count, options.name);
+    let event_stream = EventStreamRefMut {
+        event_stream_options: options,
         partitions: partition_refs,
+        highest_counter: highest_counter,
     };
-    start_tick_timer(remote, event_stream.clone(), tick_interval);
+    start_tick_timer(remote, event_stream.clone_ref(), tick_interval);
     Ok(event_stream)
 }
-
 
 pub fn get_event_steam_data_dir(server_storage_dir: &Path, event_stream_name: &str) -> PathBuf {
     server_storage_dir.join(event_stream_name)
@@ -124,6 +121,58 @@ fn determine_existing_partition_dirs(event_stream_dir: &Path) -> io::Result<Vec<
     Ok(partition_numbers)
 }
 
+#[derive(Debug)]
+pub struct EventStreamRefMut {
+    partitions: Vec<PartitionRefMut>,
+    event_stream_options: EventStreamOptions,
+    highest_counter: HighestCounter,
+}
+
+impl EventStreamRefMut {
+    pub fn get_name(&self) -> &str {
+        &self.event_stream_options.name
+    }
+
+    pub fn clone_ref(&self) -> EventStreamRef {
+        let name = self.get_name().to_owned();
+        let partitions = self.partitions.iter().map(|part| part.clone_ref()).collect::<Vec<PartitionRef>>();
+
+        EventStreamRef {
+            name,
+            partitions
+        }
+    }
+
+    pub fn set_writable_partition(&mut self, partition_num: ActorId) {
+        info!("Setting partition: {} for event_stream: '{}' to writable", partition_num, self.get_name());
+        for partition in self.partitions.iter_mut() {
+            if partition.partition_num() == partition_num {
+                partition.set_writable();
+            } else {
+                partition.set_read_only();
+            }
+        }
+    }
+
+    pub fn add_new_partition(&mut self, partition_num: ActorId, event_stream_data: &Path) -> io::Result<()> {
+        info!("Adding new partition: {} to event_stream: '{}'", partition_num, self.get_name());
+        if self.partitions.iter().any(|p| p.partition_num() == partition_num) {
+            return Err(io::Error::new(io::ErrorKind::AlreadyExists, "Partition number already exists"));
+        }
+        if !self.partition_number_is_next_sequential(partition_num) {
+            return Err(io::Error::new(io::ErrorKind::Other, "Partition number is not the next sequential number"));
+        }
+
+        let highest_counter = self.highest_counter.clone();
+        let partition = initialize_new_partition(partition_num, event_stream_data, &self.event_stream_options, highest_counter, false)?;
+        self.partitions.push(partition);
+        Ok(())
+    }
+
+    fn partition_number_is_next_sequential(&self, partition_num: ActorId) -> bool {
+        self.partitions.len() == partition_num as usize + 1
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct EventStreamRef {

@@ -39,8 +39,6 @@ impl FromStr for Metric {
     type Err = ();
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        use std::ascii::AsciiExt;
-
         match s.to_ascii_lowercase().as_ref() {
             PRODUCE_COMMAND => Ok(Metric::Produce),
             _ => Err(())

@@ -36,155 +36,30 @@
 //! from `/**/*`.
 //!
 extern crate chrono;
+extern crate crc;
+extern crate byteorder;
 
 pub mod time;
+mod id;
 mod version_vec;
+mod crc_error;
 
+pub use self::crc_error::InvalidCrcError;
 pub use version_vec::VersionVector;
+pub use id::*;
 
-use std::cmp::{Ord, PartialOrd, Ordering};
-use std::fmt::{self, Display, Debug};
-use std::str::FromStr;
-
-use chrono::{DateTime, UTC};
+use std::fmt::Debug;
+use chrono::{DateTime, Utc};
 
 /// All event timestamps are non-monotonic UTC timestamps with millisecond precision. Although the chrono crate can represent
 /// nanosecond precision, this resolution is not preserved by flo's wire protocol.
-pub type Timestamp = DateTime<UTC>;
+pub type Timestamp = DateTime<Utc>;
 
-/// An actor is a flo server instance that participates in the cluster. Each actor must have it's own id that is unique
-/// among all the running flo server instances
-pub type ActorId = u16;
-
-/// This is just a dumb counter that is increased sequentially for each event produced. Note that each actor keeps it's own
-/// EventCounter, but will fast-forward the counter to always be one greater than the highest known event counter at any
-/// given point in time.
-pub type EventCounter = u64;
-
-/// This is the primary key for an event. It is immutable and unique within the entire event stream.
-/// FloEventIds are strictly ordered first based on the `EventCounter` and then on the `ActorId`.
-/// This ordering is exactly the same as the ordering of events in the stream.
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
-pub struct FloEventId {
-    pub actor: ActorId,
-    pub event_counter: EventCounter,
-}
-
-impl Display for FloEventId {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        write!(f, "{}.{}", self.event_counter, self.actor)
-    }
-}
-
-impl FromStr for FloEventId {
-    type Err = &'static str;
-
-    fn from_str(input: &str) -> Result<Self, Self::Err> {
-        let err_message = "FloEventId must be an event counter and actor id separated by a single '.'";
-
-        if let Some(dot_index) = input.find('.') {
-            println!("dot index: {}", dot_index);
-            let (counter, actor) = input.split_at(dot_index);
-            counter.parse::<EventCounter>().and_then(|c| {
-                (&actor[1..]).parse::<ActorId>().map(|a| {
-                    FloEventId::new(a, c)
-                })
-            }).map_err(|_| err_message)
-        } else {
-            Err(err_message)
-        }
-    }
-}
-
-#[cfg(test)]
-mod event_id_test {
-    use super::*;
-
-    #[test]
-    fn flo_event_id_is_displayed_as_string() {
-        let id = FloEventId::new(7, 12345);
-        let result = format!("{}", id);
-        let expected = "12345.7";
-        assert_eq!(expected, &result);
-    }
-
-    #[test]
-    fn from_str_returns_err_when_actor_id_is_missing() {
-        assert!(FloEventId::from_str("4.").is_err())
-    }
-
-    #[test]
-    fn from_str_returns_err_when_event_counter_is_missing() {
-        assert!(FloEventId::from_str(".4").is_err())
-    }
-
-    #[test]
-    fn from_str_returns_err_when_number_does_not_contain_dot() {
-        assert!(FloEventId::from_str("7654").is_err())
-    }
-
-    #[test]
-    fn flo_event_id_is_parsed_from_a_dot_separated_string() {
-        let input = "8.2";
-        let result = FloEventId::from_str(input).unwrap();
-        assert_eq!(FloEventId::new(2, 8), result);
-    }
-}
-
-pub const ZERO_EVENT_ID: FloEventId = FloEventId{event_counter: 0, actor: 0};
-pub const MAX_EVENT_ID: FloEventId = FloEventId{event_counter: ::std::u64::MAX, actor: ::std::u16::MAX};
-
-impl FloEventId {
-
-    /// A zero id represents the lack of an id. All valid ids start with an event counter of 1.
-    #[inline]
-    pub fn zero() -> FloEventId {
-        ZERO_EVENT_ID
-    }
-
-    /// Returns the maximum possible event id. All other event ids will be less than or equal to this id
-    #[inline]
-    pub fn max() -> FloEventId {
-        MAX_EVENT_ID
-    }
-
-    /// Constructs a new FloEventId with the given actor and counter values
-    pub fn new(actor: ActorId, event_counter: EventCounter) -> FloEventId {
-        FloEventId {
-            event_counter: event_counter,
-            actor: actor,
-        }
-    }
-
-    pub fn is_zero(&self) -> bool {
-        *self == ZERO_EVENT_ID
-    }
-}
-
-impl Ord for FloEventId {
-    fn cmp(&self, other: &Self) -> Ordering {
-        if self.event_counter == other.event_counter {
-            self.actor.cmp(&other.actor)
-        } else {
-            self.event_counter.cmp(&other.event_counter)
-        }
-    }
-}
-
-impl PartialOrd for FloEventId {
-    fn partial_cmp(&self, other: &FloEventId) -> Option<Ordering> {
-        if self.event_counter == other.event_counter {
-            self.actor.partial_cmp(&other.actor)
-        } else {
-            self.event_counter.partial_cmp(&other.event_counter)
-        }
-    }
-}
 
 /// Defines an event from a client's perspective. An event Consists of some specific header information followed by
 /// an optional section of binary data. Flo imposes no restrictions or opinions on what can be contained in the `data`
 /// section.
-pub trait FloEvent: Debug {
+pub trait FloEvent: Debug + EventData {
     /// The primary key of the event. This is immutable and never changes.
     fn id(&self) -> &FloEventId;
     /// The UTC timestamp (generated by the server) when this event was persisted.
@@ -203,46 +78,136 @@ pub trait FloEvent: Debug {
     /// Returns the arbitrary binary data associated with this event.
     fn data(&self) -> &[u8];
     /// Converts this event into an `OwnedFloEvent`, cloning it in the process.
-    fn to_owned(&self) -> OwnedFloEvent {
+    fn to_owned_event(&self) -> OwnedFloEvent {
         let id = *self.id();
         let data = self.data().to_owned();
-        OwnedFloEvent {
-            id: id,
-            timestamp: self.timestamp(),
-            parent_id: self.parent_id(),
-            namespace: self.namespace().to_owned(),
-            data: data,
+        let parent_id = self.parent_id();
+        let timestamp = self.timestamp();
+        let namespace = self.namespace().to_owned();
+        OwnedFloEvent::new(id, parent_id, timestamp, namespace, data)
+    }
+
+}
+
+pub trait EventData {
+    fn event_namespace(&self) -> &str;
+    fn event_parent_id(&self) -> Option<FloEventId>;
+    fn event_data(&self) -> &[u8];
+
+    fn get_precomputed_crc(&self) -> Option<u32>;
+
+    /// Returns the CRC for this event, which is a CRC32C of the following fields in order:
+    /// 
+    /// - `namespace`
+    /// - `parent_id`
+    /// - `data`
+    /// 
+    /// This CRC does _not_ use the timestamp or the `id`
+    fn compute_data_crc(&self) -> u32 {
+        use crc::crc32::{update, CASTAGNOLI_TABLE};
+        use byteorder::{ByteOrder, BigEndian};
+
+        fn update_hash(value: u32, bytes: &[u8]) -> u32 {
+            update(value, &CASTAGNOLI_TABLE, bytes)
         }
+
+        // start with the crc of the parent id
+        let mut value: u32 = {
+            update_hash(0, self.event_namespace().as_bytes())
+        };
+
+        // convert the parent id to a consistent binary representation
+        {
+            let mut parent_id_bytes = [0u8; 11];
+            let parent_id = self.event_parent_id();
+            if parent_id.is_some() {
+                let id = parent_id.as_ref().unwrap();
+                parent_id_bytes[0] = 1;
+                BigEndian::write_u64(&mut parent_id_bytes[1..9], id.event_counter);
+                BigEndian::write_u16(&mut parent_id_bytes[9..], id.actor);
+            }
+            value = update_hash(value, &parent_id_bytes);
+        }
+
+        // finally, the data
+        update_hash(value, self.event_data())
+    }
+
+    fn validate_crc(&self) -> Result<(), InvalidCrcError> {
+        self.get_precomputed_crc().map(|crc| {
+            let computed = self.compute_data_crc();
+            if crc == computed {
+                Ok(())
+            } else {
+                Err(InvalidCrcError{
+                    computed,
+                    actual: crc,
+                })
+            }
+        }).unwrap_or(Ok(()))
+    }
+
+    fn get_or_compute_crc(&self) -> u32 {
+        self.get_precomputed_crc().unwrap_or_else(|| self.compute_data_crc())
     }
 }
 
-impl <T> FloEvent for T where T: AsRef<OwnedFloEvent> + Debug {
+pub struct BorrowedEventData<'a> {
+    pub namespace: &'a str,
+    pub parent_id: Option<FloEventId>,
+    pub data: &'a [u8],
+}
+
+impl <'a> EventData for BorrowedEventData<'a> {
+    fn event_namespace(&self) -> &str {
+        self.namespace
+    }
+
+    fn event_parent_id(&self) -> Option<FloEventId> {
+        self.parent_id
+    }
+
+    fn event_data(&self) -> &[u8] {
+        self.data
+    }
+    fn get_precomputed_crc(&self) -> Option<u32> {
+        None
+    }
+}
+
+impl <T> FloEvent for T where T: AsRef<OwnedFloEvent> + Debug + EventData {
     fn id(&self) -> &FloEventId {
-        self.as_ref().id()
-    }
-
-    fn namespace(&self) -> &str {
-        self.as_ref().namespace()
-    }
-
-    fn data_len(&self) -> u32 {
-        self.as_ref().data_len()
-    }
-
-    fn data(&self) -> &[u8] {
-        self.as_ref().data()
-    }
-
-    fn to_owned(&self) -> OwnedFloEvent {
-        self.as_ref().clone()
-    }
-
-    fn parent_id(&self) -> Option<FloEventId> {
-        self.as_ref().parent_id()
+        &self.as_ref().id
     }
 
     fn timestamp(&self) -> Timestamp {
-        self.as_ref().timestamp()
+        self.as_ref().timestamp
+    }
+
+    fn parent_id(&self) -> Option<FloEventId> {
+        self.as_ref().parent_id
+    }
+
+    fn namespace(&self) -> &str {
+        self.as_ref().namespace.as_str()
+    }
+
+    fn data_len(&self) -> u32 {
+        self.as_ref().data.len() as u32
+    }
+
+    fn data(&self) -> &[u8] {
+        self.as_ref().data.as_slice()
+    }
+
+    fn to_owned_event(&self) -> OwnedFloEvent {
+        self.as_ref().clone()
+    }
+}
+
+impl AsRef<OwnedFloEvent> for OwnedFloEvent {
+    fn as_ref(&self) -> &OwnedFloEvent {
+        self
     }
 }
 
@@ -255,45 +220,52 @@ pub struct OwnedFloEvent {
     pub parent_id: Option<FloEventId>,
     pub namespace: String,
     pub data: Vec<u8>,
+    pub crc: u32,
 }
 
 impl OwnedFloEvent {
     pub fn new(id: FloEventId, parent_id: Option<FloEventId>, timestamp: Timestamp, namespace: String, data: Vec<u8>) -> OwnedFloEvent {
+        let crc = {
+            BorrowedEventData {
+                parent_id,
+                namespace: namespace.as_str(),
+                data: data.as_slice()
+            }.compute_data_crc()
+        };
         OwnedFloEvent {
-            id: id,
-            timestamp: timestamp,
-            parent_id: parent_id,
-            namespace: namespace,
-            data: data,
+            id,
+            timestamp,
+            parent_id,
+            namespace,
+            data,
+            crc
+        }
+    }
+
+    pub fn validate_crc(&self) -> Result<(), u32> {
+        let computed = self.compute_data_crc();
+        if self.crc == computed {
+            Ok(())
+        } else {
+            Err(computed)
         }
     }
 }
 
-impl FloEvent for OwnedFloEvent {
-    fn id(&self) -> &FloEventId {
-        &self.id
+impl <T> EventData for T where T: AsRef<OwnedFloEvent> {
+    fn event_namespace(&self) -> &str {
+        self.as_ref().namespace.as_str()
     }
 
-    fn namespace(&self) -> &str {
-        &self.namespace
+    fn event_parent_id(&self) -> Option<FloEventId> {
+        self.as_ref().parent_id
     }
 
-    fn data_len(&self) -> u32 {
-        self.data.len() as u32
+    fn event_data(&self) -> &[u8] {
+        self.as_ref().data.as_slice()
     }
-
-    fn data(&self) -> &[u8] {
-        &self.data
-    }
-
-    fn to_owned(&self) -> OwnedFloEvent {
-        self.clone()
-    }
-
-    fn parent_id(&self) -> Option<FloEventId> {
-        self.parent_id
-    }
-    fn timestamp(&self) -> Timestamp {
-        self.timestamp
+    fn get_precomputed_crc(&self) -> Option<u32> {
+        Some(self.as_ref().crc)
     }
 }
+

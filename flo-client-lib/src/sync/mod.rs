@@ -157,6 +157,24 @@ impl <D: Debug + 'static> SyncConnection<D> {
         self.async_connection.as_ref().and_then(|conn| conn.current_stream())
     }
 
+    /// Sets the event stream to use for all operations from this point forward on this connection.
+    pub fn set_event_stream<S: Into<String>>(&mut self, event_stream: S) -> Result<(), ErrorType> {
+        use async::ops::SetEventStreamError;
+
+        let conn = self.async_connection.take().unwrap();
+        let result = run_future(conn.set_event_stream(event_stream));
+        match result {
+            Ok(conn) => {
+                self.async_connection = Some(conn);
+                Ok(())
+            }
+            Err(SetEventStreamError {connection, error}) => {
+                self.async_connection = Some(connection);
+                Err(error)
+            }
+        }
+    }
+
 }
 
 /// An iterator of events from an event stream. Each element in the iterator is a `Result<Event<D>, ErrorType>`. If an error is

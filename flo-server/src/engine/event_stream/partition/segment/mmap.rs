@@ -35,7 +35,7 @@ impl MmapInner {
         }
     }
 
-    unsafe fn get_write_slice(&self, start_offset: usize) -> &mut [u8] {
+    pub unsafe fn get_write_slice(&self, start_offset: usize) -> &mut [u8] {
         let mmap = &mut *self.region.get();
         &mut mmap.as_mut_slice()[start_offset..]
     }
@@ -223,6 +223,10 @@ impl MmapReader {
         self.current_offset >= head
     }
 
+    pub fn get_current_offset(&self) -> usize {
+        self.current_offset
+    }
+
     fn get_current_head(&self) -> usize {
         self.inner.head.load(Ordering::Relaxed)
     }
@@ -261,34 +265,34 @@ mod test {
 
         subject.append(&input).unwrap();
         let result = reader.read_next().expect("reader returned none").expect("failed to read event");
-        assert_eq!(input, result.to_owned());
+        assert_eq!(input, result.to_owned_event());
     }
 
     #[test]
     fn read_event_returns_error_when_namespace_length_is_too_large() {
         assert_read_err("namespace length too large", |buf| {
-            buf[41] = 56;
+            buf[45] = 56;
         })
     }
 
     #[test]
     fn read_event_returns_error_when_namespace_length_is_too_small() {
         assert_read_err("mismatched lengths", |buf| {
-            buf[43] = 7; //make the namespace length 7 instead of 8
+            buf[47] = 7; //make the namespace length 7 instead of 8
         })
     }
 
     #[test]
     fn read_event_returns_error_when_data_length_is_too_large() {
         assert_read_err("mismatched lengths", |buf| {
-            buf[55] = 6; //make the data length 6 instead of 5
+            buf[59] = 6; //make the data length 6 instead of 5
         })
     }
 
     #[test]
     fn read_event_returns_error_when_data_length_is_too_small() {
         assert_read_err("mismatched lengths", |buf| {
-            buf[55] = 4; //make the data length 4 instead of 5
+            buf[59] = 4; //make the data length 4 instead of 5
         })
     }
 
@@ -306,7 +310,7 @@ mod test {
 
         subject.append(&input).unwrap();
         let result = reader.read_next().expect("reader returned none").expect("failed to read event");
-        assert_eq!(input, result.to_owned());
+        assert_eq!(input, result.to_owned_event());
 
         let len = PersistentEvent::get_repr_length(&input);
         assert_eq!(len, PersistentEvent::get_repr_length(&result));
@@ -339,7 +343,7 @@ mod test {
         let off_3 = subject.append(&input3).unwrap().expect("write returned none");
 
         let read_all = subject.reader(0)
-            .map(|result| result.expect("failed to read event").to_owned())
+            .map(|result| result.expect("failed to read event").to_owned_event())
             .collect::<Vec<OwnedFloEvent>>();
         let expected = vec![input1.clone(), input2.clone(), input3.clone()];
         assert_eq!(expected, read_all);
@@ -347,10 +351,10 @@ mod test {
         let read_2 = subject.reader(off_2).next().unwrap().expect("failed to read event 2");
         let read2_offset = read_2.file_offset();
         assert_eq!(off_2, read2_offset);
-        assert_eq!(input2, read_2.to_owned());
+        assert_eq!(input2, read_2.to_owned_event());
 
         let read_3 = subject.reader(off_3).next().unwrap().expect("failed to read event 3");
-        assert_eq!(input3, read_3.to_owned());
+        assert_eq!(input3, read_3.to_owned_event());
     }
 
     fn assert_read_err<F: Fn(&mut [u8])>(expected_description: &str, modify_buffer_fun: F) {

@@ -2,8 +2,6 @@ use std::path::PathBuf;
 use chrono::Duration;
 use std::net::SocketAddr;
 
-use event::ActorId;
-
 
 #[derive(Copy, Clone, PartialEq, Debug)]
 #[allow(dead_code)]
@@ -45,8 +43,10 @@ pub struct ServerOptions {
     pub event_retention_duration: Duration,
     pub event_eviction_period: Duration,
     pub max_cache_memory: MemoryLimit,
+    pub this_instance_address: Option<SocketAddr>,
     pub cluster_addresses: Option<Vec<SocketAddr>>,
-    pub actor_id: ActorId,
+    pub election_timeout_millis: u64,
+    pub heartbeat_interval_millis: u64,
     pub max_io_threads: Option<usize>,
 }
 

@@ -6,7 +6,7 @@ use std::fmt::Debug;
 use std::io;
 
 use tokio_core::reactor::{Handle, Remote};
-use futures::Stream;
+use futures::{Stream, Sink, StartSend, Poll};
 
 use protocol::ProtocolMessage;
 use flo_client_lib::async::{AsyncConnection, MessageReceiver, MessageSender, ClientProtocolMessage};
@@ -34,6 +34,9 @@ impl EmbeddedFloServer {
                                                             client_sender.clone(),
                                                             engine_ref,
                                                              handle);
+        let embedded_connection = EmbeddedConnectionHandler {
+            inner: connection_handler
+        };
 
         let receiver = client_receiver.map(|message| {
             message_to_owned(message)
@@ -41,7 +44,7 @@ impl EmbeddedFloServer {
             io::Error::new(io::ErrorKind::UnexpectedEof, format!("Error reading from channel: {:?}", recv_err))
         });
         let recv = Box::new(receiver) as MessageReceiver;
-        let send = Box::new(connection_handler) as MessageSender;
+        let send = Box::new(embedded_connection) as MessageSender;
 
         AsyncConnection::new(name, send, recv, codec)
     }
@@ -52,7 +55,7 @@ impl EmbeddedFloServer {
 // probably figure out a way to avoid exposing the generic types via the public api. Seems like a 'later' problem
 fn message_to_owned(server_msg: SendProtocolMessage) -> ClientProtocolMessage {
     match server_msg {
-        ProtocolMessage::ReceiveEvent(event) => ProtocolMessage::ReceiveEvent(event.to_owned()),
+        ProtocolMessage::ReceiveEvent(event) => ProtocolMessage::ReceiveEvent(event.to_owned_event()),
         ProtocolMessage::StopConsuming(op) => ProtocolMessage::StopConsuming(op),
         ProtocolMessage::AwaitingEvents => ProtocolMessage::AwaitingEvents,
         ProtocolMessage::Error(op) => ProtocolMessage::Error(op),
@@ -61,11 +64,16 @@ fn message_to_owned(server_msg: SendProtocolMessage) -> ClientProtocolMessage {
         ProtocolMessage::ProduceEvent(op) => ProtocolMessage::ProduceEvent(op),
         ProtocolMessage::NextBatch => ProtocolMessage::NextBatch,
         ProtocolMessage::EndOfBatch => ProtocolMessage::EndOfBatch,
-        ProtocolMessage::SetBatchSize(op) => ProtocolMessage::SetBatchSize(op),
         ProtocolMessage::NewStartConsuming(op) => ProtocolMessage::NewStartConsuming(op),
         ProtocolMessage::CursorCreated(op) => ProtocolMessage::CursorCreated(op),
         ProtocolMessage::Announce(op) => ProtocolMessage::Announce(op),
         ProtocolMessage::SetEventStream(op) => ProtocolMessage::SetEventStream(op),
+        ProtocolMessage::PeerAnnounce(op) => ProtocolMessage::PeerAnnounce(op),
+        ProtocolMessage::SystemAppendCall(op) => ProtocolMessage::SystemAppendCall(op),
+        ProtocolMessage::SystemAppendResponse(op) => ProtocolMessage::SystemAppendResponse(op),
+        ProtocolMessage::RequestVote(op) => ProtocolMessage::RequestVote(op),
+        ProtocolMessage::VoteResponse(op) => ProtocolMessage::VoteResponse(op),
+        ProtocolMessage::CommitIndexUpdated(id) => ProtocolMessage::CommitIndexUpdated(id),
     }
 }
 
@@ -77,3 +85,25 @@ pub fn run_embedded_server(options: ControllerOptions, remote: Remote) -> io::Re
     })
 }
 
+struct EmbeddedConnectionHandler {
+    inner: ConnectionHandler
+}
+
+impl Sink for EmbeddedConnectionHandler {
+    type SinkItem = ClientProtocolMessage;
+    type SinkError = io::Error;
+
+    fn start_send(&mut self, item: Self::SinkItem) -> StartSend<Self::SinkItem, Self::SinkError> {
+        self.inner.start_send(item.into()).map(|async_sink| {
+            async_sink.map(|input| input.unwrap_protocol_message())
+        })
+    }
+
+    fn poll_complete(&mut self) -> Poll<(), Self::SinkError> {
+        self.inner.poll_complete()
+    }
+
+    fn close(&mut self) -> Poll<(), Self::SinkError> {
+        self.inner.close()
+    }
+}
