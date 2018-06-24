@@ -3,7 +3,7 @@ mod file;
 use std::net::SocketAddr;
 use std::collections::HashMap;
 
-use event::{ActorId, FloEvent, EventCounter};
+use event::{ActorId, EventCounter};
 use protocol::Term;
 use protocol::flo_instance_id::{self, FloInstanceId};
 use engine::controller::controller_messages::Peer;
@@ -11,6 +11,7 @@ use engine::controller::system_event::*;
 use super::SharedClusterState;
 
 pub use self::file::FilePersistedState;
+use engine::controller::controller_state::SystemEventRef;
 
 /// Holds all the cluster state that we want to survive a reboot.
 /// We always persist the `FloInstanceId` because we prefer that to be stable across reboots. We do _not_ want to persist
@@ -22,6 +23,7 @@ pub struct PersistentClusterState {
     pub this_instance_id: FloInstanceId,
     pub this_partition_num: Option<ActorId>,
     last_applied: EventCounter,
+    last_applied_term: Term,
     cluster_members: HashMap<FloInstanceId, SocketAddr>,
     assigned_partitions: HashMap<ActorId, FloInstanceId>,
 }
@@ -42,6 +44,7 @@ impl PersistentClusterState {
     pub fn generate_new() -> PersistentClusterState {
         PersistentClusterState {
             last_applied: 0,
+            last_applied_term: 0,
             current_term: 0,
             voted_for: None,
             this_instance_id: flo_instance_id::generate_new(),
@@ -51,13 +54,13 @@ impl PersistentClusterState {
         }
     }
 
-    pub fn apply_system_event<F: FloEvent>(&mut self, event: &SystemEvent<F>) {
-        let counter = event.counter();
+    pub fn apply_system_event(&mut self, event: SystemEventRef) {
+        let counter = event.counter;
         let term = event.term();
         self.current_term = self.current_term.max(term);
 
         if counter > self.last_applied {
-            match event.deserialized_data.kind {
+            match event.data.kind {
                 SystemEventKind::ClusterInitialized(ref initial_membership) => {
                     for peer in initial_membership.peers.iter() {
                         self.add_peer(peer);
@@ -80,6 +83,10 @@ impl PersistentClusterState {
             self.last_applied = counter;
         }
 
+    }
+
+    pub fn get_last_applied(&self) -> (EventCounter, Term) {
+        (self.last_applied, self.last_applied_term)
     }
 
     pub fn add_peer(&mut self, peer: &Peer) {
@@ -113,7 +120,6 @@ impl PersistentClusterState {
 #[cfg(test)]
 mod test {
     use super::*;
-    use event::{OwnedFloEvent, FloEventId, time};
     use test_utils::addr;
     use std::collections::HashSet;
 
@@ -125,7 +131,7 @@ mod test {
             peer_id: flo_instance_id::generate_new(),
             partition_num: 1,
         }));
-        subject.apply_system_event(&event);
+        subject.apply_system_event(event);
     }
 
     #[test]
@@ -138,7 +144,7 @@ mod test {
             peer_id: initial_peers[0].id,
             partition_num: 3,
         }));
-        subject.apply_system_event(&event);
+        subject.apply_system_event(event);
 
         assert_eq!(1, subject.assigned_partitions.len());
         assert_eq!(Some(initial_peers[0].id), subject.assigned_partitions.get(&3).cloned());
@@ -152,7 +158,7 @@ mod test {
         let mut subject = subject_with_initial_peers(initial_peers.clone());
         let new_peer = new_peer(4);
         let event = sys_event(2, 7, SystemEventKind::NewClusterMemberJoining(new_peer.clone()));
-        subject.apply_system_event(&event);
+        subject.apply_system_event(event);
 
         assert_eq!(2, subject.last_applied);
         assert_eq!(7, subject.current_term);
@@ -185,7 +191,7 @@ mod test {
         let event = sys_event(1, 1, SystemEventKind::ClusterInitialized(InitialClusterMembership {
             peers
         }));
-        subject.apply_system_event(&event);
+        subject.apply_system_event(event);
         subject
     }
 
@@ -201,8 +207,8 @@ mod test {
         Peer { id: flo_instance_id::generate_new(), address: addr(&format!("127.0.0.1:{}", port)) }
     }
 
-    fn sys_event(counter: EventCounter, term: Term, kind: SystemEventKind) -> SystemEvent<OwnedFloEvent> {
+    fn sys_event(counter: EventCounter, term: Term, kind: SystemEventKind) -> SystemEventRef {
         let data = SystemEventData { term, kind };
-        SystemEvent::new(FloEventId::new(0, counter), None, "/system".to_owned(), time::from_millis_since_epoch(44), data)
+        SystemEventRef { counter, data }
     }
 }

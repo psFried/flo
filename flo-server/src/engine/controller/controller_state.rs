@@ -5,18 +5,33 @@ use std::io;
 use tokio_core::reactor::Remote;
 
 use protocol::{Term, FloInstanceId};
-use event::{OwnedFloEvent, EventCounter, ActorId};
+use event::{FloEvent, OwnedFloEvent, EventCounter, ActorId};
 use engine::ConnectionId;
 use engine::controller::{ConnectionRef, SystemEvent, SystemEventData};
 use engine::event_stream::{EventStreamRef, EventStreamRefMut, EventStreamOptions, init_new_event_stream};
 use engine::event_stream::partition::{SegmentNum, IndexEntry, PersistentEvent, PartitionReader, ReplicationResult};
 use engine::event_stream::partition::controller::PartitionImpl;
-use std::borrow::Cow;
 
 #[derive(Debug, PartialEq)]
-pub struct SystemEventRef<'a> {
+pub struct SystemEventRef {
     pub counter: EventCounter,
-    pub data: Cow<'a, SystemEventData>
+    pub data: SystemEventData
+}
+
+impl SystemEventRef {
+    pub fn term(&self) -> Term {
+        self.data.term
+    }
+}
+
+impl <T: FloEvent> From<SystemEvent<T>> for SystemEventRef {
+    fn from(evt: SystemEvent<T>) -> Self {
+        let counter = evt.counter();
+        SystemEventRef {
+            counter,
+            data: evt.deserialized_data
+        }
+    }
 }
 
 pub trait ControllerState {
@@ -28,10 +43,11 @@ pub trait ControllerState {
     fn create_event_stream(&mut self, options: EventStreamOptions) -> io::Result<()>;
     fn create_partitions(&mut self, partition_num: ActorId) -> io::Result<()>;
 
+    fn get_last_uncommitted_event(&mut self) -> Option<io::Result<SystemEventRef>>;
     fn get_commit_index(&self) -> EventCounter;
     fn set_commit_index(&mut self, new_index: EventCounter);
     fn get_last_committed(&mut self) -> io::Result<(EventCounter, Term)>;
-    fn get_next_event<'a>(&'a mut self, start_after: EventCounter) -> Option<io::Result<SystemEventRef<'a>>>;
+    fn get_next_event(&mut self, start_after: EventCounter) -> Option<io::Result<SystemEventRef>>;
 
     fn get_next_counter_and_term(&mut self, start_after: EventCounter) -> Option<io::Result<(EventCounter, Term)>> {
         self.get_next_event(start_after).map(|result| {
@@ -161,6 +177,11 @@ impl ControllerState for ControllerStateImpl {
         unimplemented!()
     }
 
+    fn get_last_uncommitted_event(&mut self) -> Option<Result<SystemEventRef, io::Error>> {
+        let counter = self.system_partition.get_highest_uncommitted_event();
+        self.get_next_event(counter - 1)
+    }
+
     fn get_commit_index(&self) -> EventCounter {
         self.system_partition.get_commit_index()
     }
@@ -185,15 +206,9 @@ impl ControllerState for ControllerStateImpl {
         }
     }
 
-    fn get_next_event<'a>(&'a mut self, start_after: EventCounter) -> Option<io::Result<SystemEventRef<'a>>> {
+    fn get_next_event(&mut self, start_after: EventCounter) -> Option<io::Result<SystemEventRef>> {
         self.get_next_entry(start_after.saturating_sub(1)).map(|index_entry| {
-            self.read_event(index_entry).map(|system_event| {
-                let counter = system_event.counter();
-                SystemEventRef{
-                    counter,
-                    data: Cow::Owned(system_event.system_data().clone()),
-                }
-            })
+            self.read_event(index_entry).map(|system_event| system_event.into() )
         })
     }
 
@@ -265,6 +280,10 @@ pub mod mock {
             self
         }
 
+        pub fn add_new_mock_event(&mut self, counter: EventCounter, term: Term) {
+            self.add_mock_event(MockSystemEvent::with_any_data(counter, term, SegmentNum::new(1), 77))
+        }
+
         pub fn add_mock_event(&mut self, event: MockSystemEvent) {
             self.system_events.insert(event.id, event);
         }
@@ -290,6 +309,16 @@ pub mod mock {
             unimplemented!()
         }
 
+        fn get_last_uncommitted_event(&mut self) -> Option<Result<SystemEventRef, io::Error>> {
+            self.system_events.iter().next_back().map(|(id, mock_sys_event)| {
+                Ok(SystemEventRef {
+                    counter: *id,
+                    data: mock_sys_event.data.clone()
+                })
+            })
+        }
+
+
         fn get_commit_index(&self) -> EventCounter {
             self.commit_index
         }
@@ -305,11 +334,11 @@ pub mod mock {
                 io::Error::new(io::ErrorKind::Other, format!("Test error because there is no stubbed event for the commit index: {}", commit_idx))
             })
         }
-        fn get_next_event<'a>(&'a mut self, start_after: EventCounter) -> Option<io::Result<SystemEventRef<'a>>> {
+        fn get_next_event(&mut self, start_after: EventCounter) -> Option<io::Result<SystemEventRef>> {
             self.system_events.range((start_after + 1)..).next().map(|(id, sys)| {
                 Ok(SystemEventRef {
                     counter: *id,
-                    data: Cow::Borrowed(&sys.data),
+                    data: sys.data.clone(),
                 })
             })
         }

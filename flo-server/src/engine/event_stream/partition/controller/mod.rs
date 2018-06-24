@@ -167,6 +167,10 @@ impl PartitionImpl {
         self.event_stream_name.as_str()
     }
 
+    pub fn get_highest_uncommitted_event(&self) -> EventCounter {
+        self.index.greatest_event_counter()
+    }
+
     pub fn commit_index_reader(&self) -> AtomicCounterReader {
         self.commit_manager.get_commit_index_reader()
     }

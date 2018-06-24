@@ -100,7 +100,7 @@ impl FloController {
                 cluster_state.tick(op_start_time, controller_state);
             }
             SystemOpType::RequestVote(request) => {
-                cluster_state.request_vote_received(connection_id, request);
+                cluster_state.request_vote_received(connection_id, request, controller_state);
             }
             SystemOpType::VoteResponseReceived(response) => {
                 cluster_state.vote_response_received(op_start_time, connection_id, response, controller_state);
@@ -156,7 +156,7 @@ fn produce_system_events(produce_op: partition::ProduceOperation, cluster_state:
         match validate_system_event(&produce_op.events, term) {
             Ok(()) => {
                 // hand off the modified operation to the partition, which will complete it
-                
+                // This will also handle sending the response back to the client, when appropriate
                 let result = controller_state.system_partition.handle_produce(produce_op);
                 if let Err(partition_err) = result {
                     error!("Partition error creating new system events: {:?}", partition_err);

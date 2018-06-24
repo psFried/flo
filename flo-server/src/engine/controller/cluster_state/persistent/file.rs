@@ -37,7 +37,7 @@ impl FilePersistedState {
         })
     }
 
-    pub fn modify<F>(&mut self, fun: F) -> Result<(), io::Error> where F: Fn(&mut PersistentClusterState) {
+    pub fn modify<F>(&mut self, fun: F) -> Result<(), io::Error> where F: FnOnce(&mut PersistentClusterState) {
         fun(&mut self.state);
         self.flush()
     }

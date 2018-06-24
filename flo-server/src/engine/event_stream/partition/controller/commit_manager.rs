@@ -2,7 +2,7 @@
 use event::{EventCounter, ActorId};
 use protocol::FloInstanceId;
 use atomics::{AtomicCounterReader, AtomicCounterWriter};
-
+use std::collections::HashSet;
 
 
 pub struct CommitManager {
@@ -50,6 +50,17 @@ impl CommitManager {
         }
     }
 
+    pub fn set_peers(&self, peers: &HashSet<FloInstanceId>) {
+        self.peers.retain(|elem| peers.contains(&elem.0));
+
+        for new_peer in peers {
+            if !self.peers.iter().any(|p| p.0 == new_peer) {
+                self.peers.push((new_peer, 0));
+            }
+        }
+        self.set_min_required();
+    }
+
     pub fn is_standalone(&self) -> bool {
         self.min_required_for_commit == 0
     }
@@ -70,12 +81,16 @@ impl CommitManager {
 
     pub fn add_member(&mut self, peer_id: FloInstanceId) {
         self.peers.push((peer_id, 0));
-        let new_ack_requirement = self.compute_min_required();
-        self.min_required_for_commit = new_ack_requirement;
+        self.set_min_required();
     }
 
     pub fn get_commit_index_reader(&self) -> AtomicCounterReader {
         self.commit_index.reader()
+    }
+
+    pub fn set_min_required(&mut self) {
+        let new_min = self.compute_min_required();
+        self.min_required_for_commit = new_min;
     }
 
     fn compute_min_required(&self) -> ActorId {

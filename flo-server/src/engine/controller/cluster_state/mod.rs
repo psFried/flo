@@ -36,7 +36,7 @@ pub trait ConsensusProcessor: Send {
     fn outgoing_connection_failed(&mut self, connection_id: ConnectionId, address: SocketAddr);
     fn connection_closed(&mut self, connection_id: ConnectionId);
 
-    fn request_vote_received(&mut self, from: ConnectionId, request: CallRequestVote);
+    fn request_vote_received(&mut self, from: ConnectionId, request: CallRequestVote, controller_state: &mut ControllerState);
     fn vote_response_received(&mut self, now: Instant, from: ConnectionId, response: VoteResponse, controller: &mut ControllerState);
 
     fn append_entries_received(&mut self, connection_id: ConnectionId, append: ReceiveAppendEntries, controller_state: &mut ControllerState);
@@ -54,8 +54,6 @@ pub struct ClusterManager {
     election_timeout: Duration,
     last_heartbeat: Instant,
     primary_status_writer: AtomicBoolWriter,
-    last_applied: EventCounter,
-    last_applied_term: Term,
     persistent: FilePersistedState,
     votes_received: HashSet<FloInstanceId>,
     system_partition_primary_address: SystemPrimaryAddressRef,
@@ -98,8 +96,6 @@ impl ClusterManager {
             current_primary: None,
             this_instance_address,
             initialization_peers,
-            last_applied: 0,
-            last_applied_term: 0,
             primary_status_writer,
             persistent,
             system_partition_primary_address,
@@ -107,16 +103,50 @@ impl ClusterManager {
         }
     }
 
-    fn update_commit_index(&mut self, new_commit_index: EventCounter, term: Term, controller_state: &mut ControllerState) {
-        if new_commit_index <= self.last_applied {
+    fn last_applied(&self) -> EventCounter {
+        self.persistent.get_last_applied().0
+    }
+
+
+    fn update_commit_index(&mut self, mut new_commit_index: EventCounter, term: Term, controller_state: &mut ControllerState) {
+        if new_commit_index <= self.last_applied() {
+            // check against last_applied, since it's possible that events could be committed but not applied, and we'd want to apply those now
             return;
         }
         let last_commit_index = controller_state.get_commit_index();
         info!("Applying committed system events new_commit_index: {}, term: {}, last_applied: {}, last_committed: {}", 
-            new_commit_index, term, self.last_applied, last_commit_index);
-        controller_state.set_commit_index(new_commit_index);
+            new_commit_index, term, self.last_applied(), last_commit_index);
 
-        // TODO: apply system events
+        new_commit_index = new_commit_index.max(last_commit_index);
+        controller_state.set_commit_index(new_commit_index);
+        let result = self.apply_system_events(new_commit_index, term, controller_state);
+        if let Err(err) = result {
+            error!("Failed to apply system event! last_applied: {}, err: {:?}", self.last_applied(), err);
+        }
+    }
+
+    fn apply_system_events(&mut self, commit_index: EventCounter, _term: Term, controller_state: &mut ControllerState) -> Result<(), io::Error> {
+        while self.last_applied() < commit_index {
+            let next_result = controller_state.get_next_event(self.last_applied());
+            if next_result.is_none() {
+                break;
+            }
+            let next_sys_event = next_result.unwrap()?; // return early if there's an error reading
+            self.persistent.modify(|state| {
+                state.apply_system_event(next_sys_event);
+            })?; // another early return on failure
+        }
+        self.apply_persistent_state(controller_state);
+        Ok(())
+    }
+
+    fn apply_persistent_state(&mut self, controller_state: &mut ControllerState) {
+        let ClusterManager {state, persistent, shared, ..} = self;
+
+        let shared_lock = shared.lock().unwrap();
+
+
+
     }
 
     fn transition_state(&mut self, new_state: State) {
@@ -157,7 +187,7 @@ impl ClusterManager {
                 (now - self.last_heartbeat) > self.election_timeout
     }
 
-    fn start_new_election(&mut self) {
+    fn start_new_election(&mut self, controller_state: &mut ControllerState) {
         info!("Starting new election with term: {}", self.persistent.current_term + 1);
         self.votes_received.clear();
         self.persistent.modify(|state| {
@@ -166,11 +196,20 @@ impl ClusterManager {
             state.voted_for = Some(my_id);
         }).expect(STATE_UPDATE_FAILED);
 
+        let (last_log_index, last_log_term) = match controller_state.get_last_uncommitted_event() {
+            Some(Ok(sys_event)) => (sys_event.counter, sys_event.data.term),
+            None => (0, 0),
+            Some(err) => {
+                error!("Refusing to start new election due to system partition read error: {:?}", err);
+                return;
+            }
+        };
+
         let connection_control = ConnectionControl::SendRequestVote(CallRequestVote {
             term: self.persistent.current_term,
             candidate_id: self.persistent.this_instance_id,
-            last_log_index: self.last_applied,
-            last_log_term: self.last_applied_term,
+            last_log_index,
+            last_log_term,
         });
         self.connection_manager.broadcast_to_peers(connection_control);
         self.transition_state(State::Voted);
@@ -178,7 +217,7 @@ impl ClusterManager {
         self.update_last_heartbeat_to_now();
     }
 
-    fn can_grant_vote(&self, request: &CallRequestVote) -> bool {
+    fn can_grant_vote(&self, request: &CallRequestVote, controller_state: &mut ControllerState) -> bool {
         let request_term = request.term;
         let my_term = self.persistent.current_term;
 
@@ -192,10 +231,21 @@ impl ClusterManager {
             }
         }
 
-        self.persistent.current_term <= request_term &&
-                self.last_applied <= request.last_log_index &&
-                self.last_applied_term <= request.last_log_term &&
-                self.persistent.contains_peer(request.candidate_id)
+        controller_state.get_last_uncommitted_event().map(|read_result| {
+            match read_result {
+                Ok(sys_event) => {
+                    // now actually check and return whether the candidate's log is at least as up to date as our own
+                    self.persistent.current_term <= request_term &&
+                            sys_event.counter <= request.last_log_index &&
+                            sys_event.data.term <= request.last_log_term &&
+                            self.persistent.contains_peer(request.candidate_id)
+                }
+                Err(err) => {
+                    error!("Refusing to grant vote due to system partition read error: {:?}", err);
+                    false
+                }
+            }
+        }).unwrap_or(true)
     }
 
     fn count_vote_response(&mut self, peer_id: FloInstanceId) -> bool {
@@ -284,7 +334,7 @@ impl ConsensusProcessor for ClusterManager {
             }
             _ => {
                 if self.election_timed_out(now) {
-                    self.start_new_election();
+                    self.start_new_election(controller_state);
                 }
             }
         }
@@ -334,10 +384,10 @@ impl ConsensusProcessor for ClusterManager {
         self.connection_manager.connection_closed(connection_id);
     }
 
-    fn request_vote_received(&mut self, from: ConnectionId, request: CallRequestVote) {
+    fn request_vote_received(&mut self, from: ConnectionId, request: CallRequestVote, controller_state: &mut ControllerState) {
         let candidate_id = request.candidate_id;
 
-        let response = if self.can_grant_vote(&request) {
+        let response = if self.can_grant_vote(&request, controller_state) {
             self.persistent.modify(|state| {
                 state.voted_for = Some(candidate_id);
                 state.current_term = request.term;
@@ -401,6 +451,7 @@ impl ConsensusProcessor for ClusterManager {
 
         self.update_last_heartbeat_to_now();
 
+        // We won't send a response if there's an error
         let response = match controller_state.get_next_counter_and_term(append.prev_entry_index.saturating_sub(1)) {
             Some(Ok((actual_prev_index, actual_prev_term))) => {
                 if actual_prev_index == append.prev_entry_index && actual_prev_term == append.prev_entry_term {
@@ -416,7 +467,7 @@ impl ConsensusProcessor for ClusterManager {
                     self.create_append_result(append.events.as_slice(), controller_state)
                 } else {
                     debug!("System partition with head at: {} is behind AppendEntries with index: {}, term: {}, returning negative result",
-                            self.last_applied, append.prev_entry_index, append.prev_entry_term);
+                            self.last_applied(), append.prev_entry_index, append.prev_entry_term);
                     None
                 }
             }
@@ -573,8 +624,6 @@ mod test {
             state.current_term = 5;
         }).unwrap();
         subject.current_primary = Some(subject_id);
-        subject.last_applied = 99;
-        subject.last_applied_term = 4;
         subject.state = State::Primary;
         subject.primary_state = Some(PrimaryState::new(5));
         subject.last_heartbeat = start;
@@ -617,8 +666,6 @@ mod test {
             state.add_peer(&peer_2);
             state.current_term = 5;
         }).unwrap();
-        subject.last_applied = 99;
-        subject.last_applied_term = 4;
         subject.state = State::Primary;
         subject.primary_state = Some(PrimaryState::new(5));
         subject.last_heartbeat = start;
@@ -681,8 +728,6 @@ mod test {
             state.add_peer(&peer_2);
             state.current_term = 5;
         }).unwrap();
-        subject.last_applied = 99;
-        subject.last_applied_term = 4;
         subject.state = State::Primary;
         subject.primary_state = Some(PrimaryState::new(5));
         subject.last_heartbeat = start;
@@ -744,12 +789,11 @@ mod test {
             state.add_peer(&peer_2);
             state.current_term = 5;
         }).unwrap();
-        subject.last_applied = 99;
-        subject.last_applied_term = 4;
         subject.state = State::Voted;
         subject.last_heartbeat = start;
 
         let mut controller_state = MockControllerState::new();
+        controller_state.add_new_mock_event(99, 4);
         subject.tick(t_sec(start, 1), &mut controller_state);
 
         connection_manager.verify_in_order(&Invocation::EstablishConnections);
@@ -938,10 +982,9 @@ mod test {
             state.current_term = 5;
         }).unwrap();
         subject.state = State::Follower;
-        subject.last_applied_term = 5;
-        subject.last_applied = 9;
 
         let mut controller_state = MockControllerState::new();
+        controller_state.add_new_mock_event(9, 5);
         let election_start = t_sec(start, 1);
         subject.tick(election_start, &mut controller_state);
         connection_manager.verify_in_order(&Invocation::EstablishConnections);
@@ -949,8 +992,8 @@ mod test {
             connection_control: ConnectionControl::SendRequestVote(CallRequestVote {
                 term: 6,
                 candidate_id: subject.persistent.this_instance_id,
-                last_log_index: subject.last_applied,
-                last_log_term: subject.last_applied_term,
+                last_log_index: 9,
+                last_log_term: 5,
             }),
         });
 
@@ -971,9 +1014,8 @@ mod test {
 
     #[test]
     fn vote_is_granted_when_candidate_term_and_log_are_more_up_to_date() {
-        vote_test(|subject, request, candidate, peer_2| {
-            subject.last_applied_term = request.last_log_term - 1;
-            subject.last_applied = request.last_log_index - 2;
+        vote_test(|subject, controller_state, request, candidate, peer_2| {
+            controller_state.add_new_mock_event(request.last_log_index - 2, request.last_log_term - 1);
             subject.persistent.modify(|state| {
                 state.current_term = request.term - 1;
                 state.add_peer(&candidate);
@@ -990,9 +1032,8 @@ mod test {
 
     #[test]
     fn vote_is_denied_when_candidate_term_is_less_than_current_term() {
-        vote_test(|subject, request, candidate, peer_2| {
-            subject.last_applied_term = request.last_log_term;
-            subject.last_applied = request.last_log_index;
+        vote_test(|subject, controller_state, request, candidate, peer_2| {
+            controller_state.add_new_mock_event(request.last_log_index, request.last_log_term);
             subject.persistent.modify(|state| {
                 state.current_term = request.term + 1; // my current term is greater
                 state.add_peer(&candidate);
@@ -1009,11 +1050,10 @@ mod test {
 
     #[test]
     fn vote_is_denied_when_candidate_log_term_is_out_of_date() {
-        vote_test(|subject, request, candidate, peer_2| {
-            subject.last_applied_term = request.last_log_term + 1;
+        vote_test(|subject, controller_state, request, candidate, peer_2| {
+            controller_state.add_new_mock_event(request.last_log_index, request.last_log_term + 1);
             // unless we've really screwed something up, the last_log_index should never be the same if the last_log_term is different.
             // We're doing it this way in the test just to document the behavior in this case
-            subject.last_applied = request.last_log_index;
             subject.persistent.modify(|state| {
                 state.current_term = request.term;
                 state.add_peer(&candidate);
@@ -1030,9 +1070,8 @@ mod test {
 
     #[test]
     fn vote_is_denied_when_candidate_is_not_a_known_peer() {
-        vote_test(|subject, request, _candidate, peer_2| {
-            subject.last_applied_term = request.last_log_term;
-            subject.last_applied = request.last_log_index;
+        vote_test(|subject, controller_state, request, _candidate, peer_2| {
+            controller_state.add_new_mock_event(request.last_log_index, request.last_log_term);
             subject.persistent.modify(|state| {
                 state.current_term = request.term - 1;
                 // peer_1 is not a known member
@@ -1049,9 +1088,8 @@ mod test {
 
     #[test]
     fn vote_is_denied_when_candidate_log_is_out_of_date() {
-        vote_test(|subject, request, candidate, peer_2| {
-            subject.last_applied_term = request.last_log_term;
-            subject.last_applied = request.last_log_index + 1;
+        vote_test(|subject, controller_state, request, candidate, peer_2| {
+            controller_state.add_new_mock_event(request.last_log_index + 1, request.last_log_term);
             subject.persistent.modify(|state| {
                 state.voted_for = None;
                 state.current_term = request.term;
@@ -1069,9 +1107,8 @@ mod test {
 
     #[test]
     fn vote_is_denied_when_a_vote_was_already_cast_for_another_member_this_term() {
-        vote_test(|subject, request, candidate, peer_2| {
-            subject.last_applied_term = request.last_log_term;
-            subject.last_applied = request.last_log_index;
+        vote_test(|subject, controller_state, request, candidate, peer_2| {
+            controller_state.add_new_mock_event(request.last_log_index, request.last_log_term);
             subject.persistent.modify(|state| {
                 state.voted_for = Some(peer_2.id); // already voted for peer 2
                 state.current_term = request.term;
@@ -1089,9 +1126,8 @@ mod test {
 
     #[test]
     fn vote_is_granted_when_no_other_vote_was_granted_and_candidate_log_exactly_matches() {
-        vote_test(|subject, request, candidate, peer_2| {
-            subject.last_applied_term = request.last_log_term;
-            subject.last_applied = request.last_log_index;
+        vote_test(|subject, controller_state, request, candidate, peer_2| {
+            controller_state.add_new_mock_event(request.last_log_index, request.last_log_term);
             subject.persistent.modify(|state| {
                 state.current_term = request.term - 1;
                 state.add_peer(&candidate);
@@ -1108,9 +1144,8 @@ mod test {
 
     #[test]
     fn vote_is_granted_when_voted_for_is_already_populated_but_candidate_term_is_greater() {
-        vote_test(|subject, request, candidate, peer_2| {
-            subject.last_applied_term = request.last_log_term;
-            subject.last_applied = request.last_log_index;
+        vote_test(|subject, controller_state, request, candidate, peer_2| {
+            controller_state.add_new_mock_event(request.last_log_index, request.last_log_term);
             subject.persistent.modify(|state| {
                 state.current_term = request.term - 1;
                 state.voted_for = Some(state.this_instance_id);
@@ -1141,13 +1176,12 @@ mod test {
         };
         let mut subject = create_cluster_manager(vec![peer_1.address, peer_2.address], temp_dir.path(), connection_manager.boxed_ref());
         subject.state = State::Follower;
-        subject.last_applied_term = 7;
-        subject.last_applied = 9;
         subject.persistent.modify(|state| {
             state.current_term = 7;
         }).unwrap();
 
         let mut controller_state = MockControllerState::new();
+        controller_state.add_new_mock_event(9, 7);
         subject.tick(t_sec(start, 1), &mut controller_state);
         connection_manager.verify_in_order(&Invocation::EstablishConnections);
 
@@ -1313,7 +1347,7 @@ mod test {
         granted: bool,
     }
 
-    fn vote_test<F>(setup_fun: F) where F: Fn(&mut ClusterManager, &CallRequestVote, Peer, Peer) -> VoteExpectation {
+    fn vote_test<F>(setup_fun: F) where F: Fn(&mut ClusterManager, &mut MockControllerState, &CallRequestVote, Peer, Peer) -> VoteExpectation {
         let temp_dir = TempDir::new("cluster_state_test").unwrap();
         let connection_manager = MockPeerConnectionManager::new();
         let peer_1 = Peer {
@@ -1333,9 +1367,10 @@ mod test {
             last_log_index: 9,
             last_log_term: 7,
         };
-        let expectation = setup_fun(&mut subject, &request_vote, peer_1.clone(), peer_2.clone());
+        let mut controller_state = MockControllerState::new();
+        let expectation = setup_fun(&mut subject, &mut controller_state, &request_vote, peer_1.clone(), peer_2.clone());
 
-        subject.request_vote_received(678, request_vote);
+        subject.request_vote_received(678, request_vote, &mut controller_state);
 
         assert_eq!(expectation.persistent_voted_for, subject.persistent.voted_for);
         assert_eq!(expectation.term, subject.persistent.current_term);
@@ -1372,7 +1407,7 @@ impl ConsensusProcessor for NoOpConsensusProcessor {
     fn connection_closed(&mut self, _connection_id: ConnectionId) {
 
     }
-    fn request_vote_received(&mut self, _from: ConnectionId, _request: CallRequestVote) {
+    fn request_vote_received(&mut self, _from: ConnectionId, _request: CallRequestVote, _controller_state: &mut ControllerState) {
         panic!("invalid operation for a NoOpConsensusProcessor. This should not happen");
     }
 
